@@ -1,0 +1,70 @@
+name: Release macOS
+
+# macOS 运行器可能排队较久，独立工作流构建完成后把 arm64 包补充到同一 Release。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.50.0"
+
+jobs:
+  macos:
+    name: macOS arm64
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Build core dylib
+        run: |
+          set -euo pipefail
+          LOG="$RUNNER_TEMP/nexmem-macos-dylib.log"
+          exec 3>&2
+          exec > "$LOG" 2>&1
+          trap 'rc=$?; echo "::error title=macOS dylib failed::exit=$rc $(tail -n 40 "$LOG" | tr "\n" " " | cut -c1-2500)" >&3; exit $rc' ERR
+          mkdir -p bin
+          cd core
+          CGO_ENABLED=1 go build -buildmode=c-shared -o ../bin/libnexmem.dylib ./ffi/capi
+          ls -lh ../bin/libnexmem.dylib
+
+      - name: Build Flutter macOS app
+        working-directory: app
+        run: flutter build macos --release
+
+      - name: Package app bundle
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version:[[:space:]]*\([0-9][^+]*\).*/\1/p' app/pubspec.yaml | head -n1)"
+          app="app/build/macos/Build/Products/Release/nexmem_app.app"
+          test -d "$app"
+          cp bin/libnexmem.dylib "$app/Contents/MacOS/libnexmem.dylib"
+          mkdir -p release-assets
+          ditto -c -k --sequesterRsrc --keepParent "$app" "release-assets/Nexmem-${version}-macos-arm64.zip"
+          ls -lh release-assets/
+
+      - name: Upload macOS asset to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: release-assets/*.zip
+          fail_on_unmatched_files: false

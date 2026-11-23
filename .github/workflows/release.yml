@@ -104,8 +104,9 @@ jobs:
         run: |
           set -euo pipefail
           LOG="$RUNNER_TEMP/nexmem-linux-build.log"
-          exec > >(tee "$LOG") 2>&1
-          trap 'rc=$?; echo "::error title=Linux build failed::exit=$rc $(grep -Ei "error|failed|cannot|no such|not found|usage|undefined" "$LOG" | tail -6 | tr "\n" " " | cut -c1-1200)"' ERR
+          exec 3>&2
+          exec > "$LOG" 2>&1
+          trap 'rc=$?; echo "::error title=Linux build failed::exit=$rc $(tail -n 40 "$LOG" | tr "\n" " " | cut -c1-2500)" >&3; exit $rc' ERR
           mkdir -p bin release-assets dist
           GO=go FLUTTER=flutter bash deploy/linux/build-linux.sh
           version="$(sed -n 's/^version:[[:space:]]*\([0-9][^+]*\).*/\1/p' app/pubspec.yaml | head -n1)"
@@ -118,52 +119,6 @@ jobs:
         with:
           name: asset-linux
           path: release-assets/*
-          if-no-files-found: error
-
-  macos:
-    name: macOS arm64
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: core/go.mod
-          cache-dependency-path: core/go.sum
-
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-
-      - name: Build core dylib
-        run: |
-          set -euo pipefail
-          mkdir -p bin
-          cd core
-          CGO_ENABLED=1 go build -buildmode=c-shared -o ../bin/libnexmem.dylib ./ffi/capi
-          ls -lh ../bin/libnexmem.dylib
-
-      - name: Build Flutter macOS app
-        working-directory: app
-        run: flutter build macos --release
-
-      - name: Package app bundle
-        run: |
-          set -euo pipefail
-          version="$(sed -n 's/^version:[[:space:]]*\([0-9][^+]*\).*/\1/p' app/pubspec.yaml | head -n1)"
-          app="app/build/macos/Build/Products/Release/nexmem_app.app"
-          test -d "$app"
-          cp bin/libnexmem.dylib "$app/Contents/MacOS/libnexmem.dylib"
-          mkdir -p release-assets
-          ditto -c -k --sequesterRsrc --keepParent "$app" "release-assets/Nexmem-${version}-macos-arm64.zip"
-          ls -lh release-assets/
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: asset-macos
-          path: release-assets/*.zip
           if-no-files-found: error
 
   android:
@@ -192,13 +147,16 @@ jobs:
         run: |
           set -euo pipefail
           LOG="$RUNNER_TEMP/nexmem-android-sdk.log"
-          exec > >(tee "$LOG") 2>&1
-          trap 'rc=$?; echo "::error title=Android SDK setup failed::exit=$rc $(grep -Ei "error|failed|cannot|no such|not found|usage" "$LOG" | tail -6 | tr "\n" " " | cut -c1-1200)"' ERR
+          exec 3>&2
+          exec > "$LOG" 2>&1
+          trap 'rc=$?; echo "::error title=Android SDK setup failed::exit=$rc $(tail -n 40 "$LOG" | tr "\n" " " | cut -c1-2500)" >&3; exit $rc' ERR
           echo "ANDROID_HOME=$ANDROID_HOME"
-          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          yes | sdkmanager --licenses > /dev/null
-          sdkmanager "ndk;28.2.13676358" "ndk;27.0.12077973" \
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n1)"
+          if [ -z "$SDKMANAGER" ]; then echo "sdkmanager not found under $ANDROID_HOME" >&2; exit 1; fi
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          export PATH="$(dirname "$SDKMANAGER"):$PATH"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "ndk;28.2.13676358" "ndk;27.0.12077973" \
             "platforms;android-36" "platforms;android-35" \
             "build-tools;36.0.0" "build-tools;35.0.0"
 
@@ -206,8 +164,9 @@ jobs:
         run: |
           set -euo pipefail
           LOG="$RUNNER_TEMP/nexmem-android-aar.log"
-          exec > >(tee "$LOG") 2>&1
-          trap 'rc=$?; echo "::error title=Android AAR failed::exit=$rc $(grep -Ei "error|failed|cannot|no such|not found|usage|undefined" "$LOG" | tail -6 | tr "\n" " " | cut -c1-1200)"' ERR
+          exec 3>&2
+          exec > "$LOG" 2>&1
+          trap 'rc=$?; echo "::error title=Android AAR failed::exit=$rc $(tail -n 40 "$LOG" | tr "\n" " " | cut -c1-2500)" >&3; exit $rc' ERR
           go install golang.org/x/mobile/cmd/gomobile@latest
           go install golang.org/x/mobile/cmd/gobind@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
@@ -224,8 +183,9 @@ jobs:
         run: |
           set -euo pipefail
           LOG="$RUNNER_TEMP/nexmem-android-apk.log"
-          exec > >(tee "$LOG") 2>&1
-          trap 'rc=$?; echo "::error title=Android APK build failed::exit=$rc $(grep -Ei "error|failed|cannot|no such|not found|usage|undefined" "$LOG" | tail -6 | tr "\n" " " | cut -c1-1200)"' ERR
+          exec 3>&2
+          exec > "$LOG" 2>&1
+          trap 'rc=$?; echo "::error title=Android APK build failed::exit=$rc $(tail -n 40 "$LOG" | tr "\n" " " | cut -c1-2500)" >&3; exit $rc' ERR
           flutter build apk --release
 
       - name: Package APK
@@ -274,7 +234,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [windows, linux, macos, android, web]
+    needs: [windows, linux, android, web]
     if: always()
     runs-on: ubuntu-latest
     steps:
