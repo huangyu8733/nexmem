@@ -1,0 +1,135 @@
+syntax = "proto3";
+
+package nexmem.v1;
+
+option go_package = "github.com/nexmem/core/api/v1;nexmemv1";
+
+enum ContentType {
+  CONTENT_TYPE_TEXT = 0;
+  CONTENT_TYPE_IMAGE = 1;
+  CONTENT_TYPE_FILE = 2;
+  CONTENT_TYPE_VOICE = 3;
+  CONTENT_TYPE_RTC_INVITE = 4;
+  // CONTENT_TYPE_GROUP_META 是随单聊通道传输的群密钥信封，不进入会话列表。
+  CONTENT_TYPE_GROUP_META = 5;
+}
+
+message Attachment {
+  string name = 1;
+  uint64 size = 2;
+  string mime = 3;
+  bytes  sha256 = 4;
+  string blob_ref = 5; // 附件密文对象键
+  bytes  key = 6;      // 附件 AES 密钥（位于 InnerMessage 密文内）
+}
+
+message RtcInvite {
+  string call_id = 1;
+  string sdp = 2;
+  bool   video = 3;
+}
+
+message InnerMessage {
+  string     text = 1;
+  repeated Attachment attachments = 2;
+  string     reply_to = 3;
+  RtcInvite  rtc = 4;
+  // group_key_envelope 仅在 CONTENT_TYPE_GROUP_META 下使用，
+  // 内容为 nexmem.v1.GroupKeyEnvelope 序列化字节。
+  bytes      group_key_envelope = 5;
+  // mentions 是被 @ 的成员账号公钥（base64 字符串），随正文一起加密存储与广播（七-1 @成员）。
+  repeated string mentions = 6;
+  // edited 标记本消息已被编辑；edited_at 为编辑时间（Unix 毫秒）（七-2 消息编辑）。
+  bool       edited = 7;
+  int64      edited_at = 8;
+  // ttl_hours 是定时消息的存活时长（1～168 小时，0 表示永不过期），
+  // 随加密正文一起到达对端，双方各自按 sent_at + ttl_hours 计算本机销毁时间。
+  uint32     ttl_hours = 9;
+}
+
+// 单聊在线直连消息：经 libp2p Noise 信道传输，P1 阶段正文为 InnerMessage 明文；
+// P3 起在应用层另行加密，字段结构保持不变。
+message DirectMessage {
+  string      msg_uuid = 1;      // UUIDv7
+  int64       timestamp = 2;     // Unix 毫秒，发送方单调递增
+  bytes       sender_account = 3;
+  bytes       receiver_account = 4;
+  bytes       conversation_id = 5;
+  ContentType content_type = 6;
+  bytes       inner = 7;         // InnerMessage 序列化字节
+}
+
+// 单聊已读回执：接收方打开会话并推进已读后，经 FRAME_TYPE_READ 帧回传，
+// 发送方据此把 up_to_timestamp 之前已送达的消息置为「已读」。
+message ReadReceipt {
+  bytes sender_account = 1;
+  bytes receiver_account = 2;
+  bytes conversation_id = 3;
+  int64 up_to_timestamp = 4; // Unix 毫秒，接收方确认已读的最大消息时间戳
+}
+
+// 单聊撤回通知：发送方撤回 2 分钟内的消息，经 FRAME_TYPE_RECALL 帧通知对端删除。
+message RecallNotice {
+  string msg_uuid = 1;
+  bytes  sender_account = 2;
+  bytes  receiver_account = 3;
+  bytes  conversation_id = 4;
+  int64  recalled_at = 5; // Unix 毫秒
+}
+
+// 单聊输入状态：经 FRAME_TYPE_TYPING 帧在线发送，对端收到后展示「正在输入」。
+// typing 是瞬时状态，不落库、不补发、不重试；已停止时 typing=false。
+message TypingNotice {
+  bytes sender_account = 1;
+  bytes receiver_account = 2;
+  bytes conversation_id = 3;
+  bool  typing = 4;
+}
+
+// 单聊编辑通知：发送方编辑已发出消息后，经 FRAME_TYPE_EDIT 帧通知对端更新同一
+// msg_uuid 的正文。编辑只改正文与标记，不改变会话归属与发送方向。
+message EditNotice {
+  string msg_uuid = 1;
+  bytes  sender_account = 2;
+  bytes  receiver_account = 3;
+  bytes  conversation_id = 4;
+  string text = 5;
+  int64  edited_at = 6;
+}
+
+// 单聊 RTC 信令：透传 WebRTC 的 SDP / ICE 载荷，经 FRAME_TYPE_RTC_SIGNAL 帧在线发送，
+// 不落库、不补发；payload 由客户端自行编码，内核不解析。
+message RtcSignal {
+  bytes sender_account = 1;
+  bytes receiver_account = 2;
+  bytes payload = 3; // 客户端不透明载荷，上限 64 KiB
+}
+
+// 单聊离线消息：正文与密钥均加密，索引服务器与对象存储均不可读。
+message OfflineMessage {
+  string      msg_uuid = 1;      // UUIDv7
+  int64       timestamp = 2;
+  bytes       sender_account = 3;
+  bytes       receiver_account = 4;
+  bytes       conversation_id = 5;
+  bytes       encrypted_key = 6;
+  bytes       nonce = 7;
+  bytes       ciphertext = 8;
+  uint32      key_alg = 9;       // 1 = X25519-HKDF-SHA256-AES256GCM
+  ContentType content_type = 10;
+  uint32      ttl_hours = 11;
+  bytes       sender_sig = 12;
+}
+
+// 群离线消息：由群密钥直接加密。
+message GroupOfflineMessage {
+  string  msg_uuid = 1;
+  int64   timestamp = 2;
+  bytes   group_id = 3;
+  bytes   sender_account = 4;
+  uint32  key_version = 5;
+  bytes   nonce = 6;
+  bytes   ciphertext = 7;
+  uint32  ttl_hours = 8;
+  bytes   sender_sig = 9;
+}

@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package nexmem.v1;
+
+option go_package = "github.com/nexmem/core/api/v1;nexmemv1";
+
+// GroupEnvelope 是群聊 GossipSub 主题上的传输信封。
+// body 由群密钥加密（P4-03 起启用）；signature 由发送方账号 ed25519 私钥对
+// group_id、sender_account、msg_uuid、sent_at、key_version、body 六项签名。
+message GroupEnvelope {
+  bytes  group_id = 1;
+  bytes  sender_account = 2;
+  bytes  msg_uuid = 3;
+  int64  sent_at = 4;
+  uint32 key_version = 5;
+  bytes  body = 6;
+  bytes  signature = 7;
+}
+
+message GroupKeyEnvelope {
+  bytes  group_id = 1;
+  bytes  member_account = 2;
+  uint32 key_version = 3;
+  bytes  encrypted_group_key = 4; // 用成员 account_x_pub 封装
+  bytes  group_meta = 5;          // 群名/成员表/群盘摘要（同密钥加密）
+  bytes  admin_sig = 6;
+  bytes  admin_account = 7;       // 签发方账号公钥，供接收方自洽验签
+}
+
+// GroupMeta 是随群密钥信封下发的加密元数据，用当前群密钥密封。
+message GroupMeta {
+  bytes           group_id = 1;
+  string          title = 2;
+  repeated bytes  members = 3;
+  uint32          key_version = 4;
+  bool            offline_enabled = 5;
+  bytes           storage_cfg = 6; // GroupStorageConfig 序列化字节，凭证已用群密钥加密
+}
+
+message GroupStorageConfig {
+  string endpoint = 1;
+  string bucket = 2;
+  string prefix = 3;
+  string region = 4;
+  bytes  access_key_enc = 5; // 用当前群密钥加密
+  bytes  secret_key_enc = 6;
+  uint32 key_version = 7;
+  bool   path_style = 8;
+}

@@ -1,0 +1,206 @@
+// X-05：Chromium（Playwright）下的 Web 端 E2E。
+// 覆盖：令牌登录门禁、双端互发文本、刷新后历史恢复。
+const fs = require('node:fs');
+const path = require('node:path');
+const { test, expect } = require('@playwright/test');
+const { Stack, conversationIdOf } = require('../support/stack');
+
+const VIEWPORT = { width: 430, height: 900 };
+
+let stack;
+
+test.describe.configure({ mode: 'serial' });
+
+async function enableSemantics(page) {
+  // Flutter Web 默认不生成语义树：占位按钮位于视口外 1x1，鼠标点不到，
+  // 需要聚焦后按 Enter 触发 click，引擎才会开启语义树。
+  const enable = page.getByRole('button', { name: 'Enable accessibility' });
+  try {
+    await enable.first().waitFor({ state: 'attached', timeout: 30000 });
+    await enable.first().focus();
+    await page.keyboard.press('Enter');
+    // 语义树开启后底部导航才会以 tab 角色暴露。
+    await page.getByRole('tab', { name: '消息' }).waitFor({ state: 'attached', timeout: 20000 });
+  } catch (_) {
+    // 已开启语义树时占位按钮不存在。
+  }
+  await page.waitForTimeout(600);
+}
+
+async function openApp(page, baseUrl, token) {
+  const query = token ? `?token=${encodeURIComponent(token)}` : '';
+  await page.goto(`${baseUrl}/${query}`, { waitUntil: 'load' });
+  await page.waitForSelector('flutter-view', { timeout: 60000 });
+  await enableSemantics(page);
+}
+
+async function newPage(browser) {
+  const context = await browser.newContext({ viewport: VIEWPORT });
+  const page = await context.newPage();
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') {
+      console.log('[browser]', msg.text());
+    }
+  });
+  return { context, page };
+}
+
+// 预热：等待 DHT 收敛并确认单聊链路可用，避免首条 UI 消息受冷启动影响。
+async function warmup() {
+  const { ports, tokens } = stack;
+  const text = '联调预热';
+  const deadline = Date.now() + 90000;
+  let lastError = '';
+  while (Date.now() < deadline) {
+    try {
+      await stack.call(ports.webA, tokens.a, 'dm.sendText', {
+        peer: stack.accountB.account_id,
+        text,
+      });
+    } catch (err) {
+      lastError = err.message;
+      await new Promise((r) => setTimeout(r, 3000));
+      continue;
+    }
+    try {
+      await stack.waitMessage(
+        ports.webB,
+        tokens.b,
+        stack.accountB.account_id,
+        stack.accountA.account_id,
+        text,
+        10000,
+      );
+      return;
+    } catch (err) {
+      lastError = err.message;
+    }
+  }
+  throw new Error(`双端单聊预热失败：${lastError}`);
+}
+
+async function typeInto(page, field, text) {
+  // Flutter Web 切换焦点时首个按键可能被上一个输入框的失焦流程吞掉，
+  // 逐字符输入后校验回填值，缺失则补一次。
+  await field.click();
+  await page.waitForTimeout(300);
+  await field.pressSequentially(text, { delay: 20 });
+  const value = await field.inputValue().catch(() => text);
+  if (value !== text) {
+    await field.press('Control+A');
+    await field.pressSequentially(text, { delay: 20 });
+  }
+}
+
+test.beforeAll(async () => {
+  const runDir = path.join(__dirname, '..', '.run', `pw-${Date.now()}`);
+  fs.mkdirSync(runDir, { recursive: true });
+  stack = new Stack(runDir);
+  try {
+    await stack.start();
+    console.log(`E2E 账号：A=${stack.accountA.account_id} B=${stack.accountB.account_id}`);
+    await warmup();
+  } catch (err) {
+    await stack.stop();
+    throw err;
+  }
+});
+
+test.afterAll(async () => {
+  if (stack) {
+    await stack.stop();
+  }
+});
+
+test('令牌登录：无令牌为离线空态，带令牌建立内核连接', async ({ browser }) => {
+  const anonymous = await newPage(browser);
+  const sockets = [];
+  anonymous.page.on('websocket', (ws) => sockets.push(ws.url()));
+  await openApp(anonymous.page, stack.url('webA'), '');
+  await expect(anonymous.page.getByText('暂无会话，点击 + 发起聊天')).toBeVisible();
+  expect(sockets).toHaveLength(0);
+  await anonymous.context.close();
+
+  const authed = await newPage(browser);
+  const socketPromise = authed.page.waitForEvent('websocket', { timeout: 30000 });
+  await openApp(authed.page, stack.url('webA'), stack.tokens.a);
+  const socket = await socketPromise;
+  expect(socket.url()).toContain('/ws');
+  expect(socket.url()).toContain('token=');
+  await expect(authed.page.getByText('暂无会话，点击 + 发起聊天').or(
+    authed.page.getByText('联调预热'),
+  ).first()).toBeVisible();
+  await authed.context.close();
+});
+
+test('双端互发文本：A 端 UI 发送，B 端内核实时入库', async ({ browser }) => {
+  const a = await newPage(browser);
+  const page = a.page;
+  await openApp(page, stack.url('webA'), stack.tokens.a);
+
+  await page.getByRole('tab', { name: '联系人' }).click();
+  await page.getByRole('button', { name: '添加好友' }).click();
+
+  await typeInto(page, page.getByRole('textbox', { name: '账号公钥' }), stack.accountB.account_id);
+  await typeInto(page, page.getByRole('textbox', { name: '备注（可选）' }), 'E2E 对端');
+  await page.getByRole('button', { name: '添加', exact: true }).click();
+
+  const contactRow = page.getByRole('button', { name: /E2E 对端/ });
+  const sendButton = page.getByRole('button', { name: '发消息' });
+  await expect(contactRow).toBeVisible({ timeout: 10000 });
+  await contactRow.click();
+  // 首次点击可能被输入框失焦流程吞掉，最多补点一次并等待资料页出现。
+  const detailShown = await sendButton
+    .waitFor({ state: 'visible', timeout: 4000 })
+    .then(() => true, () => false);
+  if (!detailShown) {
+    await contactRow.click();
+    await sendButton.waitFor({ state: 'visible', timeout: 10000 });
+  }
+  await sendButton.click();
+
+  const message = `E2E 你好 ${Date.now()}`;
+  const composer = page.getByRole('textbox', { name: '输入消息' });
+  await composer.waitFor({ state: 'visible', timeout: 15000 });
+  await typeInto(page, composer, message);
+  await page.getByRole('button', { name: '发送' }).click();
+
+  await expect(page.getByText(message).first()).toBeVisible();
+  await stack.waitMessage(
+    stack.ports.webB,
+    stack.tokens.b,
+    stack.accountB.account_id,
+    stack.accountA.account_id,
+    message,
+    45000,
+  );
+  a.context.close();
+});
+
+test('刷新恢复：B 端刷新后仍能看到收到的消息', async ({ browser }) => {
+  const { ports, tokens } = stack;
+  const history = await stack.call(ports.webB, tokens.b, 'msg.list', {
+    conversation_id: conversationIdOf(
+      stack.accountA.account_id,
+      stack.accountB.account_id,
+    ),
+    limit: 50,
+  });
+  const received = (history.items || []).filter((m) => m.direction === 'in' && m.text.startsWith('E2E 你好'));
+  expect(received.length).toBeGreaterThan(0);
+  const text = received[received.length - 1].text;
+  const row = (page) => page.getByRole('button', { name: new RegExp(text) });
+
+  const b = await newPage(browser);
+  await openApp(b.page, stack.url('webB'), stack.tokens.b);
+  await expect(row(b.page)).toBeVisible();
+  await row(b.page).click();
+  await expect(b.page.getByText(text).last()).toBeVisible();
+
+  // 刷新后从本地库重新拉取会话与消息。
+  await openApp(b.page, stack.url('webB'), stack.tokens.b);
+  await expect(row(b.page)).toBeVisible();
+  await row(b.page).click();
+  await expect(b.page.getByText(text).last()).toBeVisible();
+  b.context.close();
+});

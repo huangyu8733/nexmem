@@ -1,0 +1,13 @@
+{
+  "name": "nexmem-web-e2e",
+  "private": true,
+  "description": "Nexmem Web 端 Playwright E2E（X-05）：令牌登录、双端收发、刷新恢复",
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "ws": "^8.18.0"
+  }
+}

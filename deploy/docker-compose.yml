@@ -1,0 +1,42 @@
+name: nexmem-p0
+
+services:
+  # 私有 DHT 入口：所有客户端的第一跳
+  bootstrap:
+    build:
+      context: ..
+      dockerfile: deploy/bootstrap.Dockerfile
+    command:
+      - "-listen"
+      - "/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1"
+      - "-id"
+      - "/data/bootstrap.key"
+    ports:
+      - "14001:4001/tcp"
+      - "14001:4001/udp"
+    volumes:
+      - bootstrap-data:/data
+    restart: unless-stopped
+
+  # Circuit Relay v2 兜底节点，用于验证打洞失败后的回退链路
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/bootstrap.Dockerfile
+    command:
+      - "-listen"
+      - "/ip4/0.0.0.0/tcp/4002,/ip4/0.0.0.0/udp/4002/quic-v1"
+      - "-id"
+      - "/data/relay.key"
+      - "-relay"
+      - "-dht=false"
+    ports:
+      - "14002:4002/tcp"
+      - "14002:4002/udp"
+    volumes:
+      - relay-data:/data
+    restart: unless-stopped
+
+volumes:
+  bootstrap-data:
+  relay-data:

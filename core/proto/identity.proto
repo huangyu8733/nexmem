@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package nexmem.v1;
+
+option go_package = "github.com/nexmem/core/api/v1;nexmemv1";
+
+// 账号密钥签发的设备证书：一个账号可绑定多台设备，
+// 每台设备拥有独立 libp2p 身份，避免同 PeerID 多端冲突。
+message DeviceCert {
+  bytes  account_pub = 1;   // ed25519，32B，账号身份
+  bytes  account_x_pub = 2; // x25519，32B，离线消息封装公钥
+  bytes  device_pub = 3;    // 设备 libp2p 公钥（marshaled）
+  string device_name = 4;
+  int64  issued_at = 5;
+  int64  not_after = 6;
+  bytes  signature = 7;     // account 私钥对 1..6 的签名
+}
+
+// 上传到索引服务器的公开档案（不含任何私钥）。
+message PublicProfile {
+  bytes  account_pub = 1;
+  bytes  account_x_pub = 2;
+  repeated DeviceCert devices = 3;
+  bool   offline_enabled = 4;
+  int64  updated_at = 5;
+  bytes  signature = 6;
+}

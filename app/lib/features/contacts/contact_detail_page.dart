@@ -1,0 +1,396 @@
+import 'package:flutter/services.dart';
+import 'package:material_ui/material_ui.dart';
+
+import '../../app/theme.dart';
+import '../../transport/transport.dart';
+import 'contact.dart';
+import 'contact_service.dart';
+import 'device_list_page.dart';
+
+/// 好友资料页（P2-06 / P6-30，ui-spec.md §4）：备注、分组、拉黑与发消息入口。
+///
+/// 备注与分组只写入本机数据库，不会随任何报文上行；接入 [service] 后分别经
+/// 内核 `contact.remark` / `contact.setGroup` / `contact.block` 落库，失败回滚界面状态。
+class ContactDetailPage extends StatefulWidget {
+  const ContactDetailPage({
+    super.key,
+    required this.contact,
+    this.service,
+    this.onChanged,
+    this.onSendMessage,
+  });
+
+  final Contact contact;
+
+  /// 内核通讯录服务；为空时只更新本地内存（Widget 测试与离线部署）。
+  final ContactService? service;
+
+  /// 备注或拉黑状态变化时回调，由列表页回写本地记录。
+  final ValueChanged<Contact>? onChanged;
+
+  /// 点击「发消息」；为空表示当前还没有可用的内核通道。
+  final VoidCallback? onSendMessage;
+
+  @override
+  State<ContactDetailPage> createState() => _ContactDetailPageState();
+}
+
+class _ContactDetailPageState extends State<ContactDetailPage> {
+  /// 与内核 MaxContactGroupRunes 对齐：分组名最多 32 个 Unicode 码点。
+  static const int _maxGroupRunes = 32;
+
+  /// 当前分组输入是否超限（按 Unicode 码点计）。
+  bool get _groupOverLimit => _group.text.runes.length > _maxGroupRunes;
+
+  late Contact _contact = widget.contact;
+  late final TextEditingController _note =
+      TextEditingController(text: widget.contact.note);
+  late final TextEditingController _group =
+      TextEditingController(text: widget.contact.groupName);
+  List<DeviceInfo> _devices = const <DeviceInfo>[];
+  bool _devicesLoading = false;
+  String? _devicesError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDevices();
+  }
+
+  @override
+  void dispose() {
+    _note.dispose();
+    _group.dispose();
+    super.dispose();
+  }
+
+  /// 拉取对方公开档案里的设备列表（P6-21）；失败只提示，不阻塞资料页其它操作。
+  Future<void> _loadDevices() async {
+    final ContactService? service = widget.service;
+    if (service == null) {
+      return;
+    }
+    setState(() {
+      _devicesLoading = true;
+      _devicesError = null;
+    });
+    try {
+      final DeviceListResult result = await service.devices(peer: _contact.id);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _devices = result.items;
+        _devicesLoading = false;
+      });
+    } on NexmemException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _devicesLoading = false;
+        _devicesError = error.message.isEmpty ? error.code : error.message;
+      });
+    }
+  }
+
+  /// 设备入口标题：读取成功后附带台数。
+  String _devicesTitle() {
+    if (_devicesLoading || _devicesError != null || _devices.isEmpty) {
+      return '设备';
+    }
+    return '设备（${_devices.length} 台）';
+  }
+
+  /// 设备入口摘要：设备名与最近活跃时间，点击进入完整列表。
+  String _devicesSummary() {
+    if (_devicesError != null) {
+      return '设备列表读取失败：$_devicesError';
+    }
+    if (_devicesLoading) {
+      return '正在读取设备…';
+    }
+    if (_devices.isEmpty) {
+      return '该账号尚未发布设备信息';
+    }
+    final String names =
+        _devices.take(3).map((DeviceInfo d) => d.name).join('、');
+    return '$names · ${deviceActiveLabel(_devices.first.issuedAt)}';
+  }
+
+  void _openDevices() {
+    final ContactService? service = widget.service;
+    if (service == null) {
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (BuildContext _) => DeviceListPage(
+          service: service,
+          peer: _contact.id,
+          title: '${_contact.name}的设备',
+        ),
+      ),
+    );
+  }
+
+  void _apply(Contact next) {
+    setState(() => _contact = next);
+    widget.onChanged?.call(next);
+  }
+
+  void _fail(String fallback, NexmemException error) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error.message.isEmpty ? fallback : error.message)),
+    );
+  }
+
+  Future<void> _saveNote() async {
+    final Contact previous = _contact;
+    final String remark = _note.text.trim();
+    _apply(_contact.copyWith(note: remark));
+    FocusScope.of(context).unfocus();
+    final ContactService? service = widget.service;
+    if (service == null) {
+      return;
+    }
+    try {
+      await service.setRemark(_contact.id, remark);
+    } on NexmemException catch (error) {
+      _apply(previous);
+      _note.text = previous.note;
+      _fail('备注保存失败', error);
+    }
+  }
+
+  Future<void> _saveGroup() async {
+    final String raw = _group.text.trim();
+    if (raw.runes.length > _maxGroupRunes) {
+      _fail('好友分组名最多 32 字', const NexmemException('INVALID_ARG', '好友分组名最多 32 字'));
+      return;
+    }
+    final Contact previous = _contact;
+    _apply(_contact.copyWith(groupName: raw));
+    FocusScope.of(context).unfocus();
+    final ContactService? service = widget.service;
+    if (service == null) {
+      return;
+    }
+    try {
+      await service.setGroup(_contact.id, raw);
+    } on NexmemException catch (error) {
+      _apply(previous);
+      _group.text = previous.groupName;
+      _fail('分组保存失败', error);
+    }
+  }
+
+  Future<void> _toggleBlocked(bool blocked) async {
+    final Contact previous = _contact;
+    _apply(_contact.copyWith(blocked: blocked));
+    final ContactService? service = widget.service;
+    if (service == null) {
+      return;
+    }
+    try {
+      await service.setBlocked(_contact.id, blocked);
+    } on NexmemException catch (error) {
+      _apply(previous);
+      _fail('拉黑状态更新失败', error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final Color base = NexmemColors
+        .avatarPalette[_contact.id.hashCode.abs() % NexmemColors.avatarPalette.length];
+    final String initial =
+        _contact.name.isEmpty ? '?' : _contact.name.substring(0, 1);
+    final String title = _contact.note.isEmpty ? _contact.name : _contact.note;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('好友资料')),
+      body: ListView(
+        padding: const EdgeInsets.all(NexmemMetrics.space16),
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              CircleAvatar(
+                radius: 28,
+                backgroundColor: base.withValues(alpha: 0.16),
+                child: Text(
+                  initial,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: base,
+                  ),
+                ),
+              ),
+              const SizedBox(width: NexmemMetrics.space16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    if (_contact.note.isNotEmpty)
+                      Text(
+                        _contact.name,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurface.withValues(alpha: 0.5),
+                            ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: NexmemMetrics.space24),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('账号'),
+            subtitle: Text(
+              _contact.id,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: IconButton(
+              tooltip: '复制账号',
+              icon: const Icon(Icons.copy_all_outlined, size: 18),
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: _contact.id));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('账号已复制')),
+                );
+              },
+            ),
+          ),
+          const Divider(),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: NexmemMetrics.space12),
+            child: TextField(
+              key: const ValueKey<String>('contact-remark-field'),
+              controller: _note,
+              textInputAction: TextInputAction.done,
+              decoration: InputDecoration(
+                labelText: '备注',
+                helperText: '仅本机可见，不会发送给对方',
+                border: const OutlineInputBorder(),
+              suffixIcon: TextButton(
+                key: const ValueKey<String>('contact-note-save'),
+                onPressed: _saveNote,
+                child: const Text('保存'),
+              ),
+              ),
+              onSubmitted: (_) => _saveNote(),
+            ),
+          ),
+          TextField(
+            key: const ValueKey<String>('contact-group-field'),
+            controller: _group,
+            textInputAction: TextInputAction.done,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              labelText: '分组',
+              helperText: '仅本机可见，留空表示不分组',
+              border: const OutlineInputBorder(),
+              suffixIcon: TextButton(
+                key: const ValueKey<String>('contact-group-save'),
+                onPressed: _groupOverLimit ? null : _saveGroup,
+                child: const Text('保存'),
+              ),
+            ),
+            onSubmitted: (_) => _saveGroup(),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              '${_group.text.runes.length}/$_maxGroupRunes',
+              key: const ValueKey<String>('contact-group-counter'),
+              style: TextStyle(
+                fontSize: 12,
+                color: _groupOverLimit
+                    ? NexmemColors.danger
+                    : scheme.onSurface.withValues(alpha: 0.5),
+              ),
+            ),
+          ),
+          SwitchListTile(
+            key: const ValueKey<String>('contact-block-switch'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('拉黑'),
+            subtitle: const Text('拉黑后双方均无法发送消息'),
+            value: _contact.blocked,
+            onChanged: _toggleBlocked,
+          ),
+          if (_contact.blocked)
+            Container(
+              margin: const EdgeInsets.only(top: NexmemMetrics.space8),
+              padding: const EdgeInsets.all(NexmemMetrics.space12),
+              decoration: BoxDecoration(
+                color: NexmemColors.danger.withValues(alpha: 0.08),
+                borderRadius:
+                    BorderRadius.circular(NexmemMetrics.radiusListItem),
+              ),
+              child: Row(
+                children: <Widget>[
+                  const Icon(Icons.block, size: 18, color: NexmemColors.danger),
+                  const SizedBox(width: NexmemMetrics.space8),
+                  Expanded(
+                    child: Text(
+                      '已拉黑，双方无法互发消息',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: NexmemColors.danger,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (widget.service != null) ...<Widget>[
+            const Divider(),
+            ListTile(
+              key: const ValueKey<String>('contact-devices-tile'),
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.devices_outlined, size: 20),
+              title: Text(_devicesTitle()),
+              subtitle: Text(
+                _devicesSummary(),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurface.withValues(alpha: 0.6),
+                    ),
+              ),
+              trailing: _devicesLoading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.chevron_right, size: 20),
+              onTap: _openDevices,
+            ),
+          ],
+          const SizedBox(height: NexmemMetrics.space24),
+          FilledButton(
+            key: const ValueKey<String>('contact-send-button'),
+            onPressed: _contact.blocked ? null : widget.onSendMessage,
+            child: const Text('发消息'),
+          ),
+        ],
+      ),
+    );
+  }
+}

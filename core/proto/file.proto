@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package nexmem.v1;
+
+option go_package = "github.com/nexmem/core/api/v1;nexmemv1";
+
+// 文件传输握手：发送方声明元数据，接收方回 FileState 告知续传位置。
+message FileMeta {
+  string msg_uuid = 1;
+  string name = 2;
+  uint64 size = 3;
+  string mime = 4;
+  uint32 chunk_size = 5;
+  uint32 total_chunks = 6;
+  bytes  sha256 = 7; // 可选：发送方预先计算的整文件摘要
+  bytes  sender_account = 8;
+}
+
+// 文件分片。
+message FileChunk {
+  string msg_uuid = 1;
+  uint32 index = 2;
+  bytes  data = 3;
+}
+
+// 接收方续传状态：从 next_chunk 开始重传。
+message FileState {
+  string msg_uuid = 1;
+  uint32 next_chunk = 2;
+}
+
+// 传输完成校验。
+message FileDone {
+  string msg_uuid = 1;
+  bytes  sha256 = 2;
+}

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Nexmem
+GenericName=Instant Messenger
+Comment=Nexmem 去中心化 P2P 即时通讯
+Exec=nexmem
+Icon=io.nexmem.nexmem_app
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=IM;Chat;P2P;Nexmem;
+StartupNotify=true
+StartupWMClass=io.nexmem.nexmem_app

@@ -1,0 +1,2267 @@
+{
+  "api_version": "1.0.0",
+  "envelope": {
+    "request": {
+      "id": 1024,
+      "method": "dm.sendText",
+      "params": {
+        "peer": "12D3Koo...",
+        "text": "hi"
+      },
+      "timeout_ms": 15000
+    },
+    "response_ok": {
+      "id": 1024,
+      "ok": true,
+      "data": {
+        "msg_uuid": "0192f3..."
+      }
+    },
+    "response_error": {
+      "id": 1024,
+      "ok": false,
+      "error": {
+        "code": "PEER_UNREACHABLE",
+        "message": "打洞与中继均失败",
+        "retryable": true
+      }
+    },
+    "event": {
+      "seq": 87,
+      "type": "message.new",
+      "ts": 1730000000000,
+      "data": {
+        "conversation_id": "dm:...",
+        "msg_uuid": "..."
+      }
+    }
+  },
+  "errors": [
+    {
+      "code": "INVALID_ARG",
+      "retryable": false,
+      "description": "参数缺失、类型错误或 method 未知"
+    },
+    {
+      "code": "NOT_STARTED",
+      "retryable": false,
+      "description": "内核未启动，或该能力当前阶段尚未接入"
+    },
+    {
+      "code": "NOT_ONLINE",
+      "retryable": true,
+      "description": "内核在线状态未就绪（degraded/offline）"
+    },
+    {
+      "code": "PEER_UNREACHABLE",
+      "retryable": true,
+      "description": "打洞与中继均无法连通对端"
+    },
+    {
+      "code": "OFFLINE_STORAGE_DISABLED",
+      "retryable": false,
+      "description": "对端未开启离线存储"
+    },
+    {
+      "code": "S3_AUTH",
+      "retryable": false,
+      "description": "对象存储鉴权失败（AK/SK 或票据无效）"
+    },
+    {
+      "code": "S3_QUOTA",
+      "retryable": false,
+      "description": "对象存储配额或桶容量超限"
+    },
+    {
+      "code": "S3_IO",
+      "retryable": true,
+      "description": "对象存储读写失败（可重试）"
+    },
+    {
+      "code": "DB_ERROR",
+      "retryable": false,
+      "description": "本地数据库读写失败"
+    },
+    {
+      "code": "CRYPTO_ERROR",
+      "retryable": false,
+      "description": "解密或验签失败"
+    },
+    {
+      "code": "RATE_LIMITED",
+      "retryable": true,
+      "description": "触发限流，稍后重试"
+    },
+    {
+      "code": "UNSUPPORTED_VERSION",
+      "retryable": false,
+      "description": "端与内核的 API 版本不兼容"
+    },
+    {
+      "code": "RESYNC_REQUIRED",
+      "retryable": true,
+      "description": "事件缓冲出现缺口，需要全量重同步"
+    }
+  ],
+  "methods": [
+    {
+      "name": "account.devices",
+      "summary": "返回账号（缺省本机）已发布的设备列表，数据来自索引服务的公开档案",
+      "params": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string",
+            "description": "可选，账号 ID；缺省表示本机账号"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "found": {
+            "type": "boolean"
+          },
+          "self": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "found",
+          "self"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "account.me",
+      "summary": "返回当前登录账号与设备信息",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "device_id"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "account.qrParse",
+      "summary": "解析并验签二维码加好友名片，返回对方账号 ID/设备 PeerID/昵称",
+      "params": {
+        "type": "object",
+        "properties": {
+          "payload": {
+            "type": "string",
+            "description": "扫描或粘贴得到的二维码文本"
+          }
+        },
+        "required": [
+          "payload"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "account.qrPayload",
+      "summary": "生成当前账号的二维码加好友名片（含账号 ID 与设备 PeerID，账号私钥签名防篡改）",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "payload": {
+            "type": "string",
+            "description": "二维码文本，形如 nexmem://add/\u003cbase64url\u003e"
+          },
+          "account_id": {
+            "type": "string"
+          },
+          "device_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "payload"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "backup.export",
+      "summary": "导出加密备份到指定路径；口令以 base64 传入并在使用后清零",
+      "params": {
+        "type": "object",
+        "properties": {
+          "passphrase_b64": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "passphrase_b64",
+          "path"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "backup.import",
+      "summary": "从加密备份恢复账号与历史消息",
+      "params": {
+        "type": "object",
+        "properties": {
+          "passphrase_b64": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "passphrase_b64",
+          "path"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "contact.add",
+      "summary": "添加联系人（可选同时写入本地备注，备注不上行）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string"
+          },
+          "alias": {
+            "type": "string",
+            "description": "本地备注名，仅本机可见"
+          }
+        },
+        "required": [
+          "peer"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "contact.block",
+      "summary": "设置或取消拉黑；拉黑后双方均无法互发消息",
+      "params": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string"
+          },
+          "blocked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "peer",
+          "blocked"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "contact.list",
+      "summary": "列出本地联系人",
+      "params": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "contact.remark",
+      "summary": "设置或清除本地备注；备注仅本机可见，不上行",
+      "params": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string"
+          },
+          "remark": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer",
+          "remark"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "contact.setGroup",
+      "summary": "设置或清除好友分组（空串清除）；仅本机可见，不上行",
+      "params": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string"
+          },
+          "group": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer",
+          "group"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "conversation.clear",
+      "summary": "清空会话本机历史与检索索引（不影响对端，会话保留且未读归零）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "conversation.delete",
+      "summary": "删除本地会话条目（历史消息保留，收到新消息时重新出现）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "conversation.list",
+      "summary": "按最近消息时间倒序返回会话列表；单聊条目给出 peer 供发送复用",
+      "params": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "conversation.update",
+      "summary": "设置会话本机标记：置顶影响列表排序，免打扰仅本机展示（至少提供其一）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "置顶"
+          },
+          "muted": {
+            "type": "boolean",
+            "description": "免打扰"
+          }
+        },
+        "required": [
+          "conversation_id"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "core.info",
+      "summary": "返回 API 版本、内核版本与当前已接入能力，用于启动时版本协商",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "api_version": {
+            "type": "string"
+          },
+          "core_version": {
+            "type": "string"
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "api_version",
+          "core_version",
+          "features"
+        ]
+      },
+      "implemented": true
+    },
+    {
+      "name": "core.ping",
+      "summary": "健康探测：Web 网关与内核存活检查，返回服务端时间戳",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "pong": {
+            "type": "boolean"
+          },
+          "server_ts": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pong",
+          "server_ts"
+        ]
+      },
+      "implemented": true
+    },
+    {
+      "name": "core.start",
+      "summary": "启动内核（幂等）：打开数据库与 host，已启动时直接返回当前状态",
+      "params": {
+        "type": "object",
+        "properties": {
+          "config": {
+            "type": "object",
+            "description": "数据库路径、监听地址、bootstrap 列表等启动配置"
+          }
+        },
+        "required": [
+          "config"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "init",
+              "starting",
+              "online",
+              "degraded",
+              "offline",
+              "stopped"
+            ]
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "core.stop",
+      "summary": "停止内核并释放 host 与数据库句柄",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "diag.export",
+      "summary": "导出脱敏诊断日志",
+      "params": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "diag.snapshot",
+      "summary": "返回运行指标快照：在线时长、DHT 耗时、打洞结果与 S3 状态码",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "uptime_ms": {
+            "type": "integer"
+          },
+          "dht_lookups": {
+            "type": "integer"
+          },
+          "dht_errors": {
+            "type": "integer"
+          },
+          "dht_p50_ms": {
+            "type": "number"
+          },
+          "dht_p95_ms": {
+            "type": "number"
+          },
+          "holepunch": {
+            "type": "object"
+          },
+          "s3_status": {
+            "type": "object"
+          },
+          "log_records": {
+            "type": "integer"
+          },
+          "log_dropped": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "uptime_ms",
+          "dht_lookups",
+          "dht_errors",
+          "dht_p50_ms",
+          "dht_p95_ms",
+          "holepunch",
+          "s3_status"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "dm.sendFile",
+      "summary": "发送单聊文件：path 必须是应用可读的绝对路径",
+      "params": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "mime": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer",
+          "path"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "msg_uuid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "msg_uuid"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "dm.sendGroupFile",
+      "summary": "发送群文件（A-02）：加密写入群盘并把附件元数据广播到群，单文件上限 1 MiB",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "应用可读的绝对路径"
+          },
+          "mime": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "path"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "msg_uuid": {
+            "type": "string"
+          },
+          "stored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "msg_uuid"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "dm.sendGroupText",
+      "summary": "发送群聊文本",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "mentions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "可选，被 @ 的成员账号 ID 列表"
+          },
+          "ttl_hours": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 168,
+            "description": "可选，定时消息存活小时数（1～168），到期后各成员各自销毁本机副本"
+          }
+        },
+        "required": [
+          "group_id",
+          "text"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "msg_uuid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "msg_uuid"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "dm.sendText",
+      "summary": "发送单聊文本：立即入库并返回 msg_uuid，发送状态走 message.updated 事件",
+      "params": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string",
+            "description": "对端账号 ID"
+          },
+          "text": {
+            "type": "string",
+            "description": "文本正文"
+          },
+          "reply_to": {
+            "type": "string",
+            "description": "可选，被回复的消息 UUID"
+          },
+          "mentions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "可选，被 @ 的成员账号 ID 列表"
+          },
+          "ttl_hours": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 168,
+            "description": "可选，定时消息存活小时数（1～168），到期后双方各自销毁本机副本"
+          }
+        },
+        "required": [
+          "peer",
+          "text"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "msg_uuid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "msg_uuid"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "dm.setTyping",
+      "summary": "向对端发送单聊输入状态（瞬时、不落库、不重试）；typing=false 表示停止输入",
+      "params": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string",
+            "description": "对端账号 ID"
+          },
+          "typing": {
+            "type": "boolean",
+            "description": "是否正在输入"
+          }
+        },
+        "required": [
+          "peer",
+          "typing"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "file.downloadGroup",
+      "summary": "下载群文件（A-02）：从群盘取回密文、解密并写入本地路径",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "blob_ref": {
+            "type": "string"
+          },
+          "key_b64": {
+            "type": "string",
+            "description": "附件 AES 密钥（base64）"
+          },
+          "path": {
+            "type": "string",
+            "description": "本地目标绝对路径"
+          }
+        },
+        "required": [
+          "group_id",
+          "blob_ref",
+          "key_b64",
+          "path"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "size"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.create",
+      "summary": "创建群聊并邀请成员",
+      "params": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "title",
+          "members"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.dissolve",
+      "summary": "解散群聊（仅管理员）：广播解散通知并清理本地群记录与密钥",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.invite",
+      "summary": "邀请账号入群（仅管理员）：分发当前版本群密钥并同步成员表",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string",
+            "description": "成员账号公钥，十六进制或 base64url"
+          }
+        },
+        "required": [
+          "group_id",
+          "account"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "key_version": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group_id",
+          "key_version",
+          "failed"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.leave",
+      "summary": "退出群聊：清理本地群记录、密钥与订阅，之后不再接收该群消息",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.list",
+      "summary": "列出本机已加入的群聊：返回群名、成员数与本人角色，供通讯录群聊分组展示",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.members",
+      "summary": "列出群成员与密钥版本；`storage_configured` 供客户端展示群盘未配置提示，`announcement` 为本机群公告",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "storage_configured": {
+            "type": "boolean"
+          },
+          "announcement": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "members"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.remove",
+      "summary": "移除群成员（仅管理员）：立即轮换密钥并通知剩余成员",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string",
+            "description": "成员账号公钥，十六进制或 base64url"
+          }
+        },
+        "required": [
+          "group_id",
+          "account"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "key_version": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group_id",
+          "key_version",
+          "failed"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.setAlias",
+      "summary": "设置本机群备注（任意成员）：空串表示清除，最多 32 字；仅本机可见、不上行",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "alias": {
+            "type": "string",
+            "description": "群备注，最长 32 字；传空串表示清除"
+          }
+        },
+        "required": [
+          "group_id",
+          "alias"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "alias"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.setAnnouncement",
+      "summary": "设置群公告（仅管理员）：空串表示清除，最多 512 字；成员离线可补收",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "announcement": {
+            "type": "string",
+            "description": "公告正文，最长 512 字；传空串表示清除"
+          }
+        },
+        "required": [
+          "group_id",
+          "announcement"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "announcement": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "announcement"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.setStorage",
+      "summary": "配置群盘（对象存储）；凭证只在 Go 内使用，不回传",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "ak": {
+            "type": "string"
+          },
+          "sk": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "endpoint",
+          "bucket",
+          "prefix",
+          "region",
+          "ak",
+          "sk"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "msg.delete",
+      "summary": "本地删除一条消息（仅本机，不影响对端）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "msg_uuid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "msg_uuid"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "msg.edit",
+      "summary": "编辑自己发出的消息正文：更新本机并尽力通知对端，正文带 edited 标记",
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "msg_uuid": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "新的正文，非空"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "msg_uuid",
+          "text"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "edited": {
+            "type": "boolean"
+          },
+          "msg_uuid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "edited",
+          "msg_uuid"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "msg.list",
+      "summary": "按会话倒序分页拉取消息；列表项含本机单调 seq，可作为 msg.listSince 的增量基准",
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "before_id": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "required": [
+          "conversation_id",
+          "limit"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "msg.listSince",
+      "summary": "按事件序号增量拉取会话消息",
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "after_seq": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "conversation_id",
+          "after_seq"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "msg.markRead",
+      "summary": "把会话已读位置推进到指定消息",
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "up_to_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "up_to_id"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "msg.recall",
+      "summary": "撤回自己 2 分钟内发出的单聊消息；先删本机再尽力通知对端",
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "description": "必须是 dm:\u003chex\u003e|\u003chex\u003e 单聊会话"
+          },
+          "msg_uuid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "msg_uuid"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "recalled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "recalled"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "msg.search",
+      "summary": "本地全文搜索（FTS5）；conversation_id 非空时只在该会话内检索",
+      "params": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": "string",
+            "description": "可选，限定在该会话内检索；为空表示全部会话"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "required": [
+          "q",
+          "limit"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "push.register",
+      "summary": "登记设备推送令牌到索引服务（C-07）；令牌由宿主获取，内核签名后上报",
+      "params": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "APNs/FCM 设备令牌，16-512 字符"
+          },
+          "env": {
+            "type": "string",
+            "enum": [
+              "production",
+              "development",
+              "sandbox"
+            ],
+            "description": "留空用服务端默认"
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "registered": {
+            "type": "boolean"
+          },
+          "tokens": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "registered"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "push.unregister",
+      "summary": "注销一个设备推送令牌（C-07）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "env": {
+            "type": "string",
+            "enum": [
+              "production",
+              "development",
+              "sandbox"
+            ]
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "removed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "removed"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "report.submit",
+      "summary": "提交举报：附带可选脱敏诊断包；未配置索引服务时返回 NOT_STARTED",
+      "params": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "harassment",
+              "spam",
+              "fraud",
+              "porn",
+              "other"
+            ]
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "diagnostics_path": {
+            "type": "string",
+            "description": "可选，diag.export 导出的脱敏诊断包绝对路径"
+          },
+          "client_version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "report_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "report_id"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "rtc.sendSignal",
+      "summary": "透传 RTC 信令（SDP / ICE）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string"
+          },
+          "payload_b64": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer",
+          "payload_b64"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "settings.exportSnapshot",
+      "summary": "导出本机设置快照为可跨设备搬运的校验文本（多设备设置同步，P6-41）",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "snapshot": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "snapshot",
+          "count"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "settings.get",
+      "summary": "读取本机键值设置（如 `ui.theme_mode`）；未设置时 found=false",
+      "params": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "设置键：小写字母/数字，可用 . 或 _ 分隔，1~64 字符"
+          }
+        },
+        "required": [
+          "key"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "found": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "value",
+          "found"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "settings.importSnapshot",
+      "summary": "导入并合并另一设备导出的设置快照；冲突时以导入值覆盖（P6-41）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "snapshot": {
+            "type": "string",
+            "description": "settings://v1/ 开头的快照文本"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "可选，仅校验不写入"
+          }
+        },
+        "required": [
+          "snapshot"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "integer"
+          },
+          "dry_run": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "applied"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "settings.set",
+      "summary": "写入本机键值设置；value 为空串时清除该键",
+      "params": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string",
+            "description": "值，最长 4 KiB；空串表示删除"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "storage.configure",
+      "summary": "保存离线存储配置（AK/SK 以 Keystore 主密钥封装落盘），下次启动内核生效",
+      "params": {
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "ak": {
+            "type": "string",
+            "description": "省略时沿用上次保存的 Access Key"
+          },
+          "sk": {
+            "type": "string",
+            "description": "省略时沿用上次保存的 Secret Key"
+          },
+          "path_style": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "false 关闭离线存储，省略视为启用"
+          },
+          "public": {
+            "type": "boolean",
+            "description": "false 关闭对外公开，对端只能在线发送；省略沿用上次保存的值"
+          },
+          "delete_after_read": {
+            "type": "boolean",
+            "description": "true 开启已读后删除 S3 密文对象（仅单设备独占桶可用）；省略沿用上次保存值"
+          }
+        },
+        "required": [
+          "endpoint",
+          "bucket"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "public": {
+            "type": "boolean"
+          },
+          "delete_after_read": {
+            "type": "boolean"
+          },
+          "restart_required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "configured",
+          "restart_required"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "storage.get",
+      "summary": "回显本机保存的离线存储配置；Secret Key 永不回传",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "public": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "path_style": {
+            "type": "boolean"
+          },
+          "ak": {
+            "type": "string"
+          },
+          "delete_after_read": {
+            "type": "boolean",
+            "description": "已读后删除 S3 密文对象；false 表示由桶生命周期清理"
+          }
+        },
+        "required": [
+          "configured"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "storage.test",
+      "summary": "对象存储连通性自检（R2 / MinIO / OSS / COS / Backblaze B2 / 个人 NAS，均为 S3 兼容）：写入、回读并列举一个临时对象",
+      "params": {
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "ak": {
+            "type": "string"
+          },
+          "sk": {
+            "type": "string"
+          },
+          "path_style": {
+            "type": "boolean",
+            "description": "可选，true 时使用 path-style 寻址（MinIO 常用）"
+          }
+        },
+        "required": [
+          "endpoint",
+          "bucket",
+          "prefix",
+          "region",
+          "ak",
+          "sk"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "latency_ms": {
+            "type": "integer"
+          },
+          "writable": {
+            "type": "boolean"
+          },
+          "listable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "latency_ms",
+          "writable",
+          "listable"
+        ]
+      },
+      "implemented": false
+    }
+  ],
+  "events": [
+    {
+      "type": "state.changed",
+      "description": "内核连接状态变化",
+      "data": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "init",
+              "starting",
+              "online",
+              "degraded",
+              "offline",
+              "stopped"
+            ]
+          }
+        },
+        "required": [
+          "state"
+        ]
+      }
+    },
+    {
+      "type": "message.new",
+      "description": "新消息入库，只给指针，正文由 msg.listSince 拉取",
+      "data": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "msg_uuid": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "in",
+              "out"
+            ]
+          }
+        },
+        "required": [
+          "conversation_id",
+          "msg_uuid"
+        ]
+      }
+    },
+    {
+      "type": "message.updated",
+      "description": "消息发送状态变化；read 由对端已读回执推进，reason 仅确定性失败时出现（如 OFFLINE_STORAGE_DISABLED）",
+      "data": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "msg_uuid": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "sent",
+              "acked",
+              "failed",
+              "received",
+              "read"
+            ]
+          },
+          "offline": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "msg_uuid",
+          "state"
+        ]
+      }
+    },
+    {
+      "type": "message.recalled",
+      "description": "消息被本机或对端撤回，客户端按 msg_uuid 移除气泡",
+      "data": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "msg_uuid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "msg_uuid"
+        ]
+      }
+    },
+    {
+      "type": "message.edited",
+      "description": "消息正文被本机或对端编辑，客户端按 msg_uuid 更新气泡并标记「已编辑」",
+      "data": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "msg_uuid": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "edited_at": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "msg_uuid",
+          "text"
+        ]
+      }
+    },
+    {
+      "type": "message.expired",
+      "description": "定时消息到期被本机物理销毁，客户端按 msg_uuid 移除气泡（双方各自触发）",
+      "data": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "msg_uuid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "msg_uuid"
+        ]
+      }
+    },
+    {
+      "type": "typing",
+      "description": "对端单聊输入状态变化（瞬时，不落库）；typing=false 表示停止输入",
+      "data": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string"
+          },
+          "typing": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "peer",
+          "typing"
+        ]
+      }
+    },
+    {
+      "type": "conversation.changed",
+      "description": "未读数或标题变化，100ms 合并",
+      "data": {
+        "type": "object",
+        "properties": {
+          "conversation_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "conversation_ids"
+        ]
+      }
+    },
+    {
+      "type": "ack",
+      "description": "应用层回执",
+      "data": {
+        "type": "object",
+        "properties": {
+          "msg_uuid": {
+            "type": "string"
+          },
+          "code": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "msg_uuid",
+          "code"
+        ]
+      }
+    },
+    {
+      "type": "transfer.progress",
+      "description": "文件传输进度，200ms 节流",
+      "data": {
+        "type": "object",
+        "properties": {
+          "msg_uuid": {
+            "type": "string"
+          },
+          "done": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "msg_uuid",
+          "done",
+          "total"
+        ]
+      }
+    },
+    {
+      "type": "rtc.signal",
+      "description": "对端 RTC 信令",
+      "data": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string"
+          },
+          "payload_b64": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer",
+          "payload_b64"
+        ]
+      }
+    },
+    {
+      "type": "error",
+      "description": "非请求上下文的异步错误",
+      "data": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ]
+      }
+    },
+    {
+      "type": "resync_required",
+      "description": "事件缺口或缓冲溢出，需要全量重同步",
+      "data": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      }
+    },
+    {
+      "type": "group.dissolved",
+      "description": "群被管理员解散，成员按 group_id 清理本机群状态（不产生气泡）",
+      "data": {
+        "type": "object",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "group_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ]
+      }
+    },
+    {
+      "type": "group.announcement",
+      "description": "管理员更新群公告，成员按 group_id 刷新本机公告（不产生气泡）",
+      "data": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "announcement": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "announcement"
+        ]
+      }
+    }
+  ]
+}

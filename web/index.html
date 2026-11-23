@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexmem Web 网关自检</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f6f8; color: #1f2329; }
+  main { max-width: 760px; margin: 32px auto; padding: 0 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.hint { margin: 0 0 20px; color: #646a73; }
+  section { background: #fff; border: 1px solid #e5e6eb; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #d0d3d9; border-radius: 6px; font: inherit; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .row > input { flex: 1 1 180px; width: auto; }
+  button { padding: 8px 16px; border: 0; border-radius: 6px; background: #1664ff; color: #fff; font: inherit; cursor: pointer; }
+  button.secondary { background: #eef1f6; color: #1f2329; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  #status { margin-top: 12px; color: #646a73; }
+  #status.up { color: #1a7f37; }
+  #status.down { color: #c62828; }
+  #log { height: 260px; overflow: auto; margin: 0; padding: 10px; border-radius: 6px; background: #0f1115; color: #d7dae0; font: 12px/1.6 ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Nexmem Web 网关自检</h1>
+  <p class="hint">P1-15 验收页：浏览器经 WebSocket 完成 core.ping 与 dm.sendText 往返。未带令牌的连接会被拒绝。</p>
+
+  <section>
+    <label for="token">访问令牌</label>
+    <input id="token" type="password" autocomplete="off" placeholder="nexmem-webd 启动时打印的令牌">
+    <div class="row">
+      <button id="connect">连接</button>
+      <button id="ping" class="secondary" disabled>发送 ping</button>
+      <button id="disconnect" class="secondary" disabled>断开</button>
+    </div>
+    <div id="status">未连接</div>
+  </section>
+
+  <section>
+    <label for="peer">send_text：对端账号</label>
+    <input id="peer" placeholder="对端账号 ID">
+    <div class="row">
+      <input id="text" placeholder="文本内容" value="hello nexmem">
+      <button id="send" disabled>发送</button>
+    </div>
+  </section>
+
+  <section>
+    <label>通道日志</label>
+    <pre id="log"></pre>
+  </section>
+</main>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log');
+  const statusEl = $('status');
+  let ws = null;
+  let nextID = 1;
+
+  function log(direction, payload) {
+    const line = '[' + new Date().toLocaleTimeString() + '] ' + direction + ' ' +
+      (typeof payload === 'string' ? payload : JSON.stringify(payload));
+    logEl.textContent += line + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = cls || '';
+  }
+
+  function setConnected(connected) {
+    $('ping').disabled = !connected;
+    $('send').disabled = !connected;
+    $('disconnect').disabled = !connected;
+    $('connect').disabled = connected;
+    $('token').disabled = connected;
+  }
+
+  function connect() {
+    const token = $('token').value.trim();
+    if (!token) {
+      setStatus('请先填写访问令牌', 'down');
+      return;
+    }
+    const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+    const url = scheme + '://' + location.host + '/ws?token=' + encodeURIComponent(token);
+    setStatus('正在连接…');
+    ws = new WebSocket(url);
+
+    ws.onopen = function () {
+      setConnected(true);
+      setStatus('已连接 ' + location.host, 'up');
+      log('CONNECT', url.replace(token, '***'));
+    };
+    ws.onclose = function (ev) {
+      setConnected(false);
+      setStatus('连接已关闭 (' + ev.code + ')', 'down');
+      log('CLOSE', { code: ev.code, reason: ev.reason });
+      ws = null;
+    };
+    ws.onerror = function () {
+      setStatus('连接失败：令牌无效或服务未启动', 'down');
+    };
+    ws.onmessage = function (ev) {
+      let payload;
+      try { payload = JSON.parse(ev.data); } catch (e) { payload = ev.data; }
+      if (payload && payload.seq !== undefined && payload.method === undefined) {
+        log('EVENT', payload);
+      } else {
+        log('RESPONSE', payload);
+      }
+    };
+  }
+
+  function send(method, params) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setStatus('未连接', 'down');
+      return;
+    }
+    const req = { id: nextID++, method: method };
+    if (params) { req.params = params; }
+    log('REQUEST', req);
+    ws.send(JSON.stringify(req));
+  }
+
+  $('connect').onclick = connect;
+  $('disconnect').onclick = function () { if (ws) { ws.close(); } };
+  $('ping').onclick = function () { send('core.ping'); };
+  $('send').onclick = function () {
+    send('dm.sendText', { peer: $('peer').value.trim(), text: $('text').value });
+  };
+})();
+</script>
+</body>
+</html>

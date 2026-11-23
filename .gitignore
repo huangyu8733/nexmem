@@ -1,0 +1,21 @@
+bin/
+data/
+.toolchain/
+*.key
+*.log
+*.csv
+.dev-lock
+
+# 构建产物（本地重编，D-03 口径；体积大且可再生成）
+dist/
+app/build/
+app/android/app/libs/*.aar
+app/android/app/libs/*.jar
+app/android/app/outputs/
+app/android/.gradle/
+app/.dart_tool/
+*.apk
+
+# 项目私有数据 / 会话记忆 / 截图
+.workbuddy/
+.screenshots/

@@ -1,0 +1,13 @@
+version: v2
+modules:
+  - path: core/proto
+lint:
+  use:
+    - STANDARD
+  except:
+    # 枚举零值承载业务语义（FRAME_TYPE_HELLO / CONTENT_TYPE_TEXT），
+    # 改为 *_UNSPECIFIED 会破坏既有的线上帧与消息格式兼容。
+    - ENUM_ZERO_VALUE_SUFFIX
+    # 五份 proto 同属 nexmem.v1 单包，按单一模块平铺放在 core/proto 下，
+    # 不采用 package/目录一一对应的目录树。
+    - PACKAGE_DIRECTORY_MATCH

@@ -1,0 +1,34 @@
+# Caddy 反代示例（P6-10）：自动 HTTPS + WebSocket 透传
+#
+# 使用方式：
+#   NEXMEM_DOMAIN=chat.example.com docker compose -f deploy/web/docker-compose.yml up -d
+#
+# Caddy 默认会为域名自动申请 Let's Encrypt 证书；本地联调可用 localhost 或
+# `caddy run --config deploy/web/Caddyfile` 由 Caddy 内置 CA 签发。
+
+{$NEXMEM_DOMAIN:localhost} {
+	encode zstd gzip
+
+	# WebSocket 与 HTTP 复用同一后端；Caddy 自动识别 Upgrade 头。
+	reverse_proxy webd:8082 {
+		# 请求体上限与网关 64 KiB 信封约束一致
+		request_body {
+			max_size 1MB
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MB
+			roll_keep 3
+		}
+	}
+}

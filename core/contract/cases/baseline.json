@@ -1,0 +1,1361 @@
+{
+  "version": 1,
+  "description": "跨端契约用例：Go 侧校验 gateway.Handle 的实际输出，Dart 侧校验同一份 Request/Response 信封的编解码。仅收录与阶段无关的稳定语义（schema 校验与已实现方法），避免出现 NOT_STARTED 等随装配进度变化的期望；未接入实现的方法用参数校验失败路径覆盖，保证 contract/api.json 中每个方法都至少有一条用例。",
+  "cases": [
+    {
+      "id": "core.ping.ok",
+      "request": {
+        "id": 1,
+        "method": "core.ping",
+        "params": {}
+      },
+      "expect": {
+        "ok": true
+      },
+      "response": {
+        "ok": true,
+        "data": {
+          "pong": true,
+          "server_ts": 1730000000000
+        }
+      },
+      "data_required": [
+        "pong",
+        "server_ts"
+      ],
+      "data_types": {
+        "pong": "bool",
+        "server_ts": "int"
+      }
+    },
+    {
+      "id": "core.ping.params-omitted",
+      "request": {
+        "id": 2,
+        "method": "core.ping"
+      },
+      "expect": {
+        "ok": true
+      },
+      "response": {
+        "ok": true,
+        "data": {
+          "pong": true,
+          "server_ts": 1730000000001
+        }
+      },
+      "data_required": [
+        "pong"
+      ],
+      "data_types": {
+        "pong": "bool"
+      }
+    },
+    {
+      "id": "core.info.ok",
+      "request": {
+        "id": 3,
+        "method": "core.info",
+        "params": {}
+      },
+      "expect": {
+        "ok": true
+      },
+      "response": {
+        "ok": true,
+        "data": {
+          "api_version": "1.0.0",
+          "core_version": "0.1.0-dev",
+          "features": [
+            "core.ping",
+            "core.info"
+          ]
+        }
+      },
+      "data_required": [
+        "api_version",
+        "core_version",
+        "features"
+      ],
+      "data_types": {
+        "api_version": "string",
+        "core_version": "string",
+        "features": "array"
+      }
+    },
+    {
+      "id": "core.info.params-not-object",
+      "request": {
+        "id": 4,
+        "method": "core.info",
+        "params": "oops"
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "params 必须是 JSON 对象",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "core.start.missing-config",
+      "request": {
+        "id": 5,
+        "method": "core.start",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 config",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "unknown.method",
+      "unknown_method": true,
+      "request": {
+        "id": 6,
+        "method": "no.such.method",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "未知方法",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "dm.sendText.missing-text",
+      "request": {
+        "id": 7,
+        "method": "dm.sendText",
+        "params": {
+          "peer": "acct-bob"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 text",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "dm.sendText.peer-type",
+      "request": {
+        "id": 8,
+        "method": "dm.sendText",
+        "params": {
+          "peer": 42,
+          "text": "hi"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "peer 必须是字符串",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "dm.sendFile.missing-path",
+      "request": {
+        "id": 9,
+        "method": "dm.sendFile",
+        "params": {
+          "peer": "acct-bob"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 path",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "msg.list.limit-too-small",
+      "request": {
+        "id": 10,
+        "method": "msg.list",
+        "params": {
+          "conversation_id": "dm:acct-alice:acct-bob",
+          "limit": 0
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "limit 不能小于 1",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "msg.list.limit-too-large",
+      "request": {
+        "id": 11,
+        "method": "msg.list",
+        "params": {
+          "conversation_id": "dm:acct-alice:acct-bob",
+          "limit": 201
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "limit 不能大于 200",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "msg.markRead.missing-up-to-id",
+      "request": {
+        "id": 12,
+        "method": "msg.markRead",
+        "params": {
+          "conversation_id": "dm:acct-alice:acct-bob"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 up_to_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "msg.search.missing-q",
+      "request": {
+        "id": 13,
+        "method": "msg.search",
+        "params": {
+          "limit": 10
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 q",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "contact.block.blocked-type",
+      "request": {
+        "id": 14,
+        "method": "contact.block",
+        "params": {
+          "peer": "acct-bob",
+          "blocked": "yes"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "blocked 必须是布尔值",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.create.members-item-type",
+      "request": {
+        "id": 15,
+        "method": "group.create",
+        "params": {
+          "title": "周末计划",
+          "members": [
+            1
+          ]
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "members[0] 必须是字符串",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.setStorage.missing-sk",
+      "request": {
+        "id": 16,
+        "method": "group.setStorage",
+        "params": {
+          "group_id": "grp-1",
+          "endpoint": "https://s3.example.com",
+          "bucket": "nexmem",
+          "prefix": "group",
+          "region": "auto",
+          "ak": "AK"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 sk",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "storage.test.path-style-type",
+      "request": {
+        "id": 17,
+        "method": "storage.test",
+        "params": {
+          "endpoint": "https://s3.example.com",
+          "bucket": "nexmem",
+          "prefix": "selftest",
+          "region": "auto",
+          "ak": "AK",
+          "sk": "SK",
+          "path_style": "yes"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "path_style 必须是布尔值",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "backup.export.passphrase-type",
+      "request": {
+        "id": 18,
+        "method": "backup.export",
+        "params": {
+          "passphrase_b64": 123,
+          "path": "C:/tmp/nexmem.bak"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "passphrase_b64 必须是字符串",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "rtc.sendSignal.missing-payload",
+      "request": {
+        "id": 19,
+        "method": "rtc.sendSignal",
+        "params": {
+          "peer": "acct-bob"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 payload_b64",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "account.me.params-not-object",
+      "request": {
+        "id": 20,
+        "method": "account.me",
+        "params": "oops"
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "params 必须是 JSON 对象",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "core.stop.params-not-object",
+      "request": {
+        "id": 21,
+        "method": "core.stop",
+        "params": [
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "params 必须是 JSON 对象",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "conversation.list.limit-too-small",
+      "request": {
+        "id": 22,
+        "method": "conversation.list",
+        "params": {
+          "limit": 0
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "limit 不能小于 1",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "contact.list.limit-too-large",
+      "request": {
+        "id": 23,
+        "method": "contact.list",
+        "params": {
+          "limit": 1001
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "limit 不能大于 1000",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "contact.add.missing-peer",
+      "request": {
+        "id": 24,
+        "method": "contact.add",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 peer",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "contact.remark.missing-remark",
+      "request": {
+        "id": 25,
+        "method": "contact.remark",
+        "params": {
+          "peer": "acct-bob"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 remark",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "diag.export.missing-path",
+      "request": {
+        "id": 26,
+        "method": "diag.export",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 path",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "diag.snapshot.params-not-object",
+      "request": {
+        "id": 27,
+        "method": "diag.snapshot",
+        "params": "oops"
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "params 必须是 JSON 对象",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "dm.sendGroupText.missing-text",
+      "request": {
+        "id": 28,
+        "method": "dm.sendGroupText",
+        "params": {
+          "group_id": "grp-1"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 text",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.members.missing-group-id",
+      "request": {
+        "id": 29,
+        "method": "group.members",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 group_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "msg.listSince.missing-after-seq",
+      "request": {
+        "id": 30,
+        "method": "msg.listSince",
+        "params": {
+          "conversation_id": "dm:acct-alice:acct-bob"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 after_seq",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "report.submit.missing-reason",
+      "request": {
+        "id": 31,
+        "method": "report.submit",
+        "params": {
+          "detail": "有垃圾信息"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 reason",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "backup.import.missing-path",
+      "request": {
+        "id": 32,
+        "method": "backup.import",
+        "params": {
+          "passphrase_b64": "cGFzc3BocmFzZQ=="
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 path",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "conversation.delete.missing-conversation-id",
+      "request": {
+        "id": 33,
+        "method": "conversation.delete",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 conversation_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "msg.recall.missing-conversation-id",
+      "request": {
+        "id": 35,
+        "method": "msg.recall",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 conversation_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "msg.delete.missing-conversation-id",
+      "request": {
+        "id": 34,
+        "method": "msg.delete",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 conversation_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "conversation.clear.missing-conversation-id",
+      "request": {
+        "id": 36,
+        "method": "conversation.clear",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 conversation_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "storage.get.params-not-object",
+      "request": {
+        "id": 37,
+        "method": "storage.get",
+        "params": "oops"
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "params 必须是 JSON 对象",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "storage.configure.missing-bucket",
+      "request": {
+        "id": 38,
+        "method": "storage.configure",
+        "params": {
+          "endpoint": "https://s3.example.com"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 bucket",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.invite.missing-group-id",
+      "request": {
+        "id": 39,
+        "method": "group.invite",
+        "params": {
+          "account": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 group_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.remove.missing-account",
+      "request": {
+        "id": 40,
+        "method": "group.remove",
+        "params": {
+          "group_id": "00112233445566778899aabbccddeeff"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 account",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.leave.missing-group-id",
+      "request": {
+        "id": 41,
+        "method": "group.leave",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 group_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.dissolve.missing-group-id",
+      "request": {
+        "id": 42,
+        "method": "group.dissolve",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 group_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "settings.get.missing-key",
+      "request": {
+        "id": 43,
+        "method": "settings.get",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 key",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "settings.set.missing-value",
+      "request": {
+        "id": 44,
+        "method": "settings.set",
+        "params": {
+          "key": "ui.theme_mode"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 value",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "conversation.update.missing-conversation-id",
+      "request": {
+        "id": 45,
+        "method": "conversation.update",
+        "params": {
+          "pinned": true
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 conversation_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.list.non-object-params",
+      "request": {
+        "id": 46,
+        "method": "group.list",
+        "params": []
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "params 必须是 JSON 对象",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "account.devices.non-object-params",
+      "request": {
+        "id": 47,
+        "method": "account.devices",
+        "params": []
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "params 必须是 JSON 对象",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.setAnnouncement.missing-announcement",
+      "request": {
+        "id": 48,
+        "method": "group.setAnnouncement",
+        "params": {
+          "group_id": "00112233445566778899aabbccddeeff"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 announcement",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.setAnnouncement.too-long",
+      "request": {
+        "id": 49,
+        "method": "group.setAnnouncement",
+        "params": {
+          "group_id": "00112233445566778899aabbccddeeff",
+          "announcement": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "群公告最多 512 字",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.setAnnouncement.not-admin",
+      "request": {
+        "id": 50,
+        "method": "group.setAnnouncement",
+        "params": {
+          "group_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+          "announcement": "本周六上午十点全员会议"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "仅群管理员可设置群公告",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.setAlias.missing-alias",
+      "request": {
+        "id": 51,
+        "method": "group.setAlias",
+        "params": {
+          "group_id": "00112233445566778899aabbccddeeff"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 alias",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.setAlias.too-long",
+      "request": {
+        "id": 52,
+        "method": "group.setAlias",
+        "params": {
+          "group_id": "00112233445566778899aabbccddeeff",
+          "alias": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "群备注最多 32 字",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "contact.setGroup.missing-group",
+      "request": {
+        "id": 53,
+        "method": "contact.setGroup",
+        "params": {
+          "peer": "00112233445566778899aabbccddeeff"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 group",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "contact.setGroup.too-long",
+      "request": {
+        "id": 54,
+        "method": "contact.setGroup",
+        "params": {
+          "peer": "00112233445566778899aabbccddeeff",
+          "group": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "好友分组名最多 32 字",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "push.register.missing-token",
+      "request": {
+        "id": 55,
+        "method": "push.register",
+        "params": {
+          "env": "production"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "push.register 参数不合法: 缺少必填参数 token",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "push.unregister.missing-token",
+      "request": {
+        "id": 56,
+        "method": "push.unregister",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "push.unregister 参数不合法: 缺少必填参数 token",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "dm.sendGroupFile.missing-path",
+      "request": {
+        "id": 57,
+        "method": "dm.sendGroupFile",
+        "params": {
+          "group_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "dm.sendGroupFile 参数不合法: 缺少必填参数 path",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "file.downloadGroup.missing-key",
+      "request": {
+        "id": 58,
+        "method": "file.downloadGroup",
+        "params": {
+          "group_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+          "blob_ref": "group_offline/x/files/y.bin",
+          "path": "/tmp/x.bin"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "file.downloadGroup 参数不合法: 缺少必填参数 key_b64",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "msg.edit.missing-fields",
+      "request": {
+        "id": 59,
+        "method": "msg.edit",
+        "params": {
+          "msg_uuid": "0192f3aa-bbbb-7ccc-8ddd-0123456789ab"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "msg.edit 参数不合法: 缺少必填参数 conversation_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "dm.setTyping.missing-peer",
+      "request": {
+        "id": 60,
+        "method": "dm.setTyping",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "dm.setTyping 参数不合法: 缺少必填参数 typing",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "account.qrParse.missing-payload",
+      "request": {
+        "id": 61,
+        "method": "account.qrParse",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "account.qrParse 缺少必填参数 payload",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "account.qrPayload.ok",
+      "request": {
+        "id": 62,
+        "method": "account.qrPayload",
+        "params": {}
+      },
+      "expect": {
+        "ok": true
+      },
+      "response": {
+        "ok": true,
+        "data": {
+          "payload": "nexmem://add/placeholder",
+          "account_id": "abababababababababababababababababababababababababababababababab"
+        }
+      },
+      "data_required": [
+        "payload",
+        "account_id"
+      ],
+      "data_types": {
+        "payload": "string",
+        "account_id": "string"
+      }
+    },
+    {
+      "id": "settings.exportSnapshot.ok",
+      "request": {
+        "id": 63,
+        "method": "settings.exportSnapshot",
+        "params": {}
+      },
+      "expect": {
+        "ok": true
+      },
+      "response": {
+        "ok": true,
+        "data": {
+          "snapshot": "settings://v1/placeholder",
+          "count": 0
+        }
+      },
+      "data_required": [
+        "snapshot",
+        "count"
+      ],
+      "data_types": {
+        "snapshot": "string",
+        "count": "int"
+      }
+    },
+    {
+      "id": "settings.importSnapshot.missing-snapshot",
+      "request": {
+        "id": 64,
+        "method": "settings.importSnapshot",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 snapshot",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}

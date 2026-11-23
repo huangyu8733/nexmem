@@ -1,0 +1,306 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOPROXY: https://proxy.golang.org,direct
+  FLUTTER_VERSION: "3.50.0"
+  BUF_VERSION: "1.47.2"
+
+jobs:
+  # 契约与 schema 门禁：proto 规范 + 生成产物无漂移
+  schema:
+    name: Schema / Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: ${{ env.BUF_VERSION }}
+
+      - name: buf lint
+        run: buf lint
+
+      - name: 生成 protobuf 并检查无漂移
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq protobuf-compiler
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          protoc -I core/proto --go_out=core/api/v1 --go_opt=paths=source_relative core/proto/*.proto
+          git diff --exit-code -- core/api/v1
+
+      - name: 生成契约并检查无漂移
+        run: |
+          go -C core run ./cmd/nexmem-contract
+          git diff --exit-code -- core/contract/api.json
+
+  # 静态检查
+  lint:
+    name: Go lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - name: go vet
+        run: go -C core vet ./...
+
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: core
+          args: --timeout=5m
+
+  # 单元测试：三平台
+  test:
+    name: Go test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - name: go build
+        run: go -C core build ./...
+
+      - name: go test
+        run: go -C core test -count=1 ./...
+
+      - name: 契约测试（Go 侧）
+        run: go -C core test -count=1 ./contract -v
+
+  # 桌面 c-shared 产物：Windows / macOS / Linux
+  cshared:
+    name: c-shared (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            ext: so
+          - os: macos-latest
+            ext: dylib
+          - os: windows-latest
+            ext: dll
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - name: 安装 MinGW（Windows cgo）
+        if: matrix.os == 'windows-latest'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+
+      - name: 设置 CGO 环境
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          "CC=gcc" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: 构建 c-shared
+        shell: bash
+        run: |
+          mkdir -p bin
+          cd core
+          CGO_ENABLED=1 go build -buildmode=c-shared -o "../bin/nexmem.${{ matrix.ext }}" ./ffi/capi
+          ls -l ../bin/
+
+      - name: FFI 往返与内存稳定性（Windows）
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          cd core
+          go run ./ffi/cmd/nexmem-ffitest -dll "../bin/nexmem.${{ matrix.ext }}"
+
+  # 移动端导出层：core/mobile 就绪（P1-07/P1-08）后自动生效
+  gomobile:
+    name: gomobile (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: android
+          - os: macos-latest
+            target: ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - name: 安装 JDK
+        if: matrix.target == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 安装 Android SDK / NDK
+        if: matrix.target == 'android'
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 NDK
+        if: matrix.target == 'android'
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "ndk;27.0.12077973"
+
+      - name: 安装 gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: gomobile init
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+        run: gomobile init
+
+      - name: 绑定导出层
+        shell: bash
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+        run: |
+          if ! compgen -G "core/mobile/*.go" > /dev/null; then
+            echo "::notice::core/mobile 尚无导出层实现（P1-07 Android / P1-08 iOS），跳过 gomobile bind"
+            exit 0
+          fi
+          mkdir -p bin
+          cd core
+          # github.com/wlynxg/anet 通过 go:linkname 引用 net.zoneCache，
+          # Go 1.27 起链接期默认拒绝，移动端产物显式关闭该校验。
+          if [ "${{ matrix.target }}" = "android" ]; then
+            gomobile bind -target=android -androidapi 24 -ldflags="-checklinkname=0" -o ../bin/nexmem.aar ./mobile
+          else
+            gomobile bind -target=ios -ldflags="-checklinkname=0" -o ../bin/Nexmem.xcframework ./mobile
+          fi
+
+  # Flutter：静态检查 + 单测 + Web 产物
+  flutter:
+    name: Flutter (analyze / test / web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        working-directory: app
+        run: flutter pub get
+
+      - name: flutter analyze
+        working-directory: app
+        run: flutter analyze
+
+      - name: flutter test
+        working-directory: app
+        run: flutter test
+
+      - name: 契约测试（Dart 侧）
+        working-directory: app
+        run: flutter test test/contract_test.dart
+
+      - name: flutter build web
+        working-directory: app
+        run: flutter build web --release
+
+  # Web 端 E2E（D-06）：本地联调栈（bootstrap + directory + 双 webd）+ Playwright。
+  # 远端首次实跑依赖 GitHub-hosted runner 与双节点时序，挂 R-13；
+  # 本机可用 PW_CHANNEL=chrome 复用已安装 Chrome。
+  web-e2e:
+    name: Web E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: integration_test/web/package-lock.json
+
+      - name: 构建联调栈二进制
+        run: |
+          mkdir -p bin
+          go -C core build -o ../bin/nexmem-bootstrap ./cmd/nexmem-bootstrap
+          go -C core build -o ../bin/nexmem-directory ./cmd/nexmem-directory
+          go -C core build -o ../bin/nexmem-webd ./cmd/nexmem-webd
+
+      - name: 构建 Web 产物
+        working-directory: app
+        run: flutter build web --release
+
+      - name: 安装 Playwright 依赖与浏览器
+        working-directory: integration_test/web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: 运行 Web E2E
+        working-directory: integration_test/web
+        run: npx playwright test tests/web_e2e.spec.js
+        env:
+          # 使用 Playwright 自带 Chromium，不依赖 runner 预装 Chrome。
+          PW_CHANNEL: ""
+
+      - name: 上传失败截图
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-e2e-failure
+          path: integration_test/web/test-results
+          if-no-files-found: ignore

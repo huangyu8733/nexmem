@@ -1,0 +1,54 @@
+# Nexmem Web 自托管部署（P6-10）
+#
+# 一条命令起服务（先执行 make webdist 生成 Flutter Web 产物）：
+#   docker compose -f deploy/web/docker-compose.yml up -d --build
+#
+# 令牌文件修改后 2s 内热轮换，无需重启容器：
+#   powershell -File deploy/web/rotate-token.ps1
+
+name: nexmem-web
+
+services:
+  webd:
+    build:
+      context: ../..
+      dockerfile: deploy/web/Dockerfile
+    image: nexmem-webd:local
+    environment:
+      NEXMEM_WEB_ADDR: ":8082"
+      NEXMEM_WEB_STATIC: /srv/nexmem/static
+      NEXMEM_WEB_TOKEN_FILE: /run/secrets/web_token
+      NEXMEM_WEB_ORIGINS: "${NEXMEM_WEB_ORIGINS:-}"
+    volumes:
+      - ./data/token:/run/secrets/web_token:ro
+    expose:
+      - "8082"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8082/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # 可选：Caddy 自动申请并续期 TLS 证书，同时完成 WebSocket 反代。
+  # 不需要 TLS 时删除本服务，并把 webd 的 8082 端口直接映射出去。
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - webd
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      NEXMEM_DOMAIN: "${NEXMEM_DOMAIN:-localhost}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

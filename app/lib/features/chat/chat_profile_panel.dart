@@ -1,0 +1,511 @@
+import 'dart:async';
+
+import 'package:flutter/services.dart';
+import 'package:material_ui/material_ui.dart';
+
+import '../../app/theme.dart';
+import '../../transport/transport.dart';
+import '../chats/conversation.dart';
+import '../contacts/contact_service.dart';
+import '../group/group_service.dart';
+import '../group/group_storage.dart';
+
+/// 桌面 / Web 聊天区右侧可折叠资料面板（ui-spec.md §1 三级导航）。
+///
+/// 单聊展示对端账号与端到端加密说明；群聊展示成员表、群盘状态与群设置入口。
+/// 数据源为 `group.members`，未接入内核时保持错误提示与重试入口。
+class ChatProfilePanel extends StatefulWidget {
+  const ChatProfilePanel({
+    super.key,
+    required this.conversation,
+    required this.groups,
+    this.selfAccount = '',
+    this.onClose,
+    this.onOpenGroupInfo,
+  });
+
+  final ConversationItem conversation;
+
+  /// 群资料数据源；单聊不会调用。
+  final GroupService groups;
+
+  /// 当前登录账号，用于在成员表中标记「我」。
+  final String selfAccount;
+
+  final VoidCallback? onClose;
+  final VoidCallback? onOpenGroupInfo;
+
+  @override
+  State<ChatProfilePanel> createState() => _ChatProfilePanelState();
+}
+
+class _ChatProfilePanelState extends State<ChatProfilePanel> {
+  GroupInfo? _info;
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.conversation.isGroup) {
+      unawaited(_load());
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatProfilePanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversation.id == widget.conversation.id) {
+      return;
+    }
+    _info = null;
+    _error = null;
+    if (widget.conversation.isGroup) {
+      unawaited(_load());
+    }
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final String conversationId = widget.conversation.id;
+      final String groupId = conversationId.startsWith('group:')
+          ? conversationId.substring('group:'.length)
+          : conversationId;
+      final GroupInfo info = await widget.groups.members(groupId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _info = info;
+        _loading = false;
+      });
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loading = false;
+        _error = error is NexmemException
+            ? (error.message.isEmpty ? error.code : error.message)
+            : '$error';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Container(
+      key: const ValueKey<String>('chat-profile-panel'),
+      color: scheme.surface,
+      child: Column(
+        children: <Widget>[
+          SizedBox(
+            height: 52,
+            child: Row(
+              children: <Widget>[
+                const SizedBox(width: NexmemMetrics.space16),
+                Expanded(
+                  child: Text(
+                    '聊天信息',
+                    style: Theme.of(context).textTheme.titleMedium
+                        ?.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                IconButton(
+                  key: const ValueKey<String>('chat-profile-close'),
+                  tooltip: '收起',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: widget.onClose,
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: widget.conversation.isGroup
+                ? _buildGroup(context)
+                : _buildDirect(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDirect(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final ConversationItem conversation = widget.conversation;
+    final String account = conversation.peer;
+    return ListView(
+      padding: const EdgeInsets.all(NexmemMetrics.space16),
+      children: <Widget>[
+        Center(
+          child: CircleAvatar(
+            radius: 32,
+            backgroundColor: NexmemColors.primary.withValues(alpha: 0.12),
+            child: Text(
+              _initial(conversation.title),
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w600,
+                color: NexmemColors.primary,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: NexmemMetrics.space12),
+        Center(
+          child: Text(
+            conversation.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontSize: 17, fontWeight: FontWeight.w600),
+          ),
+        ),
+        const SizedBox(height: NexmemMetrics.space4),
+        Center(
+          child: Text(
+            '单聊 · ${_presenceLabel(conversation.presence)}',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontSize: 12,
+              color: scheme.onSurface.withValues(alpha: 0.5),
+            ),
+          ),
+        ),
+        const SizedBox(height: NexmemMetrics.space24),
+        _InfoRow(
+          label: '账号',
+          value: account.isEmpty ? '未知' : shortAccountLabel(account),
+          monospace: true,
+          onCopy: account.isEmpty
+              ? null
+              : () => _copyAccount(context, account),
+        ),
+        const SizedBox(height: NexmemMetrics.space12),
+        _InfoRow(
+          label: '在线状态',
+          value: _presenceLabel(conversation.presence),
+        ),
+        const SizedBox(height: NexmemMetrics.space24),
+        Container(
+          padding: const EdgeInsets.all(NexmemMetrics.space12),
+          decoration: BoxDecoration(
+            color: NexmemColors.success.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(NexmemMetrics.radiusListItem),
+          ),
+          child: Row(
+            children: <Widget>[
+              const Icon(
+                Icons.lock_outline,
+                size: 16,
+                color: NexmemColors.success,
+              ),
+              const SizedBox(width: NexmemMetrics.space8),
+              Expanded(
+                child: Text(
+                  '消息端到端加密，仅你与对方可读',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontSize: 12,
+                    color: NexmemColors.success,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGroup(BuildContext context) {
+    final GroupInfo? info = _info;
+    if (_loading && info == null) {
+      return const Center(
+        key: ValueKey<String>('chat-profile-loading'),
+        child: CircularProgressIndicator(),
+      );
+    }
+    final String? error = _error;
+    if (error != null && info == null) {
+      return Center(
+        key: const ValueKey<String>('chat-profile-error'),
+        child: Padding(
+          padding: const EdgeInsets.all(NexmemMetrics.space16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const Icon(
+                Icons.error_outline,
+                size: 32,
+                color: NexmemColors.danger,
+              ),
+              const SizedBox(height: NexmemMetrics.space12),
+              Text(error, textAlign: TextAlign.center),
+              const SizedBox(height: NexmemMetrics.space12),
+              FilledButton(
+                key: const ValueKey<String>('chat-profile-retry'),
+                onPressed: _load,
+                child: const Text('重试'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (info == null) {
+      return const SizedBox.shrink();
+    }
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final String title =
+        info.title.isEmpty ? widget.conversation.title : info.title;
+    final String selfHex = normalizeAccountHex(widget.selfAccount);
+    return ListView(
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.all(NexmemMetrics.space16),
+          child: Row(
+            children: <Widget>[
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: NexmemColors.primary.withValues(alpha: 0.12),
+                child: const Icon(
+                  Icons.groups_outlined,
+                  size: 24,
+                  color: NexmemColors.primary,
+                ),
+              ),
+              const SizedBox(width: NexmemMetrics.space12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium
+                          ?.copyWith(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    Text(
+                      '群聊 · ${info.members.length} 位成员',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 12,
+                        color: scheme.onSurface.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (!info.storageConfigured) const GroupStorageNotice(),
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: NexmemMetrics.space16,
+            vertical: NexmemMetrics.space12,
+          ),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  '群成员（${info.members.length}）',
+                  key: const ValueKey<String>('chat-profile-member-count'),
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ),
+              Text(
+                '密钥版本 v${info.keyVersion}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontSize: 12,
+                  color: scheme.onSurface.withValues(alpha: 0.5),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        for (final GroupMember member in info.members)
+          _MemberRow(
+            key: ValueKey<String>('chat-profile-member-${member.account}'),
+            member: member,
+            isSelf: selfHex.isNotEmpty &&
+                normalizeAccountHex(member.account) == selfHex,
+          ),
+        if (info.members.isEmpty)
+          Padding(
+            padding: const EdgeInsets.all(NexmemMetrics.space24),
+            child: Text(
+              '暂无成员信息',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: scheme.onSurface.withValues(alpha: 0.45)),
+            ),
+          ),
+        const SizedBox(height: NexmemMetrics.space12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space16),
+          child: OutlinedButton.icon(
+            key: const ValueKey<String>('chat-profile-open-group'),
+            onPressed: widget.onOpenGroupInfo,
+            icon: const Icon(Icons.settings_outlined, size: 18),
+            label: const Text('群设置'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(40),
+            ),
+          ),
+        ),
+        const SizedBox(height: NexmemMetrics.space16),
+      ],
+    );
+  }
+
+  Future<void> _copyAccount(BuildContext context, String account) async {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    await Clipboard.setData(ClipboardData(text: account));
+    messenger.showSnackBar(const SnackBar(content: Text('账号已复制')));
+  }
+
+  static String _initial(String title) {
+    final String trimmed = title.trim();
+    if (trimmed.isEmpty) {
+      return '?';
+    }
+    return trimmed.substring(0, 1).toUpperCase();
+  }
+
+  static String _presenceLabel(PresenceStatus status) {
+    switch (status) {
+      case PresenceStatus.online:
+        return '在线';
+      case PresenceStatus.relay:
+        return '经中继';
+      case PresenceStatus.offline:
+        return '离线';
+    }
+  }
+}
+
+/// 键值信息行，长文本单行省略并可复制。
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({
+    required this.label,
+    required this.value,
+    this.monospace = false,
+    this.onCopy,
+  });
+
+  final String label;
+  final String value;
+  final bool monospace;
+  final VoidCallback? onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Row(
+      children: <Widget>[
+        SizedBox(
+          width: 64,
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontSize: 12,
+              color: scheme.onSurface.withValues(alpha: 0.5),
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              fontFamily: monospace ? 'monospace' : null,
+            ),
+          ),
+        ),
+        if (onCopy != null)
+          IconButton(
+            tooltip: '复制',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.copy, size: 16),
+            onPressed: onCopy,
+          ),
+      ],
+    );
+  }
+}
+
+/// 群成员行：头像首字母、账号短串与群主标识。
+class _MemberRow extends StatelessWidget {
+  const _MemberRow({
+    super.key,
+    required this.member,
+    this.isSelf = false,
+  });
+
+  final GroupMember member;
+  final bool isSelf;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color base = NexmemColors
+        .avatarPalette[member.account.hashCode.abs() %
+            NexmemColors.avatarPalette.length];
+    return SizedBox(
+      height: 48,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space16),
+        child: Row(
+          children: <Widget>[
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: base.withValues(alpha: 0.16),
+              child: Text(
+                member.label.isEmpty ? '?' : member.label.substring(0, 1),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: base,
+                ),
+              ),
+            ),
+            const SizedBox(width: NexmemMetrics.space12),
+            Expanded(
+              child: Text(
+                isSelf ? '${member.label}（我）' : member.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodyMedium
+                    ?.copyWith(fontSize: 14),
+              ),
+            ),
+            if (member.isAdmin)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: NexmemColors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text(
+                  '群主',
+                  style: TextStyle(fontSize: 11, color: NexmemColors.primary),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
