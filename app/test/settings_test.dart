@@ -9,6 +9,7 @@ import 'package:nexmem_app/features/chat/chat_page.dart';
 import 'package:nexmem_app/features/chat/chat_store.dart';
 import 'package:nexmem_app/features/chats/conversation.dart';
 import 'package:nexmem_app/features/settings/diagnostics.dart';
+import 'package:nexmem_app/features/settings/profile_panel.dart';
 import 'package:nexmem_app/features/settings/report.dart';
 import 'package:nexmem_app/features/settings/settings_page.dart';
 import 'package:nexmem_app/features/settings/settings_service.dart';
@@ -694,5 +695,109 @@ void main() {
       find.byKey(const ValueKey<String>('about-api-incompatible')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('个人资料面板展示账号详情并加载已保存的介绍/推广信息',
+      (WidgetTester tester) async {
+    final _SettingsTransport transport = _SettingsTransport();
+    transport.stored[profileIntroSettingKey] = '这是我的个人介绍';
+    transport.stored[profilePromoSettingKey] = '推广：example.com';
+    final TransportSettingsService service = TransportSettingsService(
+      transport,
+    );
+
+    await tester.pumpWidget(
+      _wrap(
+        ProfileDetailPanel(
+          account: CoreAccount(
+            accountId: 'a' * 64,
+            deviceId: 'b' * 64,
+            displayName: '小艾',
+          ),
+          settings: service,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('个人资料'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('profile-display-name')), findsOneWidget);
+    expect(find.text('小艾'), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey<String>('profile-account-id'))).data,
+      '${'a' * 20}…',
+    );
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey<String>('profile-device-id'))).data,
+      '${'b' * 20}…',
+    );
+    expect(
+      tester.widget<TextField>(find.byKey(const ValueKey<String>('profile-intro')))
+          .controller!.text,
+      '这是我的个人介绍',
+    );
+    expect(
+      tester.widget<TextField>(find.byKey(const ValueKey<String>('profile-promo')))
+          .controller!.text,
+      '推广：example.com',
+    );
+  });
+
+  testWidgets('个人资料编辑保存介绍与推广信息到 KV 并回显成功',
+      (WidgetTester tester) async {
+    final _SettingsTransport transport = _SettingsTransport();
+    final TransportSettingsService service = TransportSettingsService(
+      transport,
+    );
+    int saved = 0;
+
+    await tester.pumpWidget(
+      _wrap(
+        ProfileBody(
+          account: CoreAccount(accountId: 'a' * 64, deviceId: 'b' * 64),
+          settings: service,
+          onSaved: () => saved++,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('profile-intro')),
+      '  热心开发者  ',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('profile-promo')),
+      '  官网 home.page  ',
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('profile-save')));
+    await tester.pumpAndSettle();
+
+    expect(transport.stored[profileIntroSettingKey], '热心开发者');
+    expect(transport.stored[profilePromoSettingKey], '官网 home.page');
+    expect(saved, 1);
+    expect(find.byKey(const ValueKey<String>('profile-status')), findsOneWidget);
+    expect(find.text('已保存'), findsOneWidget);
+  });
+
+  testWidgets('设置页新增个人资料入口且点击弹出编辑框',
+      (WidgetTester tester) async {
+    final _SettingsTransport transport = _SettingsTransport();
+    await tester.pumpWidget(
+      _wrap(
+        SettingsPage(
+          account: CoreAccount(accountId: 'a' * 64, deviceId: 'b' * 64),
+          settings: TransportSettingsService(transport),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey<String>('settings-profile')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey<String>('settings-profile-card')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey<String>('profile-save')), findsOneWidget);
+    expect(find.text('个人推广信息'), findsOneWidget);
   });
 }

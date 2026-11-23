@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/core_session.dart';
@@ -7,6 +9,7 @@ import '../../transport/transport.dart';
 import 'backup.dart';
 import 'diagnostics.dart';
 import 'relay_settings.dart';
+import 'profile_panel.dart';
 import 'report.dart';
 import 'settings_service.dart';
 import 'settings_sync.dart';
@@ -65,6 +68,7 @@ class SettingsPage extends StatelessWidget {
   final CoreInfo? coreInfo;
 
   static const List<(IconData, String)> _items = <(IconData, String)>[
+    (Icons.badge_outlined, '个人资料'),
     (Icons.shield_outlined, '账号与安全'),
     (Icons.sync_outlined, '多设备同步'),
     (Icons.wifi_tethering, '网络'),
@@ -85,7 +89,13 @@ class SettingsPage extends StatelessWidget {
             children: <Widget>[
               Padding(
                 padding: const EdgeInsets.all(NexmemMetrics.space12),
-                child: Container(
+                child: InkWell(
+                  key: const ValueKey<String>('settings-profile-card'),
+                  onTap: () => _openProfile(context),
+                  borderRadius: BorderRadius.circular(
+                    NexmemMetrics.radiusListItem,
+                  ),
+                  child: Container(
                   padding: const EdgeInsets.all(NexmemMetrics.space16),
                   decoration: BoxDecoration(
                     color: scheme.surface,
@@ -144,6 +154,7 @@ class SettingsPage extends StatelessWidget {
                       ),
                     ],
                   ),
+                  ),
                 ),
               ),
               if (webOnlineOnly)
@@ -200,6 +211,8 @@ class SettingsPage extends StatelessWidget {
 
   static String _itemKey(String label) {
     switch (label) {
+      case '个人资料':
+        return 'profile';
       case '账号与安全':
         return 'account';
       case '多设备同步':
@@ -217,7 +230,23 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
+  /// 打开个人资料编辑：窄屏与宽屏均以对话框呈现聚焦编辑，
+  /// 宽屏三栏右栏也会同步常驻展示同一份资料（见 shell._buildDesktop）。
+  void _openProfile(BuildContext context) {
+    unawaited(
+      showProfileEditorDialog(
+        context: context,
+        account: account,
+        settings: settings,
+      ),
+    );
+  }
+
   void _open(BuildContext context, String label) {
+    if (label == '个人资料') {
+      _openProfile(context);
+      return;
+    }
     if (label == '账号与安全') {
       showDialog<void>(
         context: context,

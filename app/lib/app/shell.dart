@@ -23,6 +23,7 @@ import '../features/rtc/rtc_media.dart';
 import '../features/search/message_search.dart';
 import '../features/settings/backup.dart';
 import '../features/settings/diagnostics.dart';
+import '../features/settings/profile_panel.dart';
 import '../features/settings/report.dart';
 import '../features/settings/settings_page.dart';
 import '../features/settings/settings_service.dart';
@@ -1197,7 +1198,16 @@ class _AppShellState extends State<AppShell> {
           child: IndexedStack(index: _section, children: _pages(true)),
         ),
         const VerticalDivider(width: 1),
-        Expanded(child: _buildChatPane(allowProfile: wide)),
+        Expanded(
+          child: _section == 2
+              ? ProfileDetailPanel(
+                  account: widget.session?.account,
+                  settings:
+                      widget.session?.settings ??
+                      const UnavailableSettingsService(),
+                )
+              : _buildChatPane(allowProfile: wide),
+        ),
       ],
     );
   }
