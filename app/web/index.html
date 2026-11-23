@@ -35,14 +35,29 @@
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="nexmem_app">
+  <meta name="apple-mobile-web-app-title" content="Nexmem">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg"/>
 
-  <title>nexmem_app</title>
+  <title>Nexmem</title>
   <link rel="manifest" href="manifest.json">
+  <script>
+    // 应用名称随浏览器语言切换，与 Flutter 内的 appDisplayName 保持一致。
+    (function () {
+      var names = {
+        'zh-cn': '奈讯联', 'zh-tw': '奈訊聯', 'zh-hk': '奈訊聯',
+        'ja': 'ネクスメモ', 'ko': '넥스멤', 'ar': 'نكس ميم', 'he': 'נקסמם'
+      };
+      var lang = (navigator.language || 'en').toLowerCase();
+      var name = names[lang] || names[lang.split('-')[0]] || 'Nexmem';
+      document.title = name;
+      var meta = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+      if (meta) meta.setAttribute('content', name);
+    })();
+  </script>
 </head>
 <body>
   <!--

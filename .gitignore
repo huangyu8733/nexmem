@@ -13,6 +13,7 @@ app/android/app/libs/*.aar
 app/android/app/libs/*.jar
 app/android/app/outputs/
 app/android/.gradle/
+app/android/.kotlin/
 app/.dart_tool/
 *.apk
 

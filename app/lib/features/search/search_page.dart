@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../l10n/l10n.dart';
+
 import '../../app/empty_state.dart';
 import '../../app/theme.dart';
 import '../../transport/transport.dart';
@@ -114,7 +116,7 @@ class _SearchPageState extends State<SearchPage> {
       setState(() {
         _hits = const <SearchHit>[];
         _loading = false;
-        _error = '搜索失败：$error';
+        _error = context.t('搜索失败：{0}', [error]);
       });
     }
   }
@@ -156,7 +158,7 @@ class _SearchPageState extends State<SearchPage> {
       appBar: AppBar(
         leading: Navigator.of(context).canPop()
             ? IconButton(
-                tooltip: '返回',
+                tooltip: context.t('返回'),
                 icon: const Icon(Icons.arrow_back, size: 22),
                 onPressed: () => Navigator.of(context).pop(),
               )
@@ -176,7 +178,7 @@ class _SearchPageState extends State<SearchPage> {
             },
             style: Theme.of(context).textTheme.bodyMedium,
             decoration: InputDecoration(
-              hintText: '搜索聊天记录',
+              hintText: context.t('搜索聊天记录'),
               hintStyle: TextStyle(
                 color: scheme.onSurface.withValues(alpha: 0.4),
                 fontSize: 14,
@@ -190,7 +192,7 @@ class _SearchPageState extends State<SearchPage> {
               suffixIcon: _controller.text.isEmpty
                   ? null
                   : IconButton(
-                      tooltip: '清除',
+                      tooltip: context.t('清除'),
                       icon: const Icon(Icons.close, size: 16),
                       onPressed: _clear,
                     ),
@@ -238,7 +240,9 @@ class _SearchPageState extends State<SearchPage> {
           final bool all = index == 0;
           final String id = all ? '' : widget.conversationIds[index - 1];
           final bool selected = id == _conversationId;
-          final String label = all ? '全部' : (widget.titleOf?.call(id) ?? id);
+          final String label = all
+              ? context.t('全部')
+              : (widget.titleOf?.call(id) ?? id);
           return Center(
             child: ChoiceChip(
               key: ValueKey<String>('search-filter-$id'),
@@ -257,9 +261,9 @@ class _SearchPageState extends State<SearchPage> {
 
   Widget _buildBody() {
     if (_query.isEmpty) {
-      return const EmptyState(
+      return EmptyState(
         icon: Icons.search,
-        message: '输入关键词搜索聊天记录',
+        message: context.t('输入关键词搜索聊天记录'),
       );
     }
     if (_loading) {
@@ -276,14 +280,14 @@ class _SearchPageState extends State<SearchPage> {
         message: error,
         action: TextButton(
           onPressed: () => _run(_query),
-          child: const Text('重试'),
+          child: Text(context.t('重试')),
         ),
       );
     }
     if (_hits.isEmpty) {
-      return const EmptyState(
+      return EmptyState(
         icon: Icons.search_off,
-        message: '没有找到相关消息',
+        message: context.t('没有找到相关消息'),
       );
     }
     return ListView.separated(

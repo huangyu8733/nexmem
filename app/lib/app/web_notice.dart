@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../l10n/l10n.dart';
 import 'theme.dart';
 
 /// Web 端「仅在线接收」说明条（ui-spec.md §5 / §7）。
@@ -19,9 +20,9 @@ class WebOnlineNoticeBanner extends StatelessWidget {
       key: const ValueKey<String>('web-online-notice'),
       width: double.infinity,
       color: scheme.primary.withValues(alpha: 0.08),
-      padding: const EdgeInsets.only(
-        left: NexmemMetrics.space12,
-        right: NexmemMetrics.space4,
+      padding: EdgeInsetsDirectional.only(
+        start: NexmemMetrics.space12,
+        end: NexmemMetrics.space4,
       ),
       child: Row(
         children: <Widget>[
@@ -29,7 +30,7 @@ class WebOnlineNoticeBanner extends StatelessWidget {
           const SizedBox(width: NexmemMetrics.space8),
           Expanded(
             child: Text(
-              '浏览器关闭后不再实时接收消息，离线消息将在下次打开时补齐。',
+              context.t('浏览器关闭后不再实时接收消息，离线消息将在下次打开时补齐。'),
               style: TextStyle(
                 fontSize: 12,
                 color: scheme.onSurface.withValues(alpha: 0.8),
@@ -39,7 +40,7 @@ class WebOnlineNoticeBanner extends StatelessWidget {
           TextButton(
             key: const ValueKey<String>('web-online-notice-dismiss'),
             onPressed: onDismiss,
-            child: const Text('知道了'),
+            child: Text(context.t('知道了')),
           ),
         ],
       ),

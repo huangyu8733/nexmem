@@ -1,17 +1,24 @@
-# nexmem_app
+# Nexmem（奈讯联）客户端
 
-Nexmem decentralized P2P messenger
+Flutter 客户端，支持 Windows / macOS / Linux / Android / Web。端到端加密、去中心化 P2P 即时通讯。
 
-## Getting Started
+预编译安装包请到 [GitHub Releases](https://github.com/huangyu8733/nexmem/releases/latest) 下载，安装教程见 [docs/安装与使用教程.md](../docs/安装与使用教程.md)。
 
-This project is a starting point for a Flutter application.
+## 本地开发
 
-A few resources to get you started if this is your first Flutter project:
+需要 Flutter 3.50+（本仓库自带 `.toolchain/flutter`）。桌面端还需先构建 Go 内核动态库：
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```bash
+# Windows
+powershell -ExecutionPolicy Bypass -File deploy/desktop/build-windows.ps1
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+# Linux
+bash deploy/linux/build-linux.sh
+
+# Web
+flutter build web --release
+```
+
+Android 先执行 `make android-aar` 生成 `app/android/app/libs/nexmem.aar`，再执行 `flutter build apk --release`。
+
+测试：`flutter analyze && flutter test`。

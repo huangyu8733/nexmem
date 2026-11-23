@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nexmem 品牌预览</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; background: #f4f6f8; color: #1a1a1a; }
+    main { max-width: 960px; margin: 0 auto; padding: 32px 20px 48px; }
+    h1 { font-size: 24px; margin: 0 0 4px; }
+    p.hint { color: #6b7280; margin: 0 0 24px; font-size: 14px; }
+    section { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 24px; margin-bottom: 18px; }
+    section h2 { font-size: 15px; margin: 0 0 16px; color: #374151; }
+    .light { background: #fff; }
+    .dark { background: #15171a; }
+    .stage { border-radius: 12px; padding: 28px; display: flex; align-items: center; justify-content: center; min-height: 140px; }
+    .stage img { max-width: 100%; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 16px; align-items: center; }
+    .cell { display: flex; flex-direction: column; align-items: center; gap: 10px; font-size: 12px; color: #6b7280; }
+    .names { display: flex; flex-wrap: wrap; gap: 10px; }
+    .chip { background: #eef7fd; border: 1px solid #cdeaf8; color: #0a6ea8; border-radius: 999px; padding: 8px 14px; font-size: 14px; }
+    .chip small { color: #6b7280; margin-left: 6px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Nexmem / 奈讯联 品牌标识</h1>
+  <p class="hint">同一套 N 字标图形用于应用图标、Web favicon 与桌面图标；下方为各语言应用名称。</p>
+
+  <section>
+    <h2>横版 Logo（浅色背景）</h2>
+    <div class="stage light"><img src="nexmem_logo.svg" alt="Nexmem 奈讯联 logo" width="640"></div>
+  </section>
+
+  <section>
+    <h2>方形图标</h2>
+    <div class="grid">
+      <div class="cell"><img src="nexmem_icon.svg" alt="512" width="112" height="112"><span>512 × 512</span></div>
+      <div class="cell"><img src="nexmem_icon.svg" alt="64" width="64" height="64"><span>64 × 64</span></div>
+      <div class="cell"><img src="nexmem_icon.svg" alt="32" width="32" height="32"><span>32 × 32</span></div>
+      <div class="cell"><img src="nexmem_icon.svg" alt="16" width="16" height="16"><span>16 × 16</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>应用名称（按界面语言）</h2>
+    <div class="names">
+      <div class="chip">奈讯联 <small>简体中文</small></div>
+      <div class="chip">奈訊聯 <small>繁體中文</small></div>
+      <div class="chip">Nexmem <small>English</small></div>
+      <div class="chip">ネクスメモ <small>日本語</small></div>
+      <div class="chip">넥스멤 <small>한국어</small></div>
+      <div class="chip" dir="rtl">نكس ميم <small>العربية</small></div>
+      <div class="chip" dir="rtl">נקסמם <small>עברית</small></div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

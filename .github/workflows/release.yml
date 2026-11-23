@@ -1,0 +1,299 @@
+name: Release
+
+# 推送 v* 标签后自动构建全平台安装包并发布到 GitHub Releases。
+# 例：git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.50.0"
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc
+
+      - name: Build core DLL
+        shell: bash
+        run: |
+          export PATH="/c/msys64/mingw64/bin:$PATH"
+          mkdir -p bin
+          cd core
+          CGO_ENABLED=1 CC=gcc go build -buildmode=c-shared -o ../bin/nexmem.dll ./ffi/capi
+          ls -lh ../bin/nexmem.dll
+
+      - name: Build Flutter Windows app
+        working-directory: app
+        run: flutter build windows --release
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Select-String -Path app/pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)').Matches[0].Groups[1].Value
+          $src = 'app/build/windows/x64/runner/Release'
+          $stage = 'release-stage-windows'
+          $out = 'release-assets'
+          Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $stage, $out | Out-Null
+          Copy-Item -Path "$src/*" -Destination $stage -Recurse -Force
+          Copy-Item -Path 'bin/nexmem.dll' -Destination $stage -Force
+          Copy-Item -Path 'deploy/desktop/install.ps1','deploy/desktop/uninstall.ps1' -Destination $stage -Force
+          $zip = Join-Path $out "Nexmem-$version-windows-x64.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip -CompressionLevel Optimal
+          Get-Item $zip | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asset-windows
+          path: release-assets/*.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+
+      - name: Build .deb and generic tarball
+        run: |
+          set -euo pipefail
+          mkdir -p bin release-assets dist
+          GO=go FLUTTER=flutter bash deploy/linux/build-linux.sh
+          version="$(sed -n 's/^version:[[:space:]]*\([0-9][^+]*\).*/\1/p' app/pubspec.yaml | head -n1)"
+          cp "dist/nexmem_${version}_amd64.deb" "release-assets/Nexmem-${version}-linux-x64.deb"
+          cp bin/libnexmem.so app/build/linux/x64/release/bundle/libnexmem.so
+          tar -czf "release-assets/Nexmem-${version}-linux-x64.tar.gz" -C app/build/linux/x64/release bundle
+          ls -lh release-assets/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asset-linux
+          path: release-assets/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS arm64
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Build core dylib
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          cd core
+          CGO_ENABLED=1 go build -buildmode=c-shared -o ../bin/libnexmem.dylib ./ffi/capi
+          ls -lh ../bin/libnexmem.dylib
+
+      - name: Build Flutter macOS app
+        working-directory: app
+        run: flutter build macos --release
+
+      - name: Package app bundle
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version:[[:space:]]*\([0-9][^+]*\).*/\1/p' app/pubspec.yaml | head -n1)"
+          app="app/build/macos/Build/Products/Release/nexmem_app.app"
+          test -d "$app"
+          cp bin/libnexmem.dylib "$app/Contents/MacOS/libnexmem.dylib"
+          mkdir -p release-assets
+          ditto -c -k --sequesterRsrc --keepParent "$app" "release-assets/Nexmem-${version}-macos-arm64.zip"
+          ls -lh release-assets/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asset-macos
+          path: release-assets/*.zip
+          if-no-files-found: error
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "ndk;27.0.12077973" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Build Go mobile AAR
+        run: |
+          set -euo pipefail
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.0.12077973"
+          gomobile init
+          mkdir -p app/android/app/libs
+          cd core
+          gomobile bind -target=android -androidapi 24 -ldflags="-checklinkname=0" -o ../app/android/app/libs/nexmem.aar ./mobile
+          ls -lh ../app/android/app/libs/nexmem.aar
+
+      - name: Build Flutter APK
+        working-directory: app
+        run: flutter build apk --release
+
+      - name: Package APK
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version:[[:space:]]*\([0-9][^+]*\).*/\1/p' app/pubspec.yaml | head -n1)"
+          mkdir -p release-assets
+          cp app/build/app/outputs/flutter-apk/app-release.apk "release-assets/Nexmem-${version}-android.apk"
+          ls -lh release-assets/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asset-android
+          path: release-assets/*.apk
+          if-no-files-found: error
+
+  web:
+    name: Web static bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Build Flutter Web
+        working-directory: app
+        run: flutter build web --release
+
+      - name: Package web bundle
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version:[[:space:]]*\([0-9][^+]*\).*/\1/p' app/pubspec.yaml | head -n1)"
+          mkdir -p release-assets
+          (cd app/build/web && zip -qr "$GITHUB_WORKSPACE/release-assets/Nexmem-${version}-web.zip" .)
+          ls -lh release-assets/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asset-web
+          path: release-assets/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [windows, linux, macos, android, web]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -lh release-assets/
+
+      - name: Create release with installers
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Nexmem ${{ github.ref_name }}
+          body: |
+            ## Nexmem / 奈讯联 — 去中心化 P2P 即时通讯
+
+            直接下载对应平台的安装包即可使用；完整教程见仓库 [docs/安装与使用教程.md](docs/安装与使用教程.md)。
+
+            | 平台 | 文件 | 安装方式 |
+            | --- | --- | --- |
+            | Windows x64 | `Nexmem-*-windows-x64.zip` | 解压后运行 `install.ps1`（或双击 `nexmem_app.exe` 免安装运行） |
+            | macOS arm64 | `Nexmem-*-macos-arm64.zip` | 解压后拖入「应用程序」，首次运行执行 `xattr -cr /Applications/nexmem_app.app` |
+            | Linux x64 | `Nexmem-*-linux-x64.deb` / `.tar.gz` | `sudo apt install ./Nexmem-*-linux-x64.deb`，或解压 tarball 运行 `bundle/nexmem_app` |
+            | Android | `Nexmem-*-android.apk` | 手机允许安装未知来源应用后直接安装 |
+            | Web | `Nexmem-*-web.zip` | 解压后用任意静态服务器托管，例如 `python -m http.server 8080` |
+
+            所有桌面包已内置 Go 内核动态库（`nexmem.dll` / `libnexmem.so` / `libnexmem.dylib`），请勿单独移动主程序。
+          files: |
+            release-assets/*.zip
+            release-assets/*.tar.gz
+            release-assets/*.deb
+            release-assets/*.apk
+          fail_on_unmatched_files: false
+          generate_release_notes: true

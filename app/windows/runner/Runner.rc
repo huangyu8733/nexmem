@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "io.nexmem" "\0"
-            VALUE "FileDescription", "nexmem_app" "\0"
+            VALUE "CompanyName", "Nexmem" "\0"
+            VALUE "FileDescription", "Nexmem decentralized P2P messenger" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "nexmem_app" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 io.nexmem. All rights reserved." "\0"
+            VALUE "InternalName", "Nexmem" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Nexmem. All rights reserved." "\0"
             VALUE "OriginalFilename", "nexmem_app.exe" "\0"
-            VALUE "ProductName", "nexmem_app" "\0"
+            VALUE "ProductName", "Nexmem" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

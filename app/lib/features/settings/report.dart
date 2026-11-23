@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 import 'diagnostics.dart';
 
@@ -121,7 +122,7 @@ class _ReportDialogState extends State<ReportDialog> {
   Future<void> _submit() async {
     final ReportReason? reason = _reason;
     if (reason == null) {
-      setState(() => _error = '请选择举报原因');
+      setState(() => _error = context.t('请选择举报原因'));
       return;
     }
     setState(() {
@@ -137,7 +138,9 @@ class _ReportDialogState extends State<ReportDialog> {
       } on NexmemException catch (e) {
         // 诊断包不影响举报本身：失败时提交不带诊断信息。
         diagnosticsPath = null;
-        _diagnosticsNote = '诊断日志未附带（${e.code}）';
+        if (mounted) {
+          _diagnosticsNote = context.t('诊断日志未附带（{0}）', [e.code]);
+        }
       }
     }
 
@@ -161,8 +164,8 @@ class _ReportDialogState extends State<ReportDialog> {
       setState(() {
         _submitting = false;
         _error = e.code == 'NOT_STARTED'
-            ? '举报上报服务尚未接入，请稍后再试'
-            : '举报提交失败（${e.code}），请稍后再试';
+            ? context.t('举报上报服务尚未接入，请稍后再试')
+            : context.t('举报提交失败（{0}），请稍后再试', [e.code]);
       });
     } catch (_) {
       if (!mounted) {
@@ -170,7 +173,7 @@ class _ReportDialogState extends State<ReportDialog> {
       }
       setState(() {
         _submitting = false;
-        _error = '举报提交失败，请稍后再试';
+        _error = context.t('举报提交失败，请稍后再试');
       });
     }
   }
@@ -179,7 +182,7 @@ class _ReportDialogState extends State<ReportDialog> {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return AlertDialog(
-      title: const Text('举报'),
+      title: Text(context.t('举报')),
       content: SizedBox(
         width: 360,
         child: SingleChildScrollView(
@@ -187,7 +190,7 @@ class _ReportDialogState extends State<ReportDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              Text('举报原因', style: Theme.of(context).textTheme.labelLarge),
+              Text(context.t('举报原因'), style: Theme.of(context).textTheme.labelLarge),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
@@ -196,7 +199,7 @@ class _ReportDialogState extends State<ReportDialog> {
                   for (final ReportReason reason in ReportReason.values)
                     ChoiceChip(
                       key: ValueKey<String>('report-reason-${reason.name}'),
-                      label: Text(reason.label),
+                      label: Text(context.t(reason.label)),
                       selected: _reason == reason,
                       onSelected: (_) => setState(() => _reason = reason),
                     ),
@@ -208,9 +211,9 @@ class _ReportDialogState extends State<ReportDialog> {
                 controller: _detail,
                 maxLines: 3,
                 maxLength: 500,
-                decoration: const InputDecoration(
-                  hintText: '补充说明（选填）',
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  hintText: context.t('补充说明（选填）'),
+                  border: const OutlineInputBorder(),
                   isDense: true,
                 ),
               ),
@@ -221,17 +224,17 @@ class _ReportDialogState extends State<ReportDialog> {
                     setState(() => _attachDiagnostics = value ?? false),
                 contentPadding: EdgeInsets.zero,
                 controlAffinity: ListTileControlAffinity.leading,
-                title: const Text('附带脱敏诊断日志'),
-                subtitle: const Text('不含聊天正文与密钥'),
+                title: Text(context.t('附带脱敏诊断日志')),
+                subtitle: Text(context.t('不含聊天正文与密钥')),
               ),
               if (_diagnosticsNote != null)
                 Text(
-                  _diagnosticsNote!,
+                  context.t(_diagnosticsNote!),
                   style: TextStyle(color: scheme.onSurface.withValues(alpha: 0.6)),
                 ),
               if (_error != null)
                 Text(
-                  _error!,
+                  context.t(_error!),
                   key: const ValueKey<String>('report-error'),
                   style: TextStyle(color: scheme.error),
                 ),
@@ -242,7 +245,7 @@ class _ReportDialogState extends State<ReportDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: _submitting ? null : () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
+          child: Text(context.t('取消')),
         ),
         FilledButton(
           key: const ValueKey<String>('report-submit'),
@@ -253,7 +256,7 @@ class _ReportDialogState extends State<ReportDialog> {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('提交'),
+              : Text(context.t('提交')),
         ),
       ],
     );

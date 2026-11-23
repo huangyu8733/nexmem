@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../l10n/l10n.dart';
+
 import '../../app/pane_header.dart';
 import '../../app/theme.dart';
 import '../../app/core_session.dart';
@@ -30,6 +32,8 @@ class ContactsPage extends StatefulWidget {
     this.onSendMessage,
     this.onOpenGroup,
     this.session,
+    this.onOpenPane,
+    this.onContactsChanged,
   });
 
   final List<Contact> friends;
@@ -48,6 +52,13 @@ class ContactsPage extends StatefulWidget {
 
   /// 内核会话（P6-39 二维码加好友）；为空时不展示二维码入口。
   final CoreSession? session;
+
+  /// 统一的内容展示回调：由壳层决定桌面在右栏展示、手机进全屏页。
+  /// pane 取值：好友 / 群聊 / 我的设备 / 好友资料 / 设备列表。
+  final void Function(String pane, {Object? data})? onOpenPane;
+
+  /// 好友列表加载完成后通知外层刷新右栏内容。
+  final VoidCallback? onContactsChanged;
 
   @override
   State<ContactsPage> createState() => ContactsPageState();
@@ -78,6 +89,9 @@ class ContactsPageState extends State<ContactsPage> {
     }
   }
 
+  /// 当前好友列表；供壳层右栏的好友面板共享同一份数据。
+  List<Contact> get friends => List<Contact>.unmodifiable(_friends);
+
   /// 重新拉取好友列表；供壳层在其它页面添加好友后刷新（P6-19）。
   Future<void> reload() => _reload();
 
@@ -100,6 +114,7 @@ class ContactsPageState extends State<ContactsPage> {
         _friends = items;
         _loading = false;
       });
+      widget.onContactsChanged?.call();
     } on NexmemException catch (error) {
       if (!mounted) {
         return;
@@ -126,15 +141,24 @@ class ContactsPageState extends State<ContactsPage> {
     );
   }
 
+  /// 供右栏好友资料页回写备注/分组等变更。
+  void apply(Contact next) => _apply(next);
+
   void _apply(Contact next) {
     setState(() {
       _friends = <Contact>[
         for (final Contact c in _friends) c.id == next.id ? next : c,
       ];
     });
+    widget.onContactsChanged?.call();
   }
 
   void _openDetail(Contact contact) {
+    final void Function(String, {Object? data})? onOpenPane = widget.onOpenPane;
+    if (onOpenPane != null) {
+      onOpenPane('好友资料', data: contact);
+      return;
+    }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (BuildContext _) => ContactDetailPage(
@@ -156,6 +180,14 @@ class ContactsPageState extends State<ContactsPage> {
     if (service == null) {
       return;
     }
+    final void Function(String, {Object? data})? onOpenPane = widget.onOpenPane;
+    if (onOpenPane != null) {
+      onOpenPane('我的设备', data: <String, String>{
+        'peer': '',
+        'title': '我的设备',
+      });
+      return;
+    }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (BuildContext _) => DeviceListPage(service: service),
@@ -168,6 +200,11 @@ class ContactsPageState extends State<ContactsPage> {
     if (groups == null) {
       return;
     }
+    final void Function(String, {Object? data})? onOpenPane = widget.onOpenPane;
+    if (onOpenPane != null) {
+      onOpenPane('群聊');
+      return;
+    }
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (BuildContext _) => GroupListPage(
@@ -178,6 +215,9 @@ class ContactsPageState extends State<ContactsPage> {
       ),
     );
   }
+
+  /// 供右栏好友面板复用添加好友入口。
+  Future<void> addFriend() => _addFriend();
 
   Future<void> _addFriend() async {
     final ContactService? service = widget.service;
@@ -214,21 +254,21 @@ class ContactsPageState extends State<ContactsPage> {
         if (widget.service != null)
           IconButton(
             key: const ValueKey<String>('contact-add-button'),
-            tooltip: '添加好友',
+            tooltip: context.t('添加好友'),
             icon: const Icon(Icons.person_add_alt_1, size: 20),
             onPressed: _addFriend,
           ),
         if (widget.session != null && widget.service != null)
           IconButton(
             key: const ValueKey<String>('contact-qr-import-button'),
-            tooltip: '扫码加好友',
+            tooltip: context.t('扫码加好友'),
             icon: const Icon(Icons.qr_code_scanner, size: 20),
             onPressed: _importQr,
           ),
         if (widget.session != null)
           IconButton(
             key: const ValueKey<String>('contact-my-qr-button'),
-            tooltip: '我的二维码',
+            tooltip: context.t('我的二维码'),
             icon: const Icon(Icons.qr_code, size: 20),
             onPressed: _showMyQr,
           ),
@@ -239,8 +279,8 @@ class ContactsPageState extends State<ContactsPage> {
     final List<(String, List<Contact>)> groups = groupContacts(_friends);
     return Column(
       children: <Widget>[
-        PaneHeader(title: '联系人', actions: _actions),
-        const SearchBox(hint: '搜索联系人'),
+        PaneHeader(title: context.t('联系人'), actions: _actions),
+        SearchBox(hint: context.t('搜索联系人')),
         const SizedBox(height: NexmemMetrics.space8),
         const Divider(height: 1),
         if (_error != null) _ErrorBar(message: _error!, onRetry: _reload),
@@ -251,20 +291,28 @@ class ContactsPageState extends State<ContactsPage> {
             child: Stack(
               children: <Widget>[
                 ListView(
-                  padding: EdgeInsets.only(
-                    right: groups.isEmpty ? 0 : NexmemMetrics.space24,
+                  padding: EdgeInsetsDirectional.only(
+                    end: groups.isEmpty ? 0 : NexmemMetrics.space24,
                   ),
                   children: <Widget>[
-                    const _GroupEntry(icon: Icons.person_outline, title: '好友'),
                     _GroupEntry(
+                      key: const ValueKey<String>('contact-friends-entry'),
+                      icon: Icons.person_outline,
+                      title: context.t('好友'),
+                      onTap: widget.onOpenPane == null
+                          ? null
+                          : () => widget.onOpenPane!('好友'),
+                    ),
+                    _GroupEntry(
+                      key: const ValueKey<String>('contact-groups-entry'),
                       icon: Icons.groups_outlined,
-                      title: '群聊',
+                      title: context.t('群聊'),
                       onTap: widget.groups == null ? null : _openGroups,
                     ),
                     _GroupEntry(
                       key: const ValueKey<String>('contact-devices-entry'),
                       icon: Icons.devices_outlined,
-                      title: '我的设备',
+                      title: context.t('我的设备'),
                       onTap: widget.service == null ? null : _openMyDevices,
                     ),
                     if (groups.isNotEmpty) ...<Widget>[
@@ -334,7 +382,7 @@ class _ErrorBar extends StatelessWidget {
           TextButton(
             key: const ValueKey<String>('contact-retry'),
             onPressed: onRetry,
-            child: const Text('重试'),
+            child: Text(context.t('重试')),
           ),
         ],
       ),
@@ -354,7 +402,7 @@ class _EmptyFriends extends StatelessWidget {
         vertical: NexmemMetrics.space24,
       ),
       child: Text(
-        '还没有好友，点右上角添加对方账号即可开始聊天',
+        context.t('还没有好友，点右上角添加对方账号即可开始聊天'),
         key: const ValueKey<String>('contact-empty'),
         textAlign: TextAlign.center,
         style: TextStyle(
@@ -397,7 +445,7 @@ class _SectionHeader extends StatelessWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return Container(
       height: 28,
-      alignment: Alignment.centerLeft,
+      alignment: AlignmentDirectional.centerStart,
       padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space12),
       color: scheme.onSurface.withValues(alpha: 0.04),
       child: Text(

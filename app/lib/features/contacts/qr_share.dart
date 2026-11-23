@@ -10,6 +10,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:qr/qr.dart' as dartqr;
 
 import '../../app/theme.dart';
+import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 import '../../app/core_session.dart';
 import 'add_friend_dialog.dart';
@@ -47,7 +48,7 @@ class _MyQrDialogState extends State<_MyQrDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('我的二维码'),
+      title: Text(context.t('我的二维码')),
       content: SizedBox(
         width: 260,
         child: FutureBuilder<QrPayload>(
@@ -63,7 +64,10 @@ class _MyQrDialogState extends State<_MyQrDialog> {
               return SizedBox(
                 height: 240,
                 child: Center(
-                  child: Text('二维码生成失败：${snapshot.error ?? '未知错误'}'),
+                  child: Text(context.t(
+                    '二维码生成失败：{0}',
+                    [snapshot.error ?? context.t('未知错误')],
+                  )),
                 ),
               );
             }
@@ -88,13 +92,15 @@ class _MyQrDialogState extends State<_MyQrDialog> {
                 TextButton.icon(
                   key: const ValueKey<String>('qr-copy-button'),
                   icon: const Icon(Icons.copy, size: 16),
-                  label: const Text('复制名片文本'),
+                  label: Text(context.t('复制名片文本')),
                   onPressed: () async {
                     final ScaffoldMessengerState messenger =
                         ScaffoldMessenger.of(context);
+                    final String message =
+                        context.t('已复制，可发给对方扫码或粘贴');
                     await Clipboard.setData(ClipboardData(text: card.payload));
                     messenger.showSnackBar(
-                      const SnackBar(content: Text('已复制，可发给对方扫码或粘贴')),
+                      SnackBar(content: Text(message)),
                     );
                   },
                 ),
@@ -106,7 +112,7 @@ class _MyQrDialogState extends State<_MyQrDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+          child: Text(context.t('关闭')),
         ),
       ],
     );
@@ -148,9 +154,10 @@ class _QrImportDialogState extends State<_QrImportDialog> {
   }
 
   Future<void> _parse() async {
+    final String invalidQr = context.t('二维码无效或验签失败，请确认为 Nexmem 名片');
     final String payload = _controller.text.trim();
     if (payload.isEmpty) {
-      setState(() => _error = '请粘贴对方的二维码名片文本');
+      setState(() => _error = context.t('请粘贴对方的二维码名片文本'));
       return;
     }
     setState(() {
@@ -175,7 +182,7 @@ class _QrImportDialogState extends State<_QrImportDialog> {
         setState(() {
           _busy = false;
           _error = error.code == 'INVALID_ARG'
-              ? '二维码无效或验签失败，请确认为 Nexmem 名片'
+              ? invalidQr
               : (error.message.isEmpty ? error.code : error.message);
         });
       }
@@ -183,7 +190,7 @@ class _QrImportDialogState extends State<_QrImportDialog> {
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = '解析失败：$error';
+          _error = context.t('解析失败：{0}', [error]);
         });
       }
     }
@@ -192,13 +199,13 @@ class _QrImportDialogState extends State<_QrImportDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('从二维码添加好友'),
+      title: Text(context.t('从二维码添加好友')),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          const Text(
-            '扫描对方二维码后，把识别出的文本粘贴到下方（相机扫码需真机权限）。',
-            style: TextStyle(fontSize: 12),
+          Text(
+            context.t('扫描对方二维码后，把识别出的文本粘贴到下方（相机扫码需真机权限）。'),
+            style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(height: NexmemMetrics.space12),
           TextField(
@@ -206,10 +213,10 @@ class _QrImportDialogState extends State<_QrImportDialog> {
             controller: _controller,
             maxLines: 3,
             autofocus: true,
-            decoration: const InputDecoration(
-              labelText: '二维码名片文本',
+            decoration: InputDecoration(
+              labelText: context.t('二维码名片文本'),
               hintText: 'nexmem://add/...',
-              border: OutlineInputBorder(),
+              border: const OutlineInputBorder(),
               errorText: null,
             ),
           ),
@@ -226,7 +233,7 @@ class _QrImportDialogState extends State<_QrImportDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(context.t('取消')),
         ),
         FilledButton(
           key: const ValueKey<String>('qr-import-submit'),
@@ -237,7 +244,7 @@ class _QrImportDialogState extends State<_QrImportDialog> {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('解析'),
+              : Text(context.t('解析')),
         ),
       ],
     );

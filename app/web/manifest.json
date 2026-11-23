@@ -1,11 +1,11 @@
 {
-    "name": "nexmem_app",
-    "short_name": "nexmem_app",
+    "name": "Nexmem",
+    "short_name": "Nexmem",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "Nexmem decentralized P2P messenger",
+    "description": "Nexmem (奈讯联) decentralized P2P messenger",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

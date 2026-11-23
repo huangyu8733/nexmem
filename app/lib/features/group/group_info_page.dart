@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/theme.dart';
+import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 import '../contacts/contact.dart';
 import '../contacts/contact_service.dart';
@@ -152,14 +153,14 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
       return;
     }
     if (candidates.isEmpty) {
-      _toast('通讯录里没有可邀请的联系人');
+      _toast(context.t('通讯录里没有可邀请的联系人'));
       return;
     }
     final Contact? picked = await showDialog<Contact>(
       context: context,
       builder: (BuildContext context) => SimpleDialog(
         key: const ValueKey<String>('group-invite-dialog'),
-        title: const Text('邀请成员'),
+        title: Text(context.t('邀请成员')),
         children: <Widget>[
           for (final Contact contact in candidates)
             SimpleDialogOption(
@@ -178,7 +179,10 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     setState(() => _busy = true);
     try {
       final int version = await widget.service.invite(widget.groupId, account);
-      _toast('已邀请 ${picked.name}，密钥版本 v$version');
+      if (!mounted) {
+        return;
+      }
+      _toast(context.t('已邀请 {0}，密钥版本 v{1}', [picked.name, version]));
       await _load();
     } on NexmemException catch (error) {
       _toast(error.message.isEmpty ? error.code : error.message);
@@ -198,17 +202,17 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
       context: context,
       builder: (BuildContext context) => AlertDialog(
         key: const ValueKey<String>('group-remove-dialog'),
-        title: const Text('移出群聊'),
-        content: Text('把 ${member.label} 移出群？对方将无法解密之后的消息。'),
+        title: Text(context.t('移出群聊')),
+        content: Text(context.t('把 {0} 移出群？对方将无法解密之后的消息。', [member.label])),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
+            child: Text(context.t('取消')),
           ),
           FilledButton(
             key: const ValueKey<String>('group-remove-confirm'),
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('移出'),
+            child: Text(context.t('移出')),
           ),
         ],
       ),
@@ -220,7 +224,10 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     try {
       final int version =
           await widget.service.remove(widget.groupId, member.account);
-      _toast('已移出 ${member.label}，密钥版本 v$version');
+      if (!mounted) {
+        return;
+      }
+      _toast(context.t('已移出 {0}，密钥版本 v{1}', [member.label, version]));
       await _load();
     } on NexmemException catch (error) {
       _toast(error.message.isEmpty ? error.code : error.message);
@@ -242,21 +249,21 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
       context: context,
       builder: (BuildContext context) => AlertDialog(
         key: const ValueKey<String>('group-leave-dialog'),
-        title: Text(isAdmin ? '解散群聊' : '退出群聊'),
+        title: Text(isAdmin ? context.t('解散群聊') : context.t('退出群聊')),
         content: Text(
           isAdmin
-              ? '解散后所有成员将无法继续收发消息，且不可恢复。'
-              : '退出后将不再接收该群消息，本机历史消息保留。',
+              ? context.t('解散后所有成员将无法继续收发消息，且不可恢复。')
+              : context.t('退出后将不再接收该群消息，本机历史消息保留。'),
         ),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
+            child: Text(context.t('取消')),
           ),
           FilledButton(
             key: const ValueKey<String>('group-leave-confirm'),
             onPressed: () => Navigator.of(context).pop(true),
-            child: Text(isAdmin ? '解散' : '退出'),
+            child: Text(isAdmin ? context.t('解散') : context.t('退出')),
           ),
         ],
       ),
@@ -299,7 +306,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     if (saved != true || !mounted) {
       return;
     }
-    _toast('群盘已配置，成员将自动同步');
+    _toast(context.t('群盘已配置，成员将自动同步'));
     await _load();
   }
 
@@ -312,20 +319,19 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
       context: context,
       builder: (BuildContext context) => AlertDialog(
         key: const ValueKey<String>('group-storage-remove-dialog'),
-        title: const Text('移除群盘'),
-        content: const Text(
-          '将尽力删除群盘中的离线密文对象并停止群盘同步；'
-          '群消息仍可在线收发，但成员离线期间无法从群盘补齐。此操作不可恢复。',
+        title: Text(context.t('移除群盘')),
+        content: Text(
+          context.t('将尽力删除群盘中的离线密文对象并停止群盘同步；群消息仍可在线收发，但成员离线期间无法从群盘补齐。此操作不可恢复。'),
         ),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
+            child: Text(context.t('取消')),
           ),
           FilledButton(
             key: const ValueKey<String>('group-storage-remove-confirm'),
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('移除'),
+            child: Text(context.t('移除')),
           ),
         ],
       ),
@@ -337,7 +343,9 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     try {
       final int deleted = await widget.service.removeStorage(widget.groupId);
       if (mounted) {
-        _toast(deleted > 0 ? '群盘已移除，清理了 $deleted 个云端对象' : '群盘已移除');
+        _toast(deleted > 0
+            ? context.t('群盘已移除，清理了 {0} 个云端对象', [deleted])
+            : context.t('群盘已移除'));
       }
     } on NexmemException catch (error) {
       if (mounted) {
@@ -382,7 +390,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
           members: info.members,
         );
       });
-      _toast(saved.isEmpty ? '群公告已清除' : '群公告已更新');
+      _toast(saved.isEmpty ? context.t('群公告已清除') : context.t('群公告已更新'));
     } on NexmemException catch (error) {
       _toast(error.message.isEmpty ? error.code : error.message);
     } finally {
@@ -423,7 +431,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
         );
       });
       widget.onAliasChanged?.call(saved);
-      _toast(saved.isEmpty ? '群备注已清除' : '群备注已更新');
+      _toast(saved.isEmpty ? context.t('群备注已清除') : context.t('群备注已更新'));
     } on NexmemException catch (error) {
       _toast(error.message.isEmpty ? error.code : error.message);
     } finally {
@@ -454,7 +462,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
           if (info != null && widget.contacts != null && _isAdmin(info))
             IconButton(
               key: const ValueKey<String>('group-invite-button'),
-              tooltip: '邀请成员',
+              tooltip: context.t('邀请成员'),
               onPressed: _busy ? null : _invite,
               icon: const Icon(Icons.person_add_alt_1_outlined),
             ),
@@ -494,7 +502,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
             FilledButton(
               key: const ValueKey<String>('group-info-retry'),
               onPressed: _load,
-              child: const Text('重试'),
+              child: Text(context.t('重试')),
             ),
           ],
         ),
@@ -518,11 +526,11 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
                 ? NexmemColors.success
                 : NexmemColors.warning,
           ),
-          title: const Text('群盘（离线消息存储）'),
+          title: Text(context.t('群盘（离线消息存储）')),
           subtitle: Text(
             info.storageConfigured
-                ? '已配置，成员离线时可从群盘补齐'
-                : '未配置，成员离线消息不可补',
+                ? context.t('已配置，成员离线时可从群盘补齐')
+                : context.t('未配置，成员离线消息不可补'),
             style: const TextStyle(fontSize: 12),
           ),
           trailing: isAdmin
@@ -533,12 +541,12 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
                       TextButton(
                         key: const ValueKey<String>('group-storage-remove'),
                         onPressed: _busy ? null : _removeStorage,
-                        child: const Text('移除'),
+                        child: Text(context.t('移除')),
                       ),
                     TextButton(
                       key: const ValueKey<String>('group-storage-config'),
                       onPressed: _busy ? null : _configureStorage,
-                      child: Text(info.storageConfigured ? '重新配置' : '配置'),
+                      child: Text(info.storageConfigured ? context.t('重新配置') : context.t('配置')),
                     ),
                   ],
                 )
@@ -548,10 +556,10 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
         ListTile(
           key: const ValueKey<String>('group-alias-tile'),
           leading: const Icon(Icons.drive_file_rename_outline),
-          title: const Text('群备注'),
+          title: Text(context.t('群备注')),
           subtitle: Text(
             info.alias.isEmpty
-                ? '仅本机可见，清空后显示群名'
+                ? context.t('仅本机可见，清空后显示群名')
                 : info.alias,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -560,7 +568,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
           trailing: TextButton(
             key: const ValueKey<String>('group-alias-edit'),
             onPressed: _busy ? null : _editAlias,
-            child: Text(info.alias.isEmpty ? '设置' : '编辑'),
+            child: Text(info.alias.isEmpty ? context.t('设置') : context.t('编辑')),
           ),
         ),
         const Divider(height: 1),
@@ -577,7 +585,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
                 children: <Widget>[
                   Expanded(
                     child: Text(
-                      '群公告',
+                      context.t('群公告'),
                       style: Theme.of(context).textTheme.bodyMedium
                           ?.copyWith(fontSize: 14, fontWeight: FontWeight.w600),
                     ),
@@ -586,14 +594,14 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
                     TextButton(
                       key: const ValueKey<String>('group-announcement-edit'),
                       onPressed: _busy ? null : _editAnnouncement,
-                      child: Text(info.announcement.isEmpty ? '设置' : '编辑'),
+                      child: Text(info.announcement.isEmpty ? context.t('设置') : context.t('编辑')),
                     ),
                 ],
               ),
               const SizedBox(height: 4),
               if (info.announcement.isEmpty)
                 Text(
-                  '暂无群公告',
+                  context.t('暂无群公告'),
                   key: const ValueKey<String>('group-announcement-empty'),
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     fontSize: 13,
@@ -620,14 +628,14 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  '群成员（${info.members.length}）',
+                  context.t('群成员（{0}）', [info.members.length]),
                   key: const ValueKey<String>('group-member-count'),
                   style: Theme.of(context).textTheme.bodyMedium
                       ?.copyWith(fontSize: 14, fontWeight: FontWeight.w600),
                 ),
               ),
               Text(
-                '密钥版本 v${info.keyVersion}',
+                context.t('密钥版本 v{0}', [info.keyVersion]),
                 key: const ValueKey<String>('group-key-version'),
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   fontSize: 12,
@@ -649,7 +657,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
           Padding(
             padding: const EdgeInsets.all(NexmemMetrics.space24),
             child: Text(
-              '暂无成员信息',
+              context.t('暂无成员信息'),
               textAlign: TextAlign.center,
               style: TextStyle(color: scheme.onSurface.withValues(alpha: 0.45)),
             ),
@@ -666,7 +674,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
               isAdmin ? Icons.delete_forever_outlined : Icons.logout,
               size: 18,
             ),
-            label: Text(isAdmin ? '解散群聊' : '退出群聊'),
+            label: Text(isAdmin ? context.t('解散群聊') : context.t('退出群聊')),
             style: OutlinedButton.styleFrom(
               foregroundColor: NexmemColors.danger,
               minimumSize: const Size.fromHeight(44),
@@ -733,9 +741,9 @@ class _MemberTile extends StatelessWidget {
                   color: NexmemColors.primary.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: const Text(
-                  '群主',
-                  style: TextStyle(fontSize: 11, color: NexmemColors.primary),
+                child: Text(
+                  context.t('群主'),
+                  style: const TextStyle(fontSize: 11, color: NexmemColors.primary),
                 ),
               ),
             if (canRemove) ...<Widget>[
@@ -743,7 +751,7 @@ class _MemberTile extends StatelessWidget {
               TextButton(
                 key: ValueKey<String>('group-remove-${member.account}'),
                 onPressed: onRemove,
-                child: const Text('移除'),
+                child: Text(context.t('移除')),
               ),
             ],
           ],
@@ -784,7 +792,7 @@ class _AliasDialogState extends State<_AliasDialog> {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return AlertDialog(
       key: const ValueKey<String>('group-alias-dialog'),
-      title: const Text('群备注'),
+      title: Text(context.t('群备注')),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -794,9 +802,9 @@ class _AliasDialogState extends State<_AliasDialog> {
             controller: _controller,
             autofocus: true,
             maxLines: 1,
-            decoration: const InputDecoration(
-              hintText: '仅本机可见，清空后保存即恢复群名',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              hintText: context.t('仅本机可见，清空后保存即恢复群名'),
+              border: const OutlineInputBorder(),
             ),
             onChanged: (_) => setState(() {}),
           ),
@@ -814,14 +822,14 @@ class _AliasDialogState extends State<_AliasDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(context.t('取消')),
         ),
         FilledButton(
           key: const ValueKey<String>('group-alias-save'),
           onPressed: overLimit
               ? null
               : () => Navigator.of(context).pop(_controller.text),
-          child: const Text('保存'),
+          child: Text(context.t('保存')),
         ),
       ],
     );
@@ -859,7 +867,7 @@ class _AnnouncementDialogState extends State<_AnnouncementDialog> {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return AlertDialog(
       key: const ValueKey<String>('group-announcement-dialog'),
-      title: const Text('群公告'),
+      title: Text(context.t('群公告')),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -870,9 +878,9 @@ class _AnnouncementDialogState extends State<_AnnouncementDialog> {
             autofocus: true,
             minLines: 3,
             maxLines: 6,
-            decoration: const InputDecoration(
-              hintText: '输入群公告，清空后保存即清除',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              hintText: context.t('输入群公告，清空后保存即清除'),
+              border: const OutlineInputBorder(),
             ),
             onChanged: (_) => setState(() {}),
           ),
@@ -890,14 +898,14 @@ class _AnnouncementDialogState extends State<_AnnouncementDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(context.t('取消')),
         ),
         FilledButton(
           key: const ValueKey<String>('group-announcement-save'),
           onPressed: overLimit
               ? null
               : () => Navigator.of(context).pop(_controller.text),
-          child: const Text('保存'),
+          child: Text(context.t('保存')),
         ),
       ],
     );

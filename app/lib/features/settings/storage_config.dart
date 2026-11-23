@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/theme.dart';
+import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 
 /// 云存储厂商（P6-04 / C-03）：六家均走 S3 兼容协议，共用一套自检代码路径。
@@ -521,7 +522,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
   Future<void> _runTest() async {
     if (!_scopedKeyConfirmed) {
       setState(() {
-        _error = '请先确认使用专用桶与受限子密钥（严禁主密钥）';
+        _error = context.t('请先确认使用专用桶与受限子密钥（严禁主密钥）');
         _result = null;
       });
       return;
@@ -563,7 +564,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
         return;
       }
       setState(() {
-        _error = _describeError(e);
+        _error = _describeError(context, e);
         _busy = false;
       });
     } catch (_) {
@@ -571,7 +572,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
         return;
       }
       setState(() {
-        _error = '自检失败，请检查网络后重试';
+        _error = context.t('自检失败，请检查网络后重试');
         _busy = false;
       });
     }
@@ -580,7 +581,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
   Future<void> _save() async {
     if (!_scopedKeyConfirmed) {
       setState(() {
-        _error = '请先确认使用专用桶与受限子密钥（严禁主密钥）';
+        _error = context.t('请先确认使用专用桶与受限子密钥（严禁主密钥）');
         _savedNote = null;
       });
       return;
@@ -619,10 +620,10 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
         _configured = true;
         _saving = false;
         _savedNote = !request.enabled
-            ? '已关闭离线存储，重启应用后生效'
+            ? context.t('已关闭离线存储，重启应用后生效')
             : !request.public
-            ? '已关闭对外公开，重启应用后生效'
-            : '已保存，重启应用后生效';
+            ? context.t('已关闭对外公开，重启应用后生效')
+            : context.t('已保存，重启应用后生效');
         if (request.secretKey.isEmpty) {
           // 沿用旧 SK 时清空输入框，避免误以为已更新。
           _secretKey.clear();
@@ -633,7 +634,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
         return;
       }
       setState(() {
-        _error = _describeError(e);
+        _error = _describeError(context, e);
         _saving = false;
       });
     } catch (_) {
@@ -641,7 +642,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
         return;
       }
       setState(() {
-        _error = '保存失败，请稍后重试';
+        _error = context.t('保存失败，请稍后重试');
         _saving = false;
       });
     }
@@ -652,7 +653,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
     final ThemeData theme = Theme.of(context);
     final ColorScheme scheme = theme.colorScheme;
     return AlertDialog(
-      title: const Text('离线存储'),
+      title: Text(context.t('离线存储')),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
@@ -661,7 +662,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Text(
-                '选择服务商并填写桶信息，自检会在桶内写入并删除一个临时对象。',
+                context.t('选择服务商并填写桶信息，自检会在桶内写入并删除一个临时对象。'),
                 style: TextStyle(
                   fontSize: 12,
                   color: scheme.onSurface.withValues(alpha: 0.6),
@@ -671,9 +672,10 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
               _notice(
                 key: const ValueKey<String>('storage-billing-notice'),
                 scheme: scheme,
-                text:
-                    '离线消息的上传与下载流量、对象存储占用均计入本账号所填云存储的账单；'
-                    '请创建专用桶并使用仅授权 im_offline/* 前缀读写的子密钥，严禁填入主密钥。',
+                text: context.t(
+                  '离线消息的上传与下载流量、对象存储占用均计入本账号所填云存储的账单；'
+                  '请创建专用桶并使用仅授权 im_offline/* 前缀读写的子密钥，严禁填入主密钥。',
+                ),
               ),
               // C-06：把「不要填主密钥」从提示升级为强制门槛。
               CheckboxListTile(
@@ -681,9 +683,9 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
                 contentPadding: EdgeInsets.zero,
                 dense: true,
                 value: _scopedKeyConfirmed,
-                title: const Text(
-                  '我确认使用专用桶与受限子密钥（非主密钥）',
-                  style: TextStyle(fontSize: 13),
+                title: Text(
+                  context.t('我确认使用专用桶与受限子密钥（非主密钥）'),
+                  style: const TextStyle(fontSize: 13),
                 ),
                 onChanged: _saving || _busy
                     ? null
@@ -700,7 +702,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
                       key: ValueKey<String>(
                         'storage-provider-${provider.name}',
                       ),
-                      label: Text(provider.label),
+                      label: Text(context.t(provider.label)),
                       selected: _provider == provider,
                       onSelected: (_) => _selectProvider(provider),
                     ),
@@ -714,12 +716,16 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
                 hint: _provider.endpointHint,
                 keyboardType: TextInputType.url,
               ),
-              _field(controller: _bucket, key: 'storage-bucket', label: '桶名'),
+              _field(
+                controller: _bucket,
+                key: 'storage-bucket',
+                label: context.t('桶名'),
+              ),
               _field(
                 controller: _prefix,
                 key: 'storage-prefix',
-                label: '对象前缀',
-                hint: '例如 nexmem 或 im_offline',
+                label: context.t('对象前缀'),
+                hint: context.t('例如 nexmem 或 im_offline'),
               ),
               _field(
                 controller: _region,
@@ -735,7 +741,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
                 controller: _secretKey,
                 key: 'storage-sk',
                 label: 'Secret Key',
-                hint: _configured ? '留空则沿用已保存的 Secret Key' : null,
+                hint: _configured ? context.t('留空则沿用已保存的 Secret Key') : null,
                 obscureText: _obscureSecret,
                 suffixIcon: IconButton(
                   key: const ValueKey<String>('storage-sk-toggle'),
@@ -751,10 +757,10 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
                 key: const ValueKey<String>('storage-enabled'),
                 contentPadding: EdgeInsets.zero,
                 dense: true,
-                title: const Text('启用离线存储'),
-                subtitle: const Text(
-                  '开启后，对端可在本机离线时投递加密消息',
-                  style: TextStyle(fontSize: 12),
+                title: Text(context.t('启用离线存储')),
+                subtitle: Text(
+                  context.t('开启后，对端可在本机离线时投递加密消息'),
+                  style: const TextStyle(fontSize: 12),
                 ),
                 value: _enabled,
                 onChanged: _saving || _busy
@@ -765,10 +771,10 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
                 key: const ValueKey<String>('storage-public'),
                 contentPadding: EdgeInsets.zero,
                 dense: true,
-                title: const Text('对外公开我的存储配置'),
-                subtitle: const Text(
-                  '关闭后对端只能在线发送，不再向本机写入离线消息；可随时重新开启',
-                  style: TextStyle(fontSize: 12),
+                title: Text(context.t('对外公开我的存储配置')),
+                subtitle: Text(
+                  context.t('关闭后对端只能在线发送，不再向本机写入离线消息；可随时重新开启'),
+                  style: const TextStyle(fontSize: 12),
                 ),
                 value: _public,
                 onChanged: _saving || _busy
@@ -779,11 +785,13 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
                 key: const ValueKey<String>('storage-delete-after-read'),
                 contentPadding: EdgeInsets.zero,
                 dense: true,
-                title: const Text('已读后删除云端密文'),
-                subtitle: const Text(
-                  '开启后入库成功即删除 S3 密文对象；仅在单设备独占桶时使用，'
-                  '多端共用同一桶请保持关闭（由桶生命周期清理）',
-                  style: TextStyle(fontSize: 12),
+                title: Text(context.t('已读后删除云端密文')),
+                subtitle: Text(
+                  context.t(
+                    '开启后入库成功即删除 S3 密文对象；仅在单设备独占桶时使用，'
+                    '多端共用同一桶请保持关闭（由桶生命周期清理）',
+                  ),
+                  style: const TextStyle(fontSize: 12),
                 ),
                 value: _deleteAfterRead,
                 onChanged: _saving || _busy
@@ -794,7 +802,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
                 Padding(
                   padding: const EdgeInsets.only(top: NexmemMetrics.space8),
                   child: Text(
-                    _error!,
+                    context.t(_error!),
                     key: const ValueKey<String>('storage-error'),
                     style: const TextStyle(
                       fontSize: 13,
@@ -807,7 +815,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
                 Padding(
                   padding: const EdgeInsets.only(top: NexmemMetrics.space8),
                   child: Text(
-                    _savedNote!,
+                    context.t(_savedNote!),
                     key: const ValueKey<String>('storage-saved'),
                     style: const TextStyle(
                       fontSize: 13,
@@ -817,7 +825,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
                 ),
               const SizedBox(height: NexmemMetrics.space8),
               Text(
-                '凭证由内核用设备主密钥加密后仅保存在本机，重启应用后生效。',
+                context.t('凭证由内核用设备主密钥加密后仅保存在本机，重启应用后生效。'),
                 style: TextStyle(
                   fontSize: 12,
                   color: scheme.onSurface.withValues(alpha: 0.55),
@@ -832,7 +840,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
           onPressed: _busy || _saving
               ? null
               : () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+          child: Text(context.t('关闭')),
         ),
         FilledButton.tonal(
           key: const ValueKey<String>('storage-save'),
@@ -843,7 +851,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('保存配置'),
+              : Text(context.t('保存配置')),
         ),
         FilledButton(
           key: const ValueKey<String>('storage-selftest'),
@@ -854,7 +862,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('开始自检'),
+              : Text(context.t('开始自检')),
         ),
       ],
     );
@@ -925,14 +933,16 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
-            result.summary,
+            context.t(result.summary),
             key: const ValueKey<String>('storage-result-summary'),
             style: TextStyle(fontWeight: FontWeight.w600, color: color),
           ),
           const SizedBox(height: NexmemMetrics.space4),
           Text(
-            '写入 ${result.writable ? '通过' : '失败'} · '
-            '列举 ${result.listable ? '通过' : '失败'}',
+            context.t('写入 {0} · 列举 {1}', [
+              result.writable ? context.t('通过') : context.t('失败'),
+              result.listable ? context.t('通过') : context.t('失败'),
+            ]),
             key: const ValueKey<String>('storage-result-detail'),
             style: const TextStyle(fontSize: 13),
           ),
@@ -942,21 +952,21 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
   }
 }
 
-String _describeError(NexmemException e) {
+String _describeError(BuildContext context, NexmemException e) {
   switch (e.code) {
     case 'S3_AUTH':
-      return '鉴权失败：请检查 AK/SK 与桶权限（S3_AUTH）';
+      return context.t('鉴权失败：请检查 AK/SK 与桶权限（S3_AUTH）');
     case 'S3_QUOTA':
-      return '配额或限流：请稍后重试（S3_QUOTA）';
+      return context.t('配额或限流：请稍后重试（S3_QUOTA）');
     case 'S3_IO':
-      return '读写失败：请检查 Endpoint、Region 与网络（S3_IO）';
+      return context.t('读写失败：请检查 Endpoint、Region 与网络（S3_IO）');
     case 'INVALID_ARG':
-      return '配置不完整或格式不正确（INVALID_ARG）';
+      return context.t('配置不完整或格式不正确（INVALID_ARG）');
     case 'DB_ERROR':
-      return '保存配置失败：本机配置写入异常（DB_ERROR）';
+      return context.t('保存配置失败：本机配置写入异常（DB_ERROR）');
     case 'NOT_STARTED':
-      return '存储自检尚未接入内核';
+      return context.t('存储自检尚未接入内核');
     default:
-      return '自检失败（${e.code}），请稍后再试';
+      return context.t('自检失败（{0}），请稍后再试', [e.code]);
   }
 }

@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../l10n/l10n.dart';
+
 import '../../app/empty_state.dart';
 import '../../app/theme.dart';
 import '../chats/conversation.dart';
@@ -31,9 +33,9 @@ class ChatPlaceholder extends StatelessWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return Container(
       color: scheme.surface.withValues(alpha: 0.4),
-      child: const EmptyState(
+      child: EmptyState(
         icon: Icons.forum_outlined,
-        message: '选择一个会话开始聊天',
+        message: context.t('选择一个会话开始聊天'),
       ),
     );
   }
@@ -127,6 +129,7 @@ class ChatPage extends StatelessWidget {
 
   Future<void> _pickAndSendFile(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final String selfName = context.t('我');
     final ChatAttachment? file = onPickFile != null
         ? await onPickFile!()
         : await showDialog<ChatAttachment>(
@@ -137,37 +140,47 @@ class ChatPage extends StatelessWidget {
       return;
     }
     try {
-      await store.sendFile(file, senderName: '我');
+      await store.sendFile(file, senderName: selfName);
       onSent?.call(file.name);
     } on Object catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text('文件发送失败：$error')));
+      if (!context.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.t('文件发送失败：{0}', [error]))),
+      );
     }
   }
 
   /// 发送图片（P6-16）：复用文件通道，按扩展名补齐 MIME 以便内联预览。
   Future<void> _pickAndSendImage(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final String selfName = context.t('我');
+    final String notImage = context.t('请选择图片文件（png / jpg / gif / webp）');
     final ChatAttachment? picked = onPickFile != null
         ? await onPickFile!()
         : await showDialog<ChatAttachment>(
             context: context,
             builder: (BuildContext context) =>
-                const FileSendDialog(title: '发送图片'),
+                FileSendDialog(title: context.t('发送图片')),
           );
     if (picked == null || picked.path.trim().isEmpty) {
       return;
     }
     if (!picked.isImage) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('请选择图片文件（png / jpg / gif / webp）')),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(notImage)));
       return;
     }
     try {
-      await store.sendFile(picked, senderName: '我');
+      await store.sendFile(picked, senderName: selfName);
       onSent?.call(picked.name);
     } on Object catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text('图片发送失败：$error')));
+      if (!context.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.t('图片发送失败：{0}', [error]))),
+      );
     }
   }
 
@@ -176,9 +189,11 @@ class ChatPage extends StatelessWidget {
   /// 不伪造录音能力（麦克风采集需原生插件与权限，见剩余开发进度 C-01）。
   Future<void> _pickAndSendVoice(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final String selfName = context.t('我');
+    final String notAudio = context.t('请选择音频文件（m4a / mp3 / wav / aac 等）');
     if (conversation.isGroup) {
       messenger.showSnackBar(
-        const SnackBar(content: Text('群聊暂不支持发送语音')),
+        SnackBar(content: Text(context.t('群聊暂不支持发送语音'))),
       );
       return;
     }
@@ -187,7 +202,7 @@ class ChatPage extends StatelessWidget {
         : await showDialog<ChatAttachment>(
             context: context,
             builder: (BuildContext context) =>
-                const FileSendDialog(title: '发送语音'),
+                FileSendDialog(title: context.t('发送语音')),
           );
     if (picked == null || picked.path.trim().isEmpty) {
       return;
@@ -197,19 +212,22 @@ class ChatPage extends StatelessWidget {
         ? audioMimeFor(picked.name)
         : picked.mime;
     if (!isAudioAttachment(name: picked.name, mime: mime)) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('请选择音频文件（m4a / mp3 / wav / aac 等）')),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(notAudio)));
       return;
     }
     try {
       await store.sendFile(
         picked.copyWith(mime: mime),
-        senderName: '我',
+        senderName: selfName,
       );
       onSent?.call(picked.name);
     } on Object catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text('语音发送失败：$error')));
+      if (!context.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.t('语音发送失败：{0}', [error]))),
+      );
     }
   }
 
@@ -258,7 +276,7 @@ class ChatPage extends StatelessWidget {
               // 引用 ID 由 InputArea 在清空前捕获，这里再读一次以带 replyTo（P6-32）。
               store.send(
                 text,
-                senderName: '我',
+                senderName: context.t('我'),
                 replyTo: store.quoting?.id,
                 mentions: mentions,
                 ttlHours: ttlHours,
@@ -279,10 +297,10 @@ class ChatPage extends StatelessWidget {
 
 /// 兜底的文件选择：输入本机绝对路径（无插件依赖，桌面 / 移动端通用）。
 class FileSendDialog extends StatefulWidget {
-  const FileSendDialog({super.key, this.title = '发送文件'});
+  const FileSendDialog({super.key, this.title});
 
   /// 弹窗标题：发送文件 / 发送图片复用同一路径入口。
-  final String title;
+  final String? title;
 
   @override
   State<FileSendDialog> createState() => _FileSendDialogState();
@@ -313,14 +331,14 @@ class _FileSendDialogState extends State<FileSendDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.title),
+      title: Text(widget.title ?? context.t('发送文件')),
       content: TextField(
         controller: _controller,
         autofocus: true,
         onChanged: (_) => setState(() {}),
         onSubmitted: (_) => _submit(),
-        decoration: const InputDecoration(
-          labelText: '本机文件绝对路径',
+        decoration: InputDecoration(
+          labelText: context.t('本机文件绝对路径'),
           hintText: 'D:\\docs\\report.pdf',
           isDense: true,
         ),
@@ -328,11 +346,11 @@ class _FileSendDialogState extends State<FileSendDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(context.t('取消')),
         ),
         FilledButton(
           onPressed: _path.isEmpty ? null : _submit,
-          child: const Text('发送'),
+          child: Text(context.t('发送')),
         ),
       ],
     );
@@ -403,7 +421,7 @@ class ChatInputArea extends StatelessWidget {
                 } else {
                   store.send(
                     text,
-                    senderName: '我',
+                    senderName: context.t('我'),
                     replyTo: replyTo,
                     mentions: mentions,
                     ttlHours: ttlHours,
@@ -450,7 +468,7 @@ class OfflineStorageNotice extends StatelessWidget {
           const SizedBox(width: NexmemMetrics.space4),
           Expanded(
             child: Text(
-              message,
+              context.t(OfflineStorageNotice.message),
               style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(fontSize: 12, color: NexmemColors.warning),
             ),
@@ -488,6 +506,7 @@ class _ChatHeader extends StatelessWidget {
 
   Future<void> _openReport(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final String submittedText = context.t('举报已提交，感谢反馈');
     final bool? submitted = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) => ReportDialog(
@@ -497,26 +516,29 @@ class _ChatHeader extends StatelessWidget {
       ),
     );
     if (submitted == true) {
-      messenger.showSnackBar(const SnackBar(content: Text('举报已提交，感谢反馈')));
+      messenger.showSnackBar(SnackBar(content: Text(submittedText)));
     }
   }
 
   /// 清空聊天记录（P6-13）：先二次确认，内核清空成功后再清空本机列表。
   Future<void> _openClear(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final String cleared = context.t('聊天记录已清空');
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
-        title: const Text('清空聊天记录'),
-        content: Text('将删除与「${conversation.title}」的本机聊天记录，且无法恢复。'),
+        title: Text(context.t('清空聊天记录')),
+        content: Text(
+          context.t('将删除与「{0}」的本机聊天记录，且无法恢复。', [conversation.title]),
+        ),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
+            child: Text(context.t('取消')),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('清空'),
+            child: Text(context.t('清空')),
           ),
         ],
       ),
@@ -527,11 +549,16 @@ class _ChatHeader extends StatelessWidget {
     try {
       await onClearHistory?.call();
     } on Object catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text('清空失败：$error')));
+      if (!context.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.t('清空失败：{0}', [error]))),
+      );
       return;
     }
     store.clear();
-    messenger.showSnackBar(const SnackBar(content: Text('聊天记录已清空')));
+    messenger.showSnackBar(SnackBar(content: Text(cleared)));
   }
 
   @override
@@ -548,7 +575,7 @@ class _ChatHeader extends StatelessWidget {
         children: <Widget>[
           if (onBack != null)
             IconButton(
-              tooltip: '返回',
+              tooltip: context.t('返回'),
               icon: const Icon(Icons.arrow_back_ios_new, size: 18),
               onPressed: onBack,
             ),
@@ -567,8 +594,8 @@ class _ChatHeader extends StatelessWidget {
                 ),
                 Text(
                   conversation.isGroup
-                      ? '群聊'
-                      : _presenceLabel(conversation.presence),
+                      ? context.t('群聊')
+                      : _presenceLabel(context, conversation.presence),
                   style: secondary,
                 ),
               ],
@@ -577,13 +604,13 @@ class _ChatHeader extends StatelessWidget {
           if (!conversation.isGroup && onStartCall != null) ...<Widget>[
             IconButton(
               key: const ValueKey<String>('chat-call-audio'),
-              tooltip: '语音通话',
+              tooltip: context.t('语音通话'),
               icon: const Icon(Icons.call, size: 20),
               onPressed: () => onStartCall!(false),
             ),
             IconButton(
               key: const ValueKey<String>('chat-call-video'),
-              tooltip: '视频通话',
+              tooltip: context.t('视频通话'),
               icon: const Icon(Icons.videocam, size: 20),
               onPressed: () => onStartCall!(true),
             ),
@@ -591,7 +618,7 @@ class _ChatHeader extends StatelessWidget {
           if (onToggleProfile != null)
             IconButton(
               key: const ValueKey<String>('chat-profile-toggle'),
-              tooltip: profileOpen ? '收起聊天信息' : '聊天信息',
+              tooltip: context.t(profileOpen ? '收起聊天信息' : '聊天信息'),
               icon: Icon(
                 profileOpen ? Icons.info : Icons.info_outline,
                 size: 20,
@@ -599,7 +626,7 @@ class _ChatHeader extends StatelessWidget {
               onPressed: onToggleProfile,
             ),
           PopupMenuButton<String>(
-            tooltip: '更多',
+            tooltip: context.t('更多'),
             icon: const Icon(Icons.more_horiz, size: 22),
             onSelected: (String value) {
               if (value == 'clear') {
@@ -616,15 +643,18 @@ class _ChatHeader extends StatelessWidget {
             },
             itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
               if (conversation.isGroup && onOpenGroupInfo != null)
-                const PopupMenuItem<String>(
+                PopupMenuItem<String>(
                   value: 'groupInfo',
-                  child: Text('群设置'),
+                  child: Text(context.t('群设置')),
                 ),
-              const PopupMenuItem<String>(
+              PopupMenuItem<String>(
                 value: 'clear',
-                child: Text('清空聊天记录'),
+                child: Text(context.t('清空聊天记录')),
               ),
-              const PopupMenuItem<String>(value: 'report', child: Text('举报')),
+              PopupMenuItem<String>(
+                value: 'report',
+                child: Text(context.t('举报')),
+              ),
             ],
           ),
           const SizedBox(width: NexmemMetrics.space4),
@@ -633,11 +663,11 @@ class _ChatHeader extends StatelessWidget {
     );
   }
 
-  static String _presenceLabel(PresenceStatus status) {
+  static String _presenceLabel(BuildContext context, PresenceStatus status) {
     return switch (status) {
-      PresenceStatus.online => '在线',
-      PresenceStatus.relay => '经中继',
-      PresenceStatus.offline => '离线',
+      PresenceStatus.online => context.t('在线'),
+      PresenceStatus.relay => context.t('经中继'),
+      PresenceStatus.offline => context.t('离线'),
     };
   }
 }
@@ -880,9 +910,9 @@ class _MessageListState extends State<_MessageList> {
   Widget build(BuildContext context) {
     final List<ChatMessage> messages = widget.store.messages;
     if (messages.isEmpty) {
-      return const EmptyState(
+      return EmptyState(
         icon: Icons.chat_outlined,
-        message: '还没有消息，发送第一条打个招呼',
+        message: context.t('还没有消息，发送第一条打个招呼'),
       );
     }
     return Stack(
@@ -979,12 +1009,15 @@ class _MessageListState extends State<_MessageList> {
                     ),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Row(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
-                      Text('···', style: TextStyle(fontSize: 16)),
-                      SizedBox(width: 6),
-                      Text('对方正在输入…', style: TextStyle(fontSize: 12)),
+                      const Text('···', style: TextStyle(fontSize: 16)),
+                      const SizedBox(width: 6),
+                      Text(
+                        context.t('对方正在输入…'),
+                        style: const TextStyle(fontSize: 12),
+                      ),
                     ],
                   ),
                 );
@@ -1020,7 +1053,7 @@ class _NewMessagePill extends StatelessWidget {
               const Icon(Icons.arrow_downward, size: 14, color: Colors.white),
               const SizedBox(width: 4),
               Text(
-                '$count 条新消息',
+                context.t('{0} 条新消息', [count]),
                 style: const TextStyle(
                   fontSize: 12,
                   color: Colors.white,
@@ -1180,6 +1213,13 @@ class MessageBubble extends StatelessWidget {
 
   /// 长按（移动端）与右键（桌面端）弹出消息操作菜单。
   Future<void> _showActions(BuildContext context, Offset globalPosition) async {
+    final String copyLabel = context.t('复制');
+    final String forwardLabel = context.t('转发');
+    final String quoteLabel = context.t('引用');
+    final String editLabel = context.t('编辑');
+    final String recallLabel = context.t('撤回');
+    final String deleteLabel = context.t('删除');
+    final String copied = context.t('已复制');
     final RenderBox overlay =
         Overlay.of(context).context.findRenderObject()! as RenderBox;
     final String? action = await showMenu<String>(
@@ -1190,16 +1230,16 @@ class MessageBubble extends StatelessWidget {
       ),
       items: <PopupMenuEntry<String>>[
         if (!message.isFile)
-          const PopupMenuItem<String>(value: 'copy', child: Text('复制')),
+          PopupMenuItem<String>(value: 'copy', child: Text(copyLabel)),
         if (!message.isFile && onForward != null)
-          const PopupMenuItem<String>(value: 'forward', child: Text('转发')),
+          PopupMenuItem<String>(value: 'forward', child: Text(forwardLabel)),
         if (!message.isFile && onQuote != null)
-          const PopupMenuItem<String>(value: 'quote', child: Text('引用')),
+          PopupMenuItem<String>(value: 'quote', child: Text(quoteLabel)),
         if (_canEdit)
-          const PopupMenuItem<String>(value: 'edit', child: Text('编辑')),
+          PopupMenuItem<String>(value: 'edit', child: Text(editLabel)),
         if (_canRecall)
-          const PopupMenuItem<String>(value: 'recall', child: Text('撤回')),
-        const PopupMenuItem<String>(value: 'delete', child: Text('删除')),
+          PopupMenuItem<String>(value: 'recall', child: Text(recallLabel)),
+        PopupMenuItem<String>(value: 'delete', child: Text(deleteLabel)),
       ],
     );
     if (action == null || !context.mounted) {
@@ -1208,7 +1248,7 @@ class MessageBubble extends StatelessWidget {
     if (action == 'copy') {
       final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
       await Clipboard.setData(ClipboardData(text: message.text));
-      messenger.showSnackBar(const SnackBar(content: Text('已复制')));
+      messenger.showSnackBar(SnackBar(content: Text(copied)));
       return;
     }
     if (action == 'forward') {
@@ -1238,18 +1278,18 @@ class MessageBubble extends StatelessWidget {
     final String? revised = await showDialog<String>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
-        title: const Text('编辑消息'),
+        title: Text(context.t('编辑消息')),
         content: TextField(
           key: const ValueKey<String>('edit-message-field'),
           controller: controller,
           autofocus: true,
           maxLines: 4,
-          decoration: const InputDecoration(hintText: '输入新正文'),
+          decoration: InputDecoration(hintText: context.t('输入新正文')),
         ),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
+            child: Text(context.t('取消')),
           ),
           TextButton(
             onPressed: () {
@@ -1258,7 +1298,7 @@ class MessageBubble extends StatelessWidget {
                 Navigator.of(context).pop(text);
               }
             },
-            child: const Text('保存'),
+            child: Text(context.t('保存')),
           ),
         ],
       ),
@@ -1271,31 +1311,42 @@ class MessageBubble extends StatelessWidget {
 
   Future<void> _forward(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final String forwardedText = context.t('已转发');
     try {
       final bool forwarded = await onForward?.call() ?? false;
       if (forwarded) {
-        messenger.showSnackBar(const SnackBar(content: Text('已转发')));
+        messenger.showSnackBar(SnackBar(content: Text(forwardedText)));
       }
     } on Object catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text('转发失败：$error')));
+      if (!context.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.t('转发失败：{0}', [error]))),
+      );
     }
   }
 
   Future<void> _confirmRecall(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final String recalled = context.t('已撤回');
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
-        title: const Text('撤回消息'),
-        content: Text(message.isGroup ? '撤回后群内其他成员也将看不到这条消息。' : '撤回后对方也将看不到这条消息。'),
+        title: Text(context.t('撤回消息')),
+        content: Text(
+          message.isGroup
+              ? context.t('撤回后群内其他成员也将看不到这条消息。')
+              : context.t('撤回后对方也将看不到这条消息。'),
+        ),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
+            child: Text(context.t('取消')),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('撤回'),
+            child: Text(context.t('撤回')),
           ),
         ],
       ),
@@ -1305,27 +1356,33 @@ class MessageBubble extends StatelessWidget {
     }
     try {
       await onRecall?.call();
-      messenger.showSnackBar(const SnackBar(content: Text('已撤回')));
+      messenger.showSnackBar(SnackBar(content: Text(recalled)));
     } on Object catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text('撤回失败：$error')));
+      if (!context.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.t('撤回失败：{0}', [error]))),
+      );
     }
   }
 
   Future<void> _confirmDelete(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final String deleted = context.t('已删除');
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
-        title: const Text('删除消息'),
-        content: const Text('仅从本机删除，对方仍可看到这条消息。'),
+        title: Text(context.t('删除消息')),
+        content: Text(context.t('仅从本机删除，对方仍可看到这条消息。')),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
+            child: Text(context.t('取消')),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('删除'),
+            child: Text(context.t('删除')),
           ),
         ],
       ),
@@ -1335,9 +1392,14 @@ class MessageBubble extends StatelessWidget {
     }
     try {
       await onDelete?.call();
-      messenger.showSnackBar(const SnackBar(content: Text('已删除')));
+      messenger.showSnackBar(SnackBar(content: Text(deleted)));
     } on Object catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text('删除失败：$error')));
+      if (!context.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.t('删除失败：{0}', [error]))),
+      );
     }
   }
 
@@ -1413,9 +1475,11 @@ class MessageBubble extends StatelessWidget {
                         if (message.replyTo.isNotEmpty)
                           _QuotedStrip(
                             label: quoted == null
-                                ? '原消息'
-                                : (quoted!.isMine ? '我' : quoted!.senderName),
-                            text: quoted?.text ?? '原消息已不可用',
+                                ? context.t('原消息')
+                                : (quoted!.isMine
+                                    ? context.t('我')
+                                    : quoted!.senderName),
+                            text: quoted?.text ?? context.t('原消息已不可用'),
                             mine: mine,
                           ),
                         if (message.isFile)
@@ -1433,7 +1497,7 @@ class MessageBubble extends StatelessWidget {
                           Padding(
                             padding: const EdgeInsets.only(top: 2),
                             child: Text(
-                              '已编辑',
+                              context.t('已编辑'),
                               key: const ValueKey<String>('edited-marker'),
                               style: TextStyle(
                                 fontSize: 11,
@@ -1565,7 +1629,9 @@ class _FileBubbleContent extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      ratio == null ? '发送中' : '${(ratio * 100).round()}%',
+                      ratio == null
+                          ? context.t('发送中')
+                          : '${(ratio * 100).round()}%',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 12,
@@ -1613,7 +1679,9 @@ class _FileBubbleContent extends StatelessWidget {
     final Color muted = fg.withValues(alpha: 0.75);
     final double? ratio = message.transferRatio;
     final bool transferring = message.status == MessageStatus.sending;
-    final String sizeText = file.size > 0 ? formatFileSize(file.size) : '大小未知';
+    final String sizeText = file.size > 0
+        ? formatFileSize(file.size)
+        : context.t('大小未知');
     final String detail = transferring && ratio != null
         ? '${(ratio * 100).round()}% · $sizeText'
         : sizeText;
@@ -1675,8 +1743,9 @@ class _FileBubbleContent extends StatelessWidget {
           final ScaffoldMessengerState messenger = ScaffoldMessenger.of(
             context,
           );
+          final String copiedPath = context.t('已复制文件路径');
           await Clipboard.setData(ClipboardData(text: file.path));
-          messenger.showSnackBar(const SnackBar(content: Text('已复制文件路径')));
+          messenger.showSnackBar(SnackBar(content: Text(copiedPath)));
         },
         child: content,
       ),
@@ -1765,8 +1834,8 @@ class _StatusIndicator extends StatelessWidget {
     final Color muted = Theme.of(context).colorScheme.onSurface
         .withValues(alpha: 0.45);
     return switch (status) {
-      MessageStatus.sending => const Tooltip(
-        message: '发送中',
+      MessageStatus.sending => Tooltip(
+        message: context.t('发送中'),
         child: SizedBox(
           width: 12,
           height: 12,
@@ -1774,19 +1843,19 @@ class _StatusIndicator extends StatelessWidget {
         ),
       ),
       MessageStatus.sent => Tooltip(
-        message: '已发送',
+        message: context.t('已发送'),
         child: Icon(Icons.check, size: 14, color: muted),
       ),
       MessageStatus.delivered => Tooltip(
-        message: '已送达',
+        message: context.t('已送达'),
         child: Icon(Icons.done_all, size: 14, color: muted),
       ),
-      MessageStatus.read => const Tooltip(
-        message: '已读',
+      MessageStatus.read => Tooltip(
+        message: context.t('已读'),
         child: Icon(Icons.done_all, size: 14, color: NexmemColors.primary),
       ),
       MessageStatus.failed => Tooltip(
-        message: '发送失败，点击重发',
+        message: context.t('发送失败，点击重发'),
         child: InkWell(
           onTap: onRetry,
           borderRadius: BorderRadius.circular(2),
@@ -1949,8 +2018,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 const SizedBox(width: NexmemMetrics.space8),
                 Text(
                   hours == 0
-                      ? '关闭（普通消息）'
-                      : '${ephemeralTtlLabel(hours)}后销毁',
+                      ? context.t('关闭（普通消息）')
+                      : context.t('{0}后销毁', [ephemeralTtlLabel(hours)]),
                 ),
               ],
             ),
@@ -1981,7 +2050,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
         child: ListView(
           shrinkWrap: true,
           children: <Widget>[
-            const ListTile(title: Text('选择要 @ 的成员')),
+            ListTile(title: Text(context.t('选择要 @ 的成员'))),
             for (final MentionCandidate candidate in candidates)
               ListTile(
                 key: ValueKey<String>('mention-${candidate.account}'),
@@ -2014,8 +2083,9 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   void _notImplemented(String name) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('$name功能将在后续版本开放')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(context.t('{0}功能将在后续版本开放', [name]))),
+    );
   }
 
   /// 展开 / 收起表情面板（ui-spec.md §3 输入工具条）。
@@ -2062,40 +2132,41 @@ class _ChatInputBarState extends State<ChatInputBar> {
             children: <Widget>[
               _ToolButton(
                 icon: Icons.mic_none,
-                tooltip: '语音',
-                onTap:
-                    widget.onAttachVoice ?? () => _notImplemented('语音'),
+                tooltip: context.t('语音'),
+                onTap: widget.onAttachVoice ??
+                    () => _notImplemented(context.t('语音')),
               ),
               _ToolButton(
                 icon: _emojiOpen
                     ? Icons.keyboard_alt_outlined
                     : Icons.emoji_emotions_outlined,
-                tooltip: '表情',
+                tooltip: context.t('表情'),
                 onTap: _toggleEmoji,
               ),
               if (widget.mentionCandidates.isNotEmpty)
                 _ToolButton(
                   icon: Icons.alternate_email,
-                  tooltip: '@ 成员',
+                  tooltip: context.t('@ 成员'),
                   onTap: _showMentionPicker,
                 ),
               _ToolButton(
                 icon: Icons.timer_outlined,
                 tooltip: _ttlHours == 0
-                    ? '定时销毁'
-                    : '定时销毁：${ephemeralTtlLabel(_ttlHours)}',
+                    ? context.t('定时销毁')
+                    : context.t('定时销毁：{0}', [ephemeralTtlLabel(_ttlHours)]),
                 onTap: _showTtlPicker,
               ),
               _ToolButton(
                 icon: Icons.image_outlined,
-                tooltip: '图片',
-                onTap:
-                    widget.onAttachImage ?? () => _notImplemented('图片'),
+                tooltip: context.t('图片'),
+                onTap: widget.onAttachImage ??
+                    () => _notImplemented(context.t('图片')),
               ),
               _ToolButton(
                 icon: Icons.attach_file,
-                tooltip: '文件',
-                onTap: widget.onAttachFile ?? () => _notImplemented('文件'),
+                tooltip: context.t('文件'),
+                onTap:
+                    widget.onAttachFile ?? () => _notImplemented(context.t('文件')),
               ),
             ],
           ),
@@ -2112,7 +2183,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    '定时销毁：${ephemeralTtlLabel(_ttlHours)}后',
+                    context.t('定时销毁：{0}后', [ephemeralTtlLabel(_ttlHours)]),
                     key: const ValueKey<String>('ttl-active-chip'),
                     style: TextStyle(
                       fontSize: 11,
@@ -2143,7 +2214,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
                     onSubmitted: (_) => _submit(),
                     style: const TextStyle(fontSize: 15),
                     decoration: InputDecoration(
-                      hintText: '输入消息',
+                      hintText: context.t('输入消息'),
                       isDense: true,
                       filled: true,
                       fillColor: scheme.onSurface.withValues(alpha: 0.05),
@@ -2172,7 +2243,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
                     ),
                   ),
                 ),
-                child: const Text('发送'),
+                child: Text(context.t('发送')),
               ),
             ],
           ),
@@ -2319,7 +2390,7 @@ class _QuotePreview extends StatelessWidget {
           Container(
             width: 3,
             height: 30,
-            margin: const EdgeInsets.only(right: 8),
+            margin: const EdgeInsetsDirectional.only(end: 8),
             decoration: BoxDecoration(
               color: scheme.primary,
               borderRadius: BorderRadius.circular(2),
@@ -2331,7 +2402,9 @@ class _QuotePreview extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
                 Text(
-                  quoting.isMine ? '引用 我' : '引用 ${quoting.senderName}',
+                  context.t('引用 {0}', [
+                    quoting.isMine ? context.t('我') : quoting.senderName,
+                  ]),
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
@@ -2352,7 +2425,7 @@ class _QuotePreview extends StatelessWidget {
           ),
           IconButton(
             key: const ValueKey<String>('chat-quote-cancel'),
-            tooltip: '取消引用',
+            tooltip: context.t('取消引用'),
             onPressed: onCancel,
             icon: const Icon(Icons.close, size: 18),
             visualDensity: VisualDensity.compact,

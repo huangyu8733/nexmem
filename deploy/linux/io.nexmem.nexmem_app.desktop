@@ -1,6 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Nexmem
+Name[zh_CN]=奈讯联
+Name[zh_TW]=奈訊聯
 GenericName=Instant Messenger
 Comment=Nexmem 去中心化 P2P 即时通讯
 Exec=nexmem

@@ -561,7 +561,8 @@ void main() {
     ]);
   });
 
-  testWidgets('设置页账号卡片展示昵称与账号/设备缩略', (WidgetTester tester) async {
+  testWidgets('设置页账号卡片展示昵称与完整账号/设备（可复制）',
+      (WidgetTester tester) async {
     await tester.pumpWidget(
       _wrap(
         SettingsPage(
@@ -578,7 +579,24 @@ void main() {
       find.byKey(const ValueKey<String>('settings-account-name')),
     );
     expect(name.data, '小艾');
-    expect(find.text('账号 ${'a' * 10}… · 设备 ${'b' * 10}…'), findsOneWidget);
+    expect(
+      tester
+          .widget<SelectableText>(
+            find.byKey(const ValueKey<String>('settings-account-id-full')),
+          )
+          .data,
+      'a' * 64,
+    );
+    expect(
+      tester
+          .widget<SelectableText>(
+            find.byKey(const ValueKey<String>('settings-device-id-full')),
+          )
+          .data,
+      'b' * 64,
+    );
+    expect(find.byKey(const ValueKey<String>('settings-copy-account')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('settings-copy-device')), findsOneWidget);
   });
 
   testWidgets('设置页未接入内核时账号卡片保持离线占位', (WidgetTester tester) async {
@@ -586,7 +604,7 @@ void main() {
 
     expect(find.text('未登录设备'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey<String>('settings-account-meta')),
+      find.byKey(const ValueKey<String>('settings-account-id-full')),
       findsNothing,
     );
   });
@@ -724,23 +742,80 @@ void main() {
     expect(find.byKey(const ValueKey<String>('profile-display-name')), findsOneWidget);
     expect(find.text('小艾'), findsOneWidget);
     expect(
-      tester.widget<Text>(find.byKey(const ValueKey<String>('profile-account-id'))).data,
-      '${'a' * 20}…',
+      tester.widget<SelectableText>(find.byKey(const ValueKey<String>('profile-account-id-full'))).data,
+      'a' * 64,
     );
     expect(
-      tester.widget<Text>(find.byKey(const ValueKey<String>('profile-device-id'))).data,
-      '${'b' * 20}…',
+      tester.widget<SelectableText>(find.byKey(const ValueKey<String>('profile-device-id'))).data,
+      'b' * 64,
     );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey<String>('profile-intro')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     expect(
       tester.widget<TextField>(find.byKey(const ValueKey<String>('profile-intro')))
           .controller!.text,
       '这是我的个人介绍',
     );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey<String>('profile-promo')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     expect(
       tester.widget<TextField>(find.byKey(const ValueKey<String>('profile-promo')))
           .controller!.text,
       '推广：example.com',
     );
+  });
+
+  testWidgets('账号与设备过长时用左右小箭头平移且不产生滚动条',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(420, 760);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    final TransportSettingsService service = TransportSettingsService(
+      _SettingsTransport(),
+    );
+
+    await tester.pumpWidget(
+      _wrap(
+        ProfileDetailPanel(
+          account: CoreAccount(
+            accountId: 'a' * 64,
+            deviceId: 'b' * 64,
+            displayName: '小艾',
+          ),
+          settings: service,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<SelectableText>(find.byKey(const ValueKey<String>('profile-device-id'))).data,
+      'b' * 64,
+    );
+    final Finder next = find.byKey(const ValueKey<String>('profile-device-id-next'));
+    final Finder prev = find.byKey(const ValueKey<String>('profile-device-id-prev'));
+    expect(next, findsOneWidget);
+    expect(prev, findsOneWidget);
+    expect(tester.widget<IconButton>(next).onPressed, isNotNull);
+    expect(tester.widget<IconButton>(prev).onPressed, isNull);
+
+    await tester.tap(next);
+    await tester.pumpAndSettle();
+    expect(tester.widget<IconButton>(prev).onPressed, isNotNull);
+
+    // 平移行不是 Scrollable，整页也没有额外滚动条组件。
+    expect(find.byType(SingleChildScrollView), findsNothing);
   });
 
   testWidgets('个人资料编辑保存介绍与推广信息到 KV 并回显成功',
@@ -762,14 +837,32 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey<String>('profile-intro')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey<String>('profile-intro')),
       '  热心开发者  ',
     );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey<String>('profile-promo')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey<String>('profile-promo')),
       '  官网 home.page  ',
     );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey<String>('profile-save')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey<String>('profile-save')));
     await tester.pumpAndSettle();
 
@@ -794,9 +887,24 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey<String>('settings-profile')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey<String>('settings-profile-card')));
+    // 账号卡片点击打开只读资料（不含编辑/保存）。
+    await tester.tap(find.byKey(const ValueKey<String>('settings-account-name')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('profile-view-name')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('profile-save')), findsNothing);
+
+    // 关闭只读弹窗，再从「个人资料」菜单项进入编辑。
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('settings-profile')));
     await tester.pumpAndSettle();
 
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey<String>('profile-save')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey<String>('profile-save')), findsOneWidget);
     expect(find.text('个人推广信息'), findsOneWidget);
   });

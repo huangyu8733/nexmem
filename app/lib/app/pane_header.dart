@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../l10n/l10n.dart';
 import 'theme.dart';
 
 /// 列表区顶部栏：标题 + 右侧操作（ui-spec.md §2）。
@@ -58,7 +59,7 @@ class SearchBox extends StatelessWidget {
           Icon(Icons.search, size: 16, color: scheme.onSurface.withValues(alpha: 0.4)),
           const SizedBox(width: NexmemMetrics.space4),
           Text(
-            hint,
+            context.t(hint),
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: scheme.onSurface.withValues(alpha: 0.4),
                 ),

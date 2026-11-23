@@ -13,9 +13,13 @@ import '../features/chats/conversation.dart';
 import '../features/chats/conversation_store.dart';
 import '../features/chats/read_marker.dart';
 import '../features/contacts/contact.dart';
+import '../features/contacts/contact_detail_page.dart';
 import '../features/contacts/contact_service.dart';
 import '../features/contacts/contacts_page.dart';
+import '../features/contacts/device_list_page.dart';
+import '../features/contacts/friends_pane.dart';
 import '../features/group/group_info_page.dart';
+import '../features/group/group_list_page.dart';
 import '../features/group/group_service.dart';
 import '../features/rtc/call_page.dart';
 import '../features/rtc/call_service.dart';
@@ -24,10 +28,13 @@ import '../features/search/message_search.dart';
 import '../features/settings/backup.dart';
 import '../features/settings/diagnostics.dart';
 import '../features/settings/profile_panel.dart';
+import '../features/settings/profile_view.dart';
 import '../features/settings/report.dart';
 import '../features/settings/settings_page.dart';
+import '../features/settings/settings_pane.dart';
 import '../features/settings/settings_service.dart';
 import '../features/settings/storage_config.dart';
+import '../l10n/l10n.dart';
 import '../transport/transport.dart';
 import 'connection_status.dart';
 import 'core_session.dart';
@@ -75,7 +82,11 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
-  static const List<String> _titles = <String>['消息', '联系人', '我的'];
+  List<String> get _titles => <String>[
+    context.t('消息'),
+    context.t('联系人'),
+    context.t('我的'),
+  ];
   static const List<IconData> _icons = <IconData>[
     Icons.chat_bubble_outline,
     Icons.people_outline,
@@ -123,6 +134,19 @@ class _AppShellState extends State<AppShell> {
 
   /// 桌面宽屏右侧资料面板是否展开（P6-22）。
   bool _profileOpen = false;
+
+  /// 「我的」右栏当前展示的设置面板 label；null 表示只读资料展示。
+  /// 点击左栏头像 / 账号卡片重置为 null，点击设置列表项切换为对应 label。
+  String? _settingsPane;
+
+  /// 设置面板内部关闭（如选完外观/语言）后递增，强制重建以重新展示面板。
+  int _settingsPaneRevision = 0;
+
+  /// 「联系人」右栏当前展示的内容：好友 / 群聊 / 我的设备 / 好友资料 / 设备列表。
+  String _contactsPane = '好友';
+
+  /// 右栏内容附带参数：好友对象，或 `{peer, title}` 设备参数。
+  Object? _contactsPaneData;
 
   /// Web 端「仅在线接收」提示（P6-23）：首次进入展开，关闭后落 `localStorage`。
   final WebNoticeStore _webNotice = const WebNoticeStore();
@@ -740,7 +764,7 @@ class _AppShellState extends State<AppShell> {
               children: <Widget>[
                 const Padding(
                   padding: EdgeInsets.all(NexmemMetrics.space12),
-                  child: Text('转发到'),
+                  child: _TranslatedText('转发到'),
                 ),
                 const Divider(height: 1),
                 Flexible(
@@ -782,7 +806,7 @@ class _AppShellState extends State<AppShell> {
     if (target == null || !mounted) {
       return false;
     }
-    await _chatFor(target).send(message.text, senderName: '我');
+    await _chatFor(target).send(message.text, senderName: context.t('我'));
     _conversations.touch(target.id, message.text);
     return true;
   }
@@ -837,7 +861,7 @@ class _AppShellState extends State<AppShell> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            error.message.isEmpty ? '删除会话失败（${error.code}）' : error.message,
+            error.message.isEmpty ? context.t('删除会话失败（{0}）', [error.code]) : error.message,
           ),
         ),
       );
@@ -868,13 +892,14 @@ class _AppShellState extends State<AppShell> {
     if (session == null) {
       return;
     }
+    final String failText = context.t('置顶设置失败');
     try {
       await session.conversations.updateFlags(item.id, pinned: pinned);
     } on NexmemException catch (error) {
-      _revertConversationFlags(item, '置顶设置失败', error);
+      _revertConversationFlags(item, failText, error);
     } catch (error, stack) {
       _logDegradation('置顶设置', error, stack);
-      _revertConversationFlags(item, '置顶设置失败', null);
+      _revertConversationFlags(item, failText, null);
     }
   }
 
@@ -884,13 +909,14 @@ class _AppShellState extends State<AppShell> {
     if (session == null) {
       return;
     }
+    final String failText = context.t('免打扰设置失败');
     try {
       await session.conversations.updateFlags(item.id, muted: muted);
     } on NexmemException catch (error) {
-      _revertConversationFlags(item, '免打扰设置失败', error);
+      _revertConversationFlags(item, failText, error);
     } catch (error, stack) {
       _logDegradation('免打扰设置', error, stack);
-      _revertConversationFlags(item, '免打扰设置失败', null);
+      _revertConversationFlags(item, failText, null);
     }
   }
 
@@ -952,7 +978,7 @@ class _AppShellState extends State<AppShell> {
     final String self = widget.session?.accountId ?? '';
     if (self.isEmpty || contact.peer.isEmpty) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('账号未就绪，暂时无法发起聊天')));
+          .showSnackBar(SnackBar(content: Text(context.t('账号未就绪，暂时无法发起聊天'))));
       return;
     }
     final String id = dmConversationId(selfAccount: self, peer: contact.peer);
@@ -1040,6 +1066,12 @@ class _AppShellState extends State<AppShell> {
       onSendMessage: (Contact contact) => _openContact(contact, desktop),
       onOpenGroup: (String groupId, String title) =>
           _createGroupConversation(groupId, title, desktop),
+      onOpenPane: _openContactsPane,
+      onContactsChanged: () {
+        if (mounted) {
+          setState(() {});
+        }
+      },
     ),
     SettingsPage(
       account: widget.session?.account,
@@ -1053,6 +1085,8 @@ class _AppShellState extends State<AppShell> {
       reportSink: _reportSink,
       settings: widget.session?.settings ?? const UnavailableSettingsService(),
       coreInfo: _coreInfo,
+      onOpenProfileView: () => _openProfileView(desktop),
+      onOpenPane: (String label) => _openSettingsPane(label, desktop),
     ),
   ];
 
@@ -1200,13 +1234,10 @@ class _AppShellState extends State<AppShell> {
         const VerticalDivider(width: 1),
         Expanded(
           child: _section == 2
-              ? ProfileDetailPanel(
-                  account: widget.session?.account,
-                  settings:
-                      widget.session?.settings ??
-                      const UnavailableSettingsService(),
-                )
-              : _buildChatPane(allowProfile: wide),
+              ? _buildSettingsPane()
+              : _section == 1
+                  ? _buildContactsPane()
+                  : _buildChatPane(allowProfile: wide),
         ),
       ],
     );
@@ -1285,6 +1316,192 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
+  /// 左栏头像作为只读资料快捷入口：桌面切到「我的」后右栏展示只读资料卡，
+  /// 窄屏理论上不渲染左栏，但仍以只读全屏页兜底，避免入口失效。
+  void _openProfileFromAvatar() {
+    _openProfileView(
+      MediaQuery.sizeOf(context).width >= NexmemMetrics.desktopBreakpoint,
+    );
+  }
+
+  /// 账号卡片 / 左栏头像：查看只读资料，不提供编辑。
+  void _openProfileView(bool desktop) {
+    if (desktop) {
+      setState(() {
+        _section = 2;
+        _settingsPane = null;
+      });
+      return;
+    }
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (BuildContext context) => Scaffold(
+            appBar: AppBar(title: Text(context.t('个人资料'))),
+            body: ProfileViewBody(
+              account: widget.session?.account,
+              settings:
+                  widget.session?.settings ?? const UnavailableSettingsService(),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 联系人页各入口：桌面在右栏展示对应内容，手机 push 全屏页。
+  void _openContactsPane(String pane, {Object? data}) {
+    final bool desktop =
+        MediaQuery.sizeOf(context).width >= NexmemMetrics.desktopBreakpoint;
+    if (desktop) {
+      setState(() {
+        _section = 1;
+        _contactsPane = pane;
+        _contactsPaneData = data;
+      });
+      return;
+    }
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (BuildContext context) => Scaffold(
+            appBar: AppBar(title: Text(context.t(pane))),
+            body: _contactsPaneBody(pane, data),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 「联系人」右栏内容。
+  Widget _buildContactsPane() =>
+      _contactsPaneBody(_contactsPane, _contactsPaneData);
+
+  Widget _contactsPaneBody(String pane, Object? data) {
+    switch (pane) {
+      case '群聊':
+        final GroupService? groups = widget.session == null ? null : _groups;
+        if (groups == null) {
+          return const SizedBox.shrink();
+        }
+        return GroupListPage(
+          service: groups,
+          embedded: true,
+          onOpenGroup: (String groupId, String title) =>
+              _createGroupConversation(groupId, title, true),
+        );
+      case '好友资料':
+        if (data is! Contact) {
+          return const SizedBox.shrink();
+        }
+        final Contact contact = data;
+        return ContactDetailPage(
+          contact: contact,
+          service: widget.session == null ? null : _contacts,
+          embedded: true,
+          onChanged: (Contact next) =>
+              _contactsKey.currentState?.apply(next),
+          onSendMessage: () => _openContact(
+            contact,
+            MediaQuery.sizeOf(context).width >= NexmemMetrics.desktopBreakpoint,
+          ),
+          onOpenDevices: (String peer, String title) => _openContactsPane(
+            '设备列表',
+            data: <String, String>{'peer': peer, 'title': title},
+          ),
+        );
+      case '我的设备':
+      case '设备列表':
+        final ContactService? contacts =
+            widget.session == null ? null : _contacts;
+        if (contacts == null) {
+          return const SizedBox.shrink();
+        }
+        final Map<String, String> args = data is Map<String, String>
+            ? data
+            : <String, String>{'peer': '', 'title': context.t('我的设备')};
+        return DeviceListPage(
+          service: contacts,
+          peer: args['peer'] ?? '',
+          title: args['title'] ?? context.t('我的设备'),
+          embedded: true,
+        );
+      case '好友':
+      default:
+        return FriendsPane(
+          friends: _contactsKey.currentState?.friends ?? const <Contact>[],
+          onOpenContact: (Contact contact) =>
+              _openContactsPane('好友资料', data: contact),
+          onAdd: widget.session == null
+              ? null
+              : () => unawaited(_contactsKey.currentState?.addFriend()),
+        );
+    }
+  }
+
+  /// 设置列表项：桌面在右栏展示对应面板，手机 push 全屏页，均不再弹框。
+  void _openSettingsPane(String label, bool desktop) {
+    if (desktop) {
+      setState(() {
+        _section = 2;
+        _settingsPane = label;
+      });
+      return;
+    }
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (BuildContext context) => SettingsPanePage(
+            title: context.t(label),
+            builder: _settingsPaneBuilder(label),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 为当前设置项生成对话框内容构建器（复用既有弹窗交互）。
+  WidgetBuilder _settingsPaneBuilder(String label) => settingsPaneBuilder(
+        label: label,
+        backup: _backup,
+        settings: widget.session?.settings ?? const UnavailableSettingsService(),
+        diagnostics: _diagnostics,
+        ping: _ping,
+        storage: _storage,
+        themeMode: widget.themeMode,
+        onThemeModeChanged: widget.onThemeModeChanged,
+        reportSink: _reportSink,
+        coreInfo: _coreInfo,
+      );
+
+  /// 「我的」右栏内容：null 只读资料、个人资料编辑、其它设置面板。
+  Widget _buildSettingsPane() {
+    final String? label = _settingsPane;
+    if (label == null) {
+      return ProfileViewPanel(
+        account: widget.session?.account,
+        settings:
+            widget.session?.settings ?? const UnavailableSettingsService(),
+      );
+    }
+    if (label == '个人资料') {
+      return ProfileDetailPanel(
+        account: widget.session?.account,
+        settings:
+            widget.session?.settings ?? const UnavailableSettingsService(),
+      );
+    }
+    // 不传 title：内容自带标题（原 AlertDialog.title），避免重复标题栏。
+    return EmbeddedSettingsPane(
+      key: ValueKey<String>('settings-pane-$label-$_settingsPaneRevision'),
+      builder: _settingsPaneBuilder(label),
+      onDismiss: () {
+        if (mounted) {
+          setState(() => _settingsPaneRevision++);
+        }
+      },
+    );
+  }
   Widget _buildRail() {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return Container(
@@ -1293,13 +1510,23 @@ class _AppShellState extends State<AppShell> {
       child: Column(
         children: <Widget>[
           const SizedBox(height: NexmemMetrics.space16),
-          CircleAvatar(
-            radius: NexmemMetrics.avatarSize / 2,
-            backgroundColor: scheme.onSurface.withValues(alpha: 0.08),
-            child: Icon(
-              Icons.person_outline,
-              size: 22,
-              color: scheme.onSurface.withValues(alpha: 0.45),
+          Tooltip(
+            message: context.t('个人资料'),
+            child: InkWell(
+              key: const ValueKey<String>('rail-avatar'),
+              onTap: _openProfileFromAvatar,
+              borderRadius: BorderRadius.circular(
+                NexmemMetrics.radiusListItem,
+              ),
+              child: CircleAvatar(
+                radius: NexmemMetrics.avatarSize / 2,
+                backgroundColor: scheme.onSurface.withValues(alpha: 0.08),
+                child: Icon(
+                  Icons.person_outline,
+                  size: 22,
+                  color: scheme.onSurface.withValues(alpha: 0.45),
+                ),
+              ),
             ),
           ),
           const SizedBox(height: NexmemMetrics.space16),
@@ -1355,4 +1582,14 @@ class _RailButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 在 const 子组件树中渲染一条本地化文案（避免 const 表达式调用方法）。
+class _TranslatedText extends StatelessWidget {
+  const _TranslatedText(this.keyText);
+
+  final String keyText;
+
+  @override
+  Widget build(BuildContext context) => Text(context.t(keyText));
 }

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="180" viewBox="0 0 720 180" role="img" aria-label="Nexmem 奈讯联">
+  <defs>
+    <linearGradient id="nexmem-logo-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#35D0FF"/>
+      <stop offset="1" stop-color="#0A78C8"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(0 18) scale(0.28125)">
+    <rect width="512" height="512" rx="112" fill="url(#nexmem-logo-bg)"/>
+    <circle cx="404" cy="104" r="72" fill="#FFFFFF" opacity="0.08"/>
+    <path d="M168 344 V168 L344 344 V168"
+          fill="none" stroke="#FFFFFF" stroke-width="40"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="168" cy="168" r="22" fill="#FFFFFF"/>
+    <circle cx="344" cy="344" r="22" fill="#FFFFFF"/>
+    <circle cx="256" cy="256" r="19" fill="#FFFFFF"/>
+    <circle cx="256" cy="256" r="8" fill="#0A78C8"/>
+  </g>
+
+  <text x="176" y="94" fill="#12B7F5"
+        font-family="'Segoe UI', 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif"
+        font-size="68" font-weight="700" letter-spacing="1">Nexmem</text>
+  <text x="179" y="134" fill="#5A6472"
+        font-family="'Segoe UI', 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif"
+        font-size="24" font-weight="500" letter-spacing="2">奈讯联 · 去中心化即时通讯</text>
+</svg>

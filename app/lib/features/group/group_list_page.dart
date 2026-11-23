@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../l10n/l10n.dart';
+
+import '../../app/pane_header.dart';
 import '../../app/theme.dart';
 import '../../transport/transport.dart';
 import 'group_service.dart';
@@ -11,12 +14,21 @@ import 'group_service.dart';
 /// 数据源为 `group.list`：展示群名、成员数与本人角色，点击回调由壳层打开群会话；
 /// 群盘未配置的群给出明确标识，与聊天页「离线消息不可补」提示保持一致。
 class GroupListPage extends StatefulWidget {
-  const GroupListPage({super.key, required this.service, this.onOpenGroup});
+  const GroupListPage({
+    super.key,
+    required this.service,
+    this.onOpenGroup,
+    this.embedded = false,
+  });
 
   final GroupService service;
 
   /// 点击群聊时回调 `(groupId, title)`，由调用方打开群会话。
   final void Function(String groupId, String title)? onOpenGroup;
+
+  /// 为 true 时以面板形式渲染（供桌面右栏 / 手机全屏页复用），
+  /// 不套 Scaffold、不在打开群聊时 pop 外层路由。
+  final bool embedded;
 
   @override
   State<GroupListPage> createState() => _GroupListPageState();
@@ -59,14 +71,25 @@ class _GroupListPageState extends State<GroupListPage> {
   }
 
   void _open(GroupSummary group) {
-    Navigator.of(context).pop();
+    if (!widget.embedded) {
+      Navigator.of(context).pop();
+    }
     widget.onOpenGroup?.call(group.groupId, group.displayTitle);
   }
 
   @override
   Widget build(BuildContext context) {
+    if (widget.embedded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          PaneHeader(title: context.t('群聊')),
+          Expanded(child: _body()),
+        ],
+      );
+    }
     return Scaffold(
-      appBar: AppBar(title: const Text('群聊')),
+      appBar: AppBar(title: Text(context.t('群聊'))),
       body: _body(),
     );
   }
@@ -86,7 +109,7 @@ class _GroupListPageState extends State<GroupListPage> {
               vertical: NexmemMetrics.space24,
             ),
             child: Text(
-              '还没有群聊，在会话页右上角「+」发起群聊',
+              context.t('还没有群聊，在会话页右上角「+」发起群聊'),
               key: const ValueKey<String>('group-list-empty'),
               textAlign: TextAlign.center,
               style: TextStyle(
@@ -154,7 +177,10 @@ class _GroupTile extends StatelessWidget {
                           ?.copyWith(fontSize: 15),
                     ),
                     Text(
-                      '${group.memberCount} 人 · ${group.isAdmin ? '管理员' : '成员'}',
+                      context.t('{0} 人 · {1}', [
+                        group.memberCount,
+                        group.isAdmin ? context.t('管理员') : context.t('成员'),
+                      ]),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -167,7 +193,7 @@ class _GroupTile extends StatelessWidget {
               ),
               if (!group.storageConfigured)
                 Tooltip(
-                  message: '未配置群盘，离线消息不可补',
+                  message: context.t('未配置群盘，离线消息不可补'),
                   child: Icon(
                     Icons.cloud_off_outlined,
                     size: 18,
@@ -211,7 +237,7 @@ class _ErrorBar extends StatelessWidget {
           TextButton(
             key: const ValueKey<String>('group-list-retry'),
             onPressed: onRetry,
-            child: const Text('重试'),
+            child: Text(context.t('重试')),
           ),
         ],
       ),

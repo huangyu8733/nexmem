@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../l10n/l10n.dart';
 import 'theme.dart';
 
 /// 连接状态，对应 ui-spec.md §7 顶部细状态条。
@@ -30,7 +31,7 @@ class ConnectionStatusBar extends StatelessWidget {
       width: double.infinity,
       color: scheme.surface,
       padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space12),
-      alignment: Alignment.centerLeft,
+      alignment: AlignmentDirectional.centerStart,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
@@ -41,7 +42,7 @@ class ConnectionStatusBar extends StatelessWidget {
           ),
           const SizedBox(width: NexmemMetrics.space8),
           Text(
-            status.label,
+            context.t(status.label),
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
                   fontSize: 11,
                   color: scheme.onSurface.withValues(alpha: 0.7),

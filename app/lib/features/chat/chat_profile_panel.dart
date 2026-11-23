@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../l10n/l10n.dart';
+
 import '../../app/theme.dart';
 import '../../transport/transport.dart';
 import '../chats/conversation.dart';
@@ -111,14 +113,14 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
                 const SizedBox(width: NexmemMetrics.space16),
                 Expanded(
                   child: Text(
-                    '聊天信息',
+                    context.t('聊天信息'),
                     style: Theme.of(context).textTheme.titleMedium
                         ?.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
                   ),
                 ),
                 IconButton(
                   key: const ValueKey<String>('chat-profile-close'),
-                  tooltip: '收起',
+                  tooltip: context.t('收起'),
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.close, size: 18),
                   onPressed: widget.onClose,
@@ -171,7 +173,7 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
         const SizedBox(height: NexmemMetrics.space4),
         Center(
           child: Text(
-            '单聊 · ${_presenceLabel(conversation.presence)}',
+            context.t('单聊 · {0}', [_presenceLabel(context, conversation.presence)]),
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               fontSize: 12,
               color: scheme.onSurface.withValues(alpha: 0.5),
@@ -180,8 +182,8 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
         ),
         const SizedBox(height: NexmemMetrics.space24),
         _InfoRow(
-          label: '账号',
-          value: account.isEmpty ? '未知' : shortAccountLabel(account),
+          label: context.t('账号'),
+          value: account.isEmpty ? context.t('未知') : shortAccountLabel(account),
           monospace: true,
           onCopy: account.isEmpty
               ? null
@@ -189,8 +191,8 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
         ),
         const SizedBox(height: NexmemMetrics.space12),
         _InfoRow(
-          label: '在线状态',
-          value: _presenceLabel(conversation.presence),
+          label: context.t('在线状态'),
+          value: _presenceLabel(context, conversation.presence),
         ),
         const SizedBox(height: NexmemMetrics.space24),
         Container(
@@ -209,7 +211,7 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
               const SizedBox(width: NexmemMetrics.space8),
               Expanded(
                 child: Text(
-                  '消息端到端加密，仅你与对方可读',
+                  context.t('消息端到端加密，仅你与对方可读'),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     fontSize: 12,
                     color: NexmemColors.success,
@@ -251,7 +253,7 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
               FilledButton(
                 key: const ValueKey<String>('chat-profile-retry'),
                 onPressed: _load,
-                child: const Text('重试'),
+                child: Text(context.t('重试')),
               ),
             ],
           ),
@@ -296,7 +298,7 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
                           ),
                     ),
                     Text(
-                      '群聊 · ${info.members.length} 位成员',
+                      context.t('群聊 · {0} 位成员', [info.members.length]),
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         fontSize: 12,
                         color: scheme.onSurface.withValues(alpha: 0.5),
@@ -318,14 +320,14 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  '群成员（${info.members.length}）',
+                  context.t('群成员（{0}）', [info.members.length]),
                   key: const ValueKey<String>('chat-profile-member-count'),
                   style: Theme.of(context).textTheme.bodyMedium
                       ?.copyWith(fontSize: 14, fontWeight: FontWeight.w600),
                 ),
               ),
               Text(
-                '密钥版本 v${info.keyVersion}',
+                context.t('密钥版本 v{0}', [info.keyVersion]),
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   fontSize: 12,
                   color: scheme.onSurface.withValues(alpha: 0.5),
@@ -346,7 +348,7 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
           Padding(
             padding: const EdgeInsets.all(NexmemMetrics.space24),
             child: Text(
-              '暂无成员信息',
+              context.t('暂无成员信息'),
               textAlign: TextAlign.center,
               style: TextStyle(color: scheme.onSurface.withValues(alpha: 0.45)),
             ),
@@ -358,7 +360,7 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
             key: const ValueKey<String>('chat-profile-open-group'),
             onPressed: widget.onOpenGroupInfo,
             icon: const Icon(Icons.settings_outlined, size: 18),
-            label: const Text('群设置'),
+            label: Text(context.t('群设置')),
             style: OutlinedButton.styleFrom(
               minimumSize: const Size.fromHeight(40),
             ),
@@ -371,8 +373,9 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
 
   Future<void> _copyAccount(BuildContext context, String account) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final String copied = context.t('账号已复制');
     await Clipboard.setData(ClipboardData(text: account));
-    messenger.showSnackBar(const SnackBar(content: Text('账号已复制')));
+    messenger.showSnackBar(SnackBar(content: Text(copied)));
   }
 
   static String _initial(String title) {
@@ -383,14 +386,14 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
     return trimmed.substring(0, 1).toUpperCase();
   }
 
-  static String _presenceLabel(PresenceStatus status) {
+  static String _presenceLabel(BuildContext context, PresenceStatus status) {
     switch (status) {
       case PresenceStatus.online:
-        return '在线';
+        return context.t('在线');
       case PresenceStatus.relay:
-        return '经中继';
+        return context.t('经中继');
       case PresenceStatus.offline:
-        return '离线';
+        return context.t('离线');
     }
   }
 }
@@ -437,7 +440,7 @@ class _InfoRow extends StatelessWidget {
         ),
         if (onCopy != null)
           IconButton(
-            tooltip: '复制',
+            tooltip: context.t('复制'),
             visualDensity: VisualDensity.compact,
             icon: const Icon(Icons.copy, size: 16),
             onPressed: onCopy,
@@ -484,7 +487,9 @@ class _MemberRow extends StatelessWidget {
             const SizedBox(width: NexmemMetrics.space12),
             Expanded(
               child: Text(
-                isSelf ? '${member.label}（我）' : member.label,
+                isSelf
+                    ? context.t('{0}（我）', [member.label])
+                    : member.label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodyMedium
@@ -498,9 +503,12 @@ class _MemberRow extends StatelessWidget {
                   color: NexmemColors.primary.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: const Text(
-                  '群主',
-                  style: TextStyle(fontSize: 11, color: NexmemColors.primary),
+                child: Text(
+                  context.t('群主'),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: NexmemColors.primary,
+                  ),
                 ),
               ),
           ],

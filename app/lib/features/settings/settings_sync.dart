@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/theme.dart' show NexmemColors, NexmemMetrics;
+import '../../l10n/l10n.dart';
 import '../../transport/transport.dart' show NexmemException;
 import 'settings_service.dart';
 
@@ -58,9 +59,13 @@ class _SettingsSyncDialogState extends State<SettingsSyncDialog> {
       final SettingsSnapshot snapshot = await widget.settings.exportSnapshot();
       _controller.text = snapshot.snapshot;
       await Clipboard.setData(ClipboardData(text: snapshot.snapshot));
-      _feedback('已导出 ${snapshot.count} 项设置并复制到剪贴板');
+      if (mounted) {
+        _feedback(context.t('已导出 {0} 项设置并复制到剪贴板', [snapshot.count]));
+      }
     } on Object catch (error) {
-      _feedback('导出失败：$error', error: true);
+      if (mounted) {
+        _feedback(context.t('导出失败：{0}', [error]), error: true);
+      }
     } finally {
       if (mounted) {
         setState(() => _busy = false);
@@ -71,7 +76,7 @@ class _SettingsSyncDialogState extends State<SettingsSyncDialog> {
   Future<void> _import() async {
     final String snapshot = _controller.text.trim();
     if (snapshot.isEmpty) {
-      _feedback('请先粘贴另一设备导出的设置快照', error: true);
+      _feedback(context.t('请先粘贴另一设备导出的设置快照'), error: true);
       return;
     }
     setState(() {
@@ -80,16 +85,22 @@ class _SettingsSyncDialogState extends State<SettingsSyncDialog> {
     });
     try {
       final int applied = await widget.settings.importSnapshot(snapshot);
-      _feedback('已合并 $applied 项设置；部分设置需重启生效');
+      if (mounted) {
+        _feedback(context.t('已合并 {0} 项设置；部分设置需重启生效', [applied]));
+      }
     } on NexmemException catch (error) {
-      _feedback(
-        error.code == 'INVALID_ARG'
-            ? '设置快照无效或校验失败'
-            : (error.message.isEmpty ? error.code : error.message),
-        error: true,
-      );
+      if (mounted) {
+        _feedback(
+          error.code == 'INVALID_ARG'
+              ? context.t('设置快照无效或校验失败')
+              : (error.message.isEmpty ? error.code : error.message),
+          error: true,
+        );
+      }
     } on Object catch (error) {
-      _feedback('导入失败：$error', error: true);
+      if (mounted) {
+        _feedback(context.t('导入失败：{0}', [error]), error: true);
+      }
     } finally {
       if (mounted) {
         setState(() => _busy = false);
@@ -100,32 +111,32 @@ class _SettingsSyncDialogState extends State<SettingsSyncDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('多设备设置同步'),
+      title: Text(context.t('多设备设置同步')),
       content: SizedBox(
         width: 380,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            const Text(
-              '导出本机设置后，把文本复制到另一台设备即可导入合并；实时同步需多端共用存储，暂未开放。',
-              style: TextStyle(fontSize: 12),
+            Text(
+              context.t('导出本机设置后，把文本复制到另一台设备即可导入合并；实时同步需多端共用存储，暂未开放。'),
+              style: const TextStyle(fontSize: 12),
             ),
             const SizedBox(height: NexmemMetrics.space12),
             TextField(
               key: const ValueKey<String>('settings-sync-snapshot'),
               controller: _controller,
               maxLines: 4,
-              decoration: const InputDecoration(
-                labelText: '设置快照文本',
+              decoration: InputDecoration(
+                labelText: context.t('设置快照文本'),
                 hintText: 'settings://v1/...',
-                border: OutlineInputBorder(),
+                border: const OutlineInputBorder(),
               ),
             ),
             if (_message != null) ...<Widget>[
               const SizedBox(height: 8),
               Text(
-                _message!,
+                context.t(_message!),
                 key: const ValueKey<String>('settings-sync-message'),
                 style: TextStyle(
                   fontSize: 12,
@@ -140,16 +151,16 @@ class _SettingsSyncDialogState extends State<SettingsSyncDialog> {
         TextButton(
           key: const ValueKey<String>('settings-sync-export'),
           onPressed: _busy ? null : _export,
-          child: const Text('导出并复制'),
+          child: Text(context.t('导出并复制')),
         ),
         TextButton(
           key: const ValueKey<String>('settings-sync-import'),
           onPressed: _busy ? null : _import,
-          child: const Text('导入合并'),
+          child: Text(context.t('导入合并')),
         ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+          child: Text(context.t('关闭')),
         ),
       ],
     );

@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/theme.dart';
+import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 import 'contact_service.dart';
 
@@ -72,9 +73,10 @@ class _AddFriendDialogState extends State<AddFriendDialog> {
   }
 
   Future<void> _submit() async {
+    final String invalidAccount = context.t('账号格式不正确，请粘贴完整公钥');
     final String account = _account.text.trim();
     if (account.isEmpty) {
-      setState(() => _error = '请输入对方账号公钥');
+      setState(() => _error = context.t('请输入对方账号公钥'));
       return;
     }
     setState(() {
@@ -91,7 +93,7 @@ class _AddFriendDialogState extends State<AddFriendDialog> {
         setState(() {
           _busy = false;
           _error = error.code == 'INVALID_ARG'
-              ? '账号格式不正确，请粘贴完整公钥'
+              ? invalidAccount
               : (error.message.isEmpty ? error.code : error.message);
         });
       }
@@ -101,7 +103,7 @@ class _AddFriendDialogState extends State<AddFriendDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('添加好友'),
+      title: Text(context.t('添加好友')),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
@@ -109,20 +111,20 @@ class _AddFriendDialogState extends State<AddFriendDialog> {
             key: const ValueKey<String>('contact-add-account'),
             controller: _account,
             autofocus: true,
-            decoration: const InputDecoration(
-              labelText: '账号公钥',
-              helperText: '对方在「好友资料」中可复制的账号',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: context.t('账号公钥'),
+              helperText: context.t('对方在「好友资料」中可复制的账号'),
+              border: const OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: NexmemMetrics.space12),
           TextField(
             key: const ValueKey<String>('contact-add-alias'),
             controller: _alias,
-            decoration: const InputDecoration(
-              labelText: '备注（可选）',
-              helperText: '仅本机可见',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: context.t('备注（可选）'),
+              helperText: context.t('仅本机可见'),
+              border: const OutlineInputBorder(),
             ),
           ),
           if (_error != null)
@@ -139,12 +141,12 @@ class _AddFriendDialogState extends State<AddFriendDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: _busy ? null : () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
+          child: Text(context.t('取消')),
         ),
         FilledButton(
           key: const ValueKey<String>('contact-add-submit'),
           onPressed: _busy ? null : _submit,
-          child: Text(_busy ? '添加中…' : '添加'),
+          child: Text(_busy ? context.t('添加中…') : context.t('添加')),
         ),
       ],
     );

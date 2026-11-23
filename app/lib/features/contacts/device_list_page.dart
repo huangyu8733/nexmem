@@ -1,6 +1,8 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/pane_header.dart';
 import '../../app/theme.dart';
+import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 import 'contact_service.dart';
 
@@ -15,6 +17,7 @@ class DeviceListPage extends StatefulWidget {
     required this.service,
     this.peer,
     this.title = '我的设备',
+    this.embedded = false,
   });
 
   final ContactService service;
@@ -23,6 +26,9 @@ class DeviceListPage extends StatefulWidget {
   final String? peer;
 
   final String title;
+
+  /// 为 true 时以面板形式渲染（桌面右栏 / 手机全屏页复用），不套 Scaffold。
+  final bool embedded;
 
   @override
   State<DeviceListPage> createState() => _DeviceListPageState();
@@ -65,19 +71,28 @@ class _DeviceListPageState extends State<DeviceListPage> {
     }
   }
 
+  List<Widget> get _actions => <Widget>[
+        IconButton(
+          key: const ValueKey<String>('device-refresh'),
+          tooltip: context.t('刷新设备列表'),
+          icon: const Icon(Icons.refresh, size: 20),
+          onPressed: _loading ? null : _reload,
+        ),
+      ];
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-        actions: <Widget>[
-          IconButton(
-            tooltip: '刷新设备列表',
-            icon: const Icon(Icons.refresh, size: 20),
-            onPressed: _loading ? null : _reload,
-          ),
+    if (widget.embedded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          PaneHeader(title: context.t(widget.title), actions: _actions),
+          Expanded(child: _buildBody(context)),
         ],
-      ),
+      );
+    }
+    return Scaffold(
+      appBar: AppBar(title: Text(context.t(widget.title)), actions: _actions),
       body: _buildBody(context),
     );
   }
@@ -89,24 +104,24 @@ class _DeviceListPageState extends State<DeviceListPage> {
     if (_error != null) {
       return _DeviceEmpty(
         icon: Icons.cloud_off_outlined,
-        title: '设备列表读取失败',
+        title: context.t('设备列表读取失败'),
         message: _error!,
         action: FilledButton.tonal(
           onPressed: _reload,
-          child: const Text('重试'),
+          child: Text(context.t('重试')),
         ),
       );
     }
     if (_result.items.isEmpty) {
       return _DeviceEmpty(
         icon: Icons.devices_other_outlined,
-        title: _result.found ? '暂无可显示的设备' : '尚未发布设备信息',
-        message: _result.found
+        title: context.t(_result.found ? '暂无可显示的设备' : '尚未发布设备信息'),
+        message: context.t(_result.found
             ? '档案里的设备证书都已过期或被移除，设备重新上线后会自动补回。'
-            : '该账号还没有把档案发布到索引服务，未配置索引服务时也会出现此提示。',
+            : '该账号还没有把档案发布到索引服务，未配置索引服务时也会出现此提示。'),
         action: FilledButton.tonal(
           onPressed: _reload,
-          child: const Text('重新检查'),
+          child: Text(context.t('重新检查')),
         ),
       );
     }
@@ -117,17 +132,16 @@ class _DeviceListPageState extends State<DeviceListPage> {
           const Divider(height: 1, indent: 72),
       itemBuilder: (BuildContext context, int index) {
         if (index == _result.items.length) {
-          return const Padding(
-            padding: EdgeInsets.fromLTRB(
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(
               NexmemMetrics.space16,
               NexmemMetrics.space12,
               NexmemMetrics.space16,
               NexmemMetrics.space24,
             ),
             child: Text(
-              '设备信息来自账号公开档案，最多显示 16 台；'
-              '「最近活跃」取该设备最近一次发布档案的时间。',
-              style: TextStyle(fontSize: 12),
+              context.t('设备信息来自账号公开档案，最多显示 16 台；「最近活跃」取该设备最近一次发布档案的时间。'),
+              style: const TextStyle(fontSize: 12),
             ),
           );
         }
@@ -148,7 +162,8 @@ class DeviceTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final List<String> lines = <String>[
-      if (device.deviceId.isNotEmpty) '设备 ${_shortPeer(device.deviceId)}',
+      if (device.deviceId.isNotEmpty)
+        context.t('设备 {0}', [_shortPeer(device.deviceId)]),
       deviceActiveLabel(device.issuedAt),
     ];
     return ListTile(
@@ -181,7 +196,7 @@ class DeviceTile extends StatelessWidget {
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
-                '本机',
+                context.t('本机'),
                 style: TextStyle(fontSize: 11, color: scheme.primary),
               ),
             ),
@@ -199,7 +214,7 @@ class DeviceTile extends StatelessWidget {
       trailing: device.notAfter == null
           ? null
           : Text(
-              '有效期至 ${_dateLabel(device.notAfter!)}',
+              context.t('有效期至 {0}', [_dateLabel(device.notAfter!)]),
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: scheme.onSurface.withValues(alpha: 0.5),
                   ),

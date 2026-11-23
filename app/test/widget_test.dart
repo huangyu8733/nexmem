@@ -121,13 +121,116 @@ void main() {
     await tester.tap(find.byTooltip('我的'));
     await tester.pumpAndSettle();
 
-    // 右栏不再空着，改为个人资料面板；中栏仍显示设置项。
+    // 右栏不再空着，改为只读资料面板；中栏仍显示设置项。
     expect(find.text('选择一个会话开始聊天'), findsNothing);
     expect(find.text('个人资料'), findsWidgets);
-    expect(find.text('个人介绍'), findsWidgets);
-    expect(find.text('个人推广信息'), findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('profile-save')), findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('profile-display-name')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('profile-view-name')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('profile-view-account')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('profile-view-device')),
+      findsOneWidget,
+    );
     expect(find.text('小艾'), findsWidgets);
+    // 只读卡不含编辑输入框与保存按钮。
+    expect(find.byKey(const ValueKey<String>('profile-save')), findsNothing);
+  });
+
+  testWidgets('桌面点击左栏头像时右栏展示个人详情', (WidgetTester tester) async {
+    await _pumpWithSessionAt(
+      tester,
+      const Size(1280, 800),
+      CoreSession(_ProfileTransport()),
+    );
+
+    expect(find.text('选择一个会话开始聊天'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('rail-avatar')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey<String>('rail-avatar')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('选择一个会话开始聊天'), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('profile-view-name')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('profile-view-account')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey<String>('profile-save')), findsNothing);
+    expect(find.text('小艾'), findsWidgets);
+  });
+
+  testWidgets('桌面设置项点击在右栏展示面板而非弹框', (WidgetTester tester) async {
+    await _pumpWithSessionAt(
+      tester,
+      const Size(1280, 800),
+      CoreSession(_ProfileTransport()),
+    );
+    await tester.tap(find.byTooltip('我的'));
+    await tester.pumpAndSettle();
+
+    // 默认右栏是只读资料卡。
+    expect(
+      find.byKey(const ValueKey<String>('profile-view-name')),
+      findsOneWidget,
+    );
+
+    // 点击「个人资料」菜单项后右栏切换为可编辑面板（无 Dialog）。
+    await tester.tap(find.byKey(const ValueKey<String>('settings-profile')));
+    await tester.pumpAndSettle();
+    expect(find.byType(Dialog), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('profile-display-name')),
+      findsOneWidget,
+    );
+    expect(find.text('个人介绍'), findsOneWidget);
+
+    // 点击其它设置项右栏切到对应面板（语言）：右栏内容切换且仍是编辑面板之外。
+    await tester.tap(find.byKey(const ValueKey<String>('settings-language')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('profile-save')), findsNothing);
+    expect(find.text('跟随系统'), findsWidgets);
+  });
+
+  testWidgets('桌面好友与群聊点击在右栏展示而非全屏页或弹框', (WidgetTester tester) async {
+    await _pumpWithSessionAt(
+      tester,
+      const Size(1280, 800),
+      CoreSession(_ProfileTransport()),
+    );
+    await tester.tap(find.byTooltip('联系人'));
+    await tester.pumpAndSettle();
+
+    // 右栏默认是好友面板。
+    expect(
+      find.byKey(const ValueKey<String>('pane-friends-empty')),
+      findsOneWidget,
+    );
+    expect(find.byType(Dialog), findsNothing);
+
+    // 点「群聊」入口：右栏切换到群聊面板，没有 push 新页面、没有弹框。
+    await tester.tap(find.byKey(const ValueKey<String>('contact-groups-entry')));
+    await tester.pumpAndSettle();
+    expect(find.text('群聊'), findsWidgets);
+    expect(find.byType(Dialog), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('pane-friends-empty')),
+      findsNothing,
+    );
+
+    // 回到「好友」入口：右栏重新展示好友面板。
+    await tester.tap(find.byKey(const ValueKey<String>('contact-friends-entry')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('pane-friends-empty')),
+      findsOneWidget,
+    );
   });
 }

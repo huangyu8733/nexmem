@@ -5,6 +5,8 @@
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../l10n/l10n.dart';
+
 import 'call_service.dart';
 
 /// 通话页。
@@ -50,7 +52,7 @@ class CallPage extends StatelessWidget {
                   Icon(Icons.call, color: scheme.primary, size: 20),
                   const SizedBox(width: 8),
                   Text(
-                    info.video ? '视频通话' : '语音通话',
+                    context.t(info.video ? '视频通话' : '语音通话'),
                     style: const TextStyle(color: Colors.white70, fontSize: 14),
                   ),
                 ],
@@ -77,7 +79,7 @@ class CallPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      _statusLabel(info.state),
+                      _statusLabel(context, info.state),
                       key: const ValueKey<String>('call-status'),
                       style: const TextStyle(color: Colors.white60, fontSize: 14),
                     ),
@@ -100,14 +102,14 @@ class CallPage extends StatelessWidget {
                       key: const ValueKey<String>('call-reject'),
                       icon: Icons.call_end,
                       color: Colors.red,
-                      label: '拒绝',
+                      label: context.t('拒绝'),
                       onPressed: onReject,
                     ),
                     _RoundAction(
                       key: const ValueKey<String>('call-accept'),
                       icon: Icons.call,
                       color: const Color(0xFF2BB673),
-                      label: '接听',
+                      label: context.t('接听'),
                       onPressed: onAccept,
                     ),
                   ],
@@ -116,14 +118,14 @@ class CallPage extends StatelessWidget {
                       key: const ValueKey<String>('call-mute'),
                       icon: info.muted ? Icons.mic_off : Icons.mic,
                       color: info.muted ? Colors.grey : scheme.primary,
-                      label: info.muted ? '取消静音' : '静音',
+                      label: context.t(info.muted ? '取消静音' : '静音'),
                       onPressed: onToggleMute,
                     ),
                     _RoundAction(
                       key: const ValueKey<String>('call-hangup'),
                       icon: Icons.call_end,
                       color: Colors.red,
-                      label: '挂断',
+                      label: context.t('挂断'),
                       onPressed: onHangup,
                     ),
                   ],
@@ -136,11 +138,12 @@ class CallPage extends StatelessWidget {
     );
   }
 
-  static String _statusLabel(CallState state) => switch (state) {
-        CallState.incoming => '来电，是否接听？',
-        CallState.outgoing => '正在呼叫…',
-        CallState.connected => '通话中',
-        CallState.ended => '已结束',
+  static String _statusLabel(BuildContext context, CallState state) =>
+      switch (state) {
+        CallState.incoming => context.t('来电，是否接听？'),
+        CallState.outgoing => context.t('正在呼叫…'),
+        CallState.connected => context.t('通话中'),
+        CallState.ended => context.t('已结束'),
         CallState.idle => '',
       };
 }

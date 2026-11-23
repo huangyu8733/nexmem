@@ -3,9 +3,23 @@ import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 
 import '../features/settings/settings_service.dart';
+import '../l10n/l10n.dart';
 import 'core_session.dart';
 import 'shell.dart';
 import 'theme.dart';
+
+/// 把 [SettingsService] 适配为语言控制器所需的最小接口。
+class _SettingsLocaleStore implements LocaleSettings {
+  const _SettingsLocaleStore(this._settings);
+
+  final SettingsService _settings;
+
+  @override
+  Future<String?> read(String key) => _settings.read(key);
+
+  @override
+  Future<void> write(String key, String value) => _settings.write(key, value);
+}
 
 /// 六端共用入口：主题、语言与首页壳。
 class NexmemApp extends StatefulWidget {
@@ -22,10 +36,24 @@ class _NexmemAppState extends State<NexmemApp> {
   /// 外观主题（ui-spec.md §5）：默认跟随系统，成功后经 `settings.set` 落盘。
   ThemeMode _themeMode = ThemeMode.system;
 
+  /// 界面语言控制器：null locale 表示跟随系统；切换后持久化到设置 KV。
+  late final LocaleController _locale = LocaleController(
+    _SettingsLocaleStore(
+      widget.session?.settings ?? const UnavailableSettingsService(),
+    ),
+  );
+
   @override
   void initState() {
     super.initState();
     unawaited(_restoreTheme());
+    unawaited(_locale.restore());
+  }
+
+  @override
+  void dispose() {
+    _locale.dispose();
+    super.dispose();
   }
 
   /// 从内核设置恢复上次选择；读取失败时保持跟随系统。
@@ -71,16 +99,32 @@ class _NexmemAppState extends State<NexmemApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Nexmem',
-      debugShowCheckedModeBanner: false,
-      theme: NexmemTheme.light(),
-      darkTheme: NexmemTheme.dark(),
-      themeMode: _themeMode,
-      home: AppShell(
-        session: widget.session,
-        themeMode: _themeMode,
-        onThemeModeChanged: _changeThemeMode,
+    return LocaleScope(
+      controller: _locale,
+      child: AnimatedBuilder(
+        animation: _locale,
+        builder: (BuildContext context, Widget? child) {
+          final Locale titleLocale =
+              _locale.locale ?? WidgetsBinding.instance.platformDispatcher.locale;
+          return MaterialApp(
+            title: appDisplayName(titleLocale),
+            debugShowCheckedModeBanner: false,
+            locale: _locale.locale,
+            supportedLocales: supportedLocales,
+            localizationsDelegates: <LocalizationsDelegate<dynamic>>[
+              const AppLocalizationsDelegate(),
+              ...GlobalMaterialLocalizations.delegates,
+            ],
+            theme: NexmemTheme.light(),
+            darkTheme: NexmemTheme.dark(),
+            themeMode: _themeMode,
+            home: AppShell(
+              session: widget.session,
+              themeMode: _themeMode,
+              onThemeModeChanged: _changeThemeMode,
+            ),
+          );
+        },
       ),
     );
   }

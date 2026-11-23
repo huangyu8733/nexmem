@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../l10n/l10n.dart';
+
 import '../../app/theme.dart';
 import '../../transport/transport.dart';
 import '../contacts/contact.dart';
@@ -31,21 +33,21 @@ Future<StartChatAction?> showStartChatSheet(BuildContext context) {
             ListTile(
               key: const ValueKey<String>('start-chat-direct'),
               leading: const Icon(Icons.chat_bubble_outline),
-              title: const Text('发起单聊'),
+              title: Text(context.t('发起单聊')),
               onTap: () =>
                   Navigator.of(sheetContext).pop(StartChatAction.direct),
             ),
             ListTile(
               key: const ValueKey<String>('start-chat-group'),
               leading: const Icon(Icons.group_add_outlined),
-              title: const Text('创建群聊'),
+              title: Text(context.t('创建群聊')),
               onTap: () =>
                   Navigator.of(sheetContext).pop(StartChatAction.group),
             ),
             ListTile(
               key: const ValueKey<String>('start-chat-add-friend'),
               leading: const Icon(Icons.person_add_alt_1),
-              title: const Text('添加好友'),
+              title: Text(context.t('添加好友')),
               onTap: () =>
                   Navigator.of(sheetContext).pop(StartChatAction.addFriend),
             ),
@@ -143,12 +145,12 @@ class _ContactPickerDialogState extends State<_ContactPickerDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       key: const ValueKey<String>('contact-picker-dialog'),
-      title: const Text('发起单聊'),
+      title: Text(context.t('发起单聊')),
       content: SizedBox(width: 360, height: 380, child: _buildContent()),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(context.t('取消')),
         ),
       ],
     );
@@ -169,7 +171,7 @@ class _ContactPickerDialogState extends State<_ContactPickerDialog> {
             TextButton(
               key: const ValueKey<String>('contact-picker-retry'),
               onPressed: _load,
-              child: const Text('重试'),
+              child: Text(context.t('重试')),
             ),
           ],
         ),
@@ -180,9 +182,9 @@ class _ContactPickerDialogState extends State<_ContactPickerDialog> {
       children: <Widget>[
         TextField(
           key: const ValueKey<String>('contact-picker-search'),
-          decoration: const InputDecoration(
-            hintText: '搜索联系人',
-            prefixIcon: Icon(Icons.search, size: 18),
+          decoration: InputDecoration(
+            hintText: context.t('搜索联系人'),
+            prefixIcon: const Icon(Icons.search, size: 18),
             isDense: true,
           ),
           onChanged: (String value) => setState(() => _query = value),
@@ -190,7 +192,7 @@ class _ContactPickerDialogState extends State<_ContactPickerDialog> {
         const SizedBox(height: NexmemMetrics.space8),
         Expanded(
           child: visible.isEmpty
-              ? const Center(child: Text('暂无可选联系人，请先添加好友'))
+              ? Center(child: Text(context.t('暂无可选联系人，请先添加好友')))
               : ListView.builder(
                   itemCount: visible.length,
                   itemBuilder: (BuildContext context, int index) {
@@ -294,11 +296,11 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
   void _submit() {
     final String title = _titleController.text.trim();
     if (title.isEmpty) {
-      setState(() => _validation = '请输入群名称');
+      setState(() => _validation = context.t('请输入群名称'));
       return;
     }
     if (_selected.isEmpty) {
-      setState(() => _validation = '请至少选择一名成员');
+      setState(() => _validation = context.t('请至少选择一名成员'));
       return;
     }
     final List<Contact> members = <Contact>[
@@ -312,17 +314,17 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       key: const ValueKey<String>('create-group-dialog'),
-      title: const Text('创建群聊'),
+      title: Text(context.t('创建群聊')),
       content: SizedBox(width: 380, height: 420, child: _buildContent()),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(context.t('取消')),
         ),
         FilledButton(
           key: const ValueKey<String>('create-group-confirm'),
           onPressed: _loading ? null : _submit,
-          child: const Text('创建'),
+          child: Text(context.t('创建')),
         ),
       ],
     );
@@ -343,7 +345,7 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
             TextButton(
               key: const ValueKey<String>('create-group-retry'),
               onPressed: _load,
-              child: const Text('重试'),
+              child: Text(context.t('重试')),
             ),
           ],
         ),
@@ -355,7 +357,10 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
         TextField(
           key: const ValueKey<String>('create-group-title'),
           controller: _titleController,
-          decoration: const InputDecoration(labelText: '群名称', isDense: true),
+          decoration: InputDecoration(
+            labelText: context.t('群名称'),
+            isDense: true,
+          ),
           maxLength: 30,
           onChanged: (_) {
             if (_validation != null) {
@@ -365,9 +370,9 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
         ),
         TextField(
           key: const ValueKey<String>('create-group-search'),
-          decoration: const InputDecoration(
-            hintText: '搜索联系人',
-            prefixIcon: Icon(Icons.search, size: 18),
+          decoration: InputDecoration(
+            hintText: context.t('搜索联系人'),
+            prefixIcon: const Icon(Icons.search, size: 18),
             isDense: true,
           ),
           onChanged: (String value) => setState(() => _query = value),
@@ -376,7 +381,7 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
           Padding(
             padding: const EdgeInsets.only(top: NexmemMetrics.space4),
             child: Align(
-              alignment: Alignment.centerLeft,
+              alignment: AlignmentDirectional.centerStart,
               child: Text(
                 _validation!,
                 key: const ValueKey<String>('create-group-error'),
@@ -390,7 +395,7 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
         const SizedBox(height: NexmemMetrics.space8),
         Expanded(
           child: visible.isEmpty
-              ? const Center(child: Text('暂无可选联系人，请先添加好友'))
+              ? Center(child: Text(context.t('暂无可选联系人，请先添加好友')))
               : ListView.builder(
                   itemCount: visible.length,
                   itemBuilder: (BuildContext context, int index) {

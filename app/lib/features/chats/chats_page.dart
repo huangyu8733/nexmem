@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../l10n/l10n.dart';
+
 import '../../app/empty_state.dart';
 import '../../app/pane_header.dart';
 import '../../app/theme.dart';
@@ -125,7 +127,7 @@ class ChatsPageState extends State<ChatsPage> {
     switch (action) {
       case StartChatAction.direct:
         if (contacts == null) {
-          _toast('内核未接入，暂时无法发起聊天');
+          _toast(context.t('内核未接入，暂时无法发起聊天'));
           return;
         }
         final Contact? contact = await showContactPicker(context, contacts);
@@ -136,7 +138,7 @@ class ChatsPageState extends State<ChatsPage> {
         break;
       case StartChatAction.group:
         if (contacts == null || groups == null) {
-          _toast('内核未接入，暂时无法创建群聊');
+          _toast(context.t('内核未接入，暂时无法创建群聊'));
           return;
         }
         final NewGroupRequest? request = await showCreateGroupDialog(
@@ -150,12 +152,12 @@ class ChatsPageState extends State<ChatsPage> {
         break;
       case StartChatAction.addFriend:
         if (contacts == null) {
-          _toast('内核未接入，暂时无法添加好友');
+          _toast(context.t('内核未接入，暂时无法添加好友'));
           return;
         }
         final bool? added = await showAddFriendDialog(context, contacts);
         if (added == true && mounted) {
-          _toast('已添加好友');
+          _toast(context.t('已添加好友'));
           widget.onContactAdded?.call();
         }
         break;
@@ -184,7 +186,11 @@ class ChatsPageState extends State<ChatsPage> {
       if (!mounted) {
         return;
       }
-      _toast(error.message.isEmpty ? '创建群聊失败（${error.code}）' : error.message);
+      _toast(
+        error.message.isEmpty
+            ? context.t('创建群聊失败（{0}）', [error.code])
+            : error.message,
+      );
     } finally {
       if (mounted) {
         setState(() => _creatingGroup = false);
@@ -209,16 +215,18 @@ class ChatsPageState extends State<ChatsPage> {
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
-        title: const Text('删除会话'),
-        content: Text('删除「${item.title}」后聊天记录仍保留，收到新消息时会重新出现。'),
+        title: Text(context.t('删除会话')),
+        content: Text(
+          context.t('删除「{0}」后聊天记录仍保留，收到新消息时会重新出现。', [item.title]),
+        ),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
+            child: Text(context.t('取消')),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('删除'),
+            child: Text(context.t('删除')),
           ),
         ],
       ),
@@ -233,18 +241,18 @@ class ChatsPageState extends State<ChatsPage> {
   /// 桌面右键菜单：与左滑动作保持一致，并补充置顶 / 免打扰（P6-17）。
   Future<void> _showContextMenu(ConversationItem item, Offset position) async {
     final List<PopupMenuEntry<String>> items = <PopupMenuEntry<String>>[
-      const PopupMenuItem<String>(value: 'read', child: Text('标记已读')),
+      PopupMenuItem<String>(value: 'read', child: Text(context.t('标记已读'))),
       if (widget.onSetPinned != null)
         PopupMenuItem<String>(
           value: 'pin',
-          child: Text(item.pinned ? '取消置顶' : '置顶'),
+          child: Text(context.t(item.pinned ? '取消置顶' : '置顶')),
         ),
       if (widget.onSetMuted != null)
         PopupMenuItem<String>(
           value: 'mute',
-          child: Text(item.muted ? '取消免打扰' : '免打扰'),
+          child: Text(context.t(item.muted ? '取消免打扰' : '免打扰')),
         ),
-      const PopupMenuItem<String>(value: 'delete', child: Text('删除')),
+      PopupMenuItem<String>(value: 'delete', child: Text(context.t('删除'))),
     ];
     final String? action = await showMenu<String>(
       context: context,
@@ -278,11 +286,11 @@ class ChatsPageState extends State<ChatsPage> {
     return Column(
       children: <Widget>[
         PaneHeader(
-          title: '消息',
+          title: context.t('消息'),
           actions: <Widget>[
             IconButton(
               key: const ValueKey<String>('chats-add'),
-              tooltip: '发起聊天',
+              tooltip: context.t('发起聊天'),
               icon: const Icon(Icons.add, size: 22),
               onPressed:
                   _creatingGroup ||
@@ -304,9 +312,9 @@ class ChatsPageState extends State<ChatsPage> {
               if (items.isEmpty) {
                 return widget.loading
                     ? const ConversationSkeleton()
-                    : const EmptyState(
+                    : EmptyState(
                         icon: Icons.chat_bubble_outline,
-                        message: '暂无会话，点击 + 发起聊天',
+                        message: context.t('暂无会话，点击 + 发起聊天'),
                       );
               }
               return ListView.builder(
@@ -316,17 +324,17 @@ class ChatsPageState extends State<ChatsPage> {
                   return Dismissible(
                     key: ValueKey<String>('conversation-swipe-${item.id}'),
                     direction: DismissDirection.horizontal,
-                    background: const _SwipeBackground(
-                      alignment: Alignment.centerLeft,
+                    background: _SwipeBackground(
+                      alignment: AlignmentDirectional.centerStart,
                       color: NexmemColors.primary,
                       icon: Icons.mark_chat_read_outlined,
-                      label: '标记已读',
+                      label: context.t('标记已读'),
                     ),
-                    secondaryBackground: const _SwipeBackground(
-                      alignment: Alignment.centerRight,
+                    secondaryBackground: _SwipeBackground(
+                      alignment: AlignmentDirectional.centerEnd,
                       color: NexmemColors.danger,
                       icon: Icons.delete_outline,
-                      label: '删除',
+                      label: context.t('删除'),
                     ),
                     confirmDismiss: (DismissDirection direction) async {
                       if (direction == DismissDirection.startToEnd) {
@@ -383,7 +391,7 @@ class _OfflineBanner extends StatelessWidget {
           ),
           const SizedBox(width: NexmemMetrics.space8),
           Text(
-            '网络已断开，正在重连',
+            context.t('网络已断开，正在重连'),
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               fontSize: 13,
               color: scheme.onSurface.withValues(alpha: 0.65),
@@ -463,7 +471,7 @@ class _SwipeBackground extends StatelessWidget {
     required this.label,
   });
 
-  final Alignment alignment;
+  final AlignmentGeometry alignment;
   final Color color;
   final IconData icon;
   final String label;
@@ -480,7 +488,7 @@ class _SwipeBackground extends StatelessWidget {
           Icon(icon, size: 20, color: Colors.white),
           const SizedBox(width: NexmemMetrics.space8),
           Text(
-            label,
+            context.t(label),
             style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,

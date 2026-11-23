@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/theme.dart';
+import '../../l10n/l10n.dart';
 import '../settings/storage_config.dart' show looksLikeMasterAccessKey;
 import '../../transport/transport.dart';
 import 'group_service.dart';
@@ -36,7 +37,7 @@ class GroupStorageNotice extends StatelessWidget {
           const SizedBox(width: NexmemMetrics.space4),
           Expanded(
             child: Text(
-              message,
+              context.t('未配置群盘，离线消息不可补'),
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     fontSize: 12,
                     color: NexmemColors.warning,
@@ -109,11 +110,11 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
     }
     // C-05：拒绝疑似主密钥，并要求确认使用仅授权本群前缀的受限子密钥。
     if (looksLikeMasterAccessKey(config.accessKey)) {
-      setState(() => _error = '拒绝保存：请使用仅授权本群前缀的受限子密钥，不要填入主密钥');
+      setState(() => _error = context.t('拒绝保存：请使用仅授权本群前缀的受限子密钥，不要填入主密钥'));
       return;
     }
     if (!_scopedKeyConfirmed) {
-      setState(() => _error = '请先确认使用仅授权本群前缀的受限子密钥');
+      setState(() => _error = context.t('请先确认使用仅授权本群前缀的受限子密钥'));
       return;
     }
     setState(() {
@@ -139,7 +140,7 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
         return;
       }
       setState(() {
-        _error = '保存失败，请稍后重试';
+        _error = context.t('保存失败，请稍后重试');
         _saving = false;
       });
     }
@@ -149,7 +150,7 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return AlertDialog(
-      title: const Text('群盘设置'),
+      title: Text(context.t('群盘设置')),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
@@ -158,8 +159,7 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Text(
-                '群盘用于成员离线时补齐加密消息，仅管理员可配置。'
-                '凭证由内核用群密钥密封后只分发给成员，不会回显。',
+                context.t('群盘用于成员离线时补齐加密消息，仅管理员可配置。凭证由内核用群密钥密封后只分发给成员，不会回显。'),
                 style: TextStyle(
                   fontSize: 12,
                   color: scheme.onSurface.withValues(alpha: 0.6),
@@ -175,8 +175,7 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  '群离线消息的上传与下载流量、存储占用计入群盘所属方（群主）的云存储账单；'
-                  '必须使用仅授权本群前缀读写的受限子密钥，严禁跨群访问或填入主密钥。',
+                  context.t('群离线消息的上传与下载流量、存储占用计入群盘所属方（群主）的云存储账单；必须使用仅授权本群前缀读写的受限子密钥，严禁跨群访问或填入主密钥。'),
                   style: TextStyle(
                     fontSize: 12,
                     height: 1.4,
@@ -191,9 +190,9 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
                 contentPadding: EdgeInsets.zero,
                 dense: true,
                 value: _scopedKeyConfirmed,
-                title: const Text(
-                  '我确认使用仅授权本群前缀的受限子密钥（非主密钥）',
-                  style: TextStyle(fontSize: 13),
+                title: Text(
+                  context.t('我确认使用仅授权本群前缀的受限子密钥（非主密钥）'),
+                  style: const TextStyle(fontSize: 13),
                 ),
                 onChanged: _saving
                     ? null
@@ -211,12 +210,12 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
               _field(
                 controller: _bucket,
                 key: 'group-storage-bucket',
-                label: '桶名',
+                label: context.t('桶名'),
               ),
               _field(
                 controller: _prefix,
                 key: 'group-storage-prefix',
-                label: '对象前缀',
+                label: context.t('对象前缀'),
               ),
               _field(
                 controller: _region,
@@ -247,10 +246,10 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
                 key: const ValueKey<String>('group-storage-path-style'),
                 contentPadding: EdgeInsets.zero,
                 dense: true,
-                title: const Text('Path-style 寻址'),
-                subtitle: const Text(
-                  'MinIO 与腾讯云 COS 通常需要开启',
-                  style: TextStyle(fontSize: 12),
+                title: Text(context.t('Path-style 寻址')),
+                subtitle: Text(
+                  context.t('MinIO 与腾讯云 COS 通常需要开启'),
+                  style: const TextStyle(fontSize: 12),
                 ),
                 value: _pathStyle,
                 onChanged: _saving
@@ -271,7 +270,7 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
                 ),
               const SizedBox(height: NexmemMetrics.space8),
               Text(
-                '重新配置会整体覆盖现有群盘设置。',
+                context.t('重新配置会整体覆盖现有群盘设置。'),
                 style: TextStyle(
                   fontSize: 12,
                   color: scheme.onSurface.withValues(alpha: 0.55),
@@ -285,7 +284,7 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
         TextButton(
           key: const ValueKey<String>('group-storage-cancel'),
           onPressed: _saving ? null : () => Navigator.of(context).pop(false),
-          child: const Text('取消'),
+          child: Text(context.t('取消')),
         ),
         FilledButton(
           key: const ValueKey<String>('group-storage-save'),
@@ -296,7 +295,7 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('保存配置'),
+              : Text(context.t('保存配置')),
         ),
       ],
     );

@@ -1,16 +1,22 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/core_session.dart';
+import '../../app/nexmem_logo.dart';
 import '../../app/pane_header.dart';
 import '../../app/theme.dart';
+import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 import 'backup.dart';
 import 'diagnostics.dart';
+import 'language_dialog.dart';
 import 'relay_settings.dart';
 import 'profile_panel.dart';
+import 'profile_view.dart';
 import 'report.dart';
+import 'scrolling_id_text.dart';
 import 'settings_service.dart';
 import 'settings_sync.dart';
 import 'storage_config.dart';
@@ -39,6 +45,8 @@ class SettingsPage extends StatelessWidget {
     this.settings = const UnavailableSettingsService(),
     this.webOnlineOnly = false,
     this.coreInfo,
+    this.onOpenProfileView,
+    this.onOpenPane,
   });
 
   /// 当前账号（`account.me`）；为空表示内核未启动或离线占位。
@@ -67,6 +75,13 @@ class SettingsPage extends StatelessWidget {
   /// 内核版本与能力（P6-29）；为 null 表示内核未接入或协商失败。
   final CoreInfo? coreInfo;
 
+  /// 点击账号卡片：打开只读资料展示。为空时退回本地弹窗（兼容独立使用）。
+  final VoidCallback? onOpenProfileView;
+
+  /// 点击设置列表项：由外层决定在右栏 / 全屏页展示对应面板。
+  /// 参数为菜单 label；为空时退回原有弹窗行为（兼容独立使用）。
+  final ValueChanged<String>? onOpenPane;
+
   static const List<(IconData, String)> _items = <(IconData, String)>[
     (Icons.badge_outlined, '个人资料'),
     (Icons.shield_outlined, '账号与安全'),
@@ -74,16 +89,20 @@ class SettingsPage extends StatelessWidget {
     (Icons.wifi_tethering, '网络'),
     (Icons.cloud_outlined, '离线存储'),
     (Icons.palette_outlined, '外观'),
+    (Icons.language, '语言'),
     (Icons.info_outline, '关于'),
   ];
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final CoreAccount? account = this.account;
+    final String accountId = account?.accountId ?? '';
+    final String deviceId = account?.deviceId ?? '';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        const PaneHeader(title: '我的'),
+        PaneHeader(title: context.t('我的')),
         Expanded(
           child: ListView(
             children: <Widget>[
@@ -91,7 +110,7 @@ class SettingsPage extends StatelessWidget {
                 padding: const EdgeInsets.all(NexmemMetrics.space12),
                 child: InkWell(
                   key: const ValueKey<String>('settings-profile-card'),
-                  onTap: () => _openProfile(context),
+                  onTap: () => _openProfileView(context),
                   borderRadius: BorderRadius.circular(
                     NexmemMetrics.radiusListItem,
                   ),
@@ -122,32 +141,25 @@ class SettingsPage extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisSize: MainAxisSize.min,
                           children: <Widget>[
-                            Text(
-                              _accountTitle(account),
-                              key: const ValueKey<String>(
-                                'settings-account-name',
-                              ),
-                              style: Theme.of(context).textTheme.titleSmall,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            _AccountName(
+                              account: account,
+                              settings: settings,
                             ),
-                            if (_accountMeta(account) case final String meta)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Text(
-                                  meta,
-                                  key: const ValueKey<String>(
-                                    'settings-account-meta',
-                                  ),
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: scheme.onSurface.withValues(
-                                      alpha: 0.6,
-                                    ),
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+                            if (accountId.isNotEmpty)
+                              ScrollingIdText(
+                                text: accountId,
+                                keyName: 'settings-account-id-full',
+                                label: context.t('账号'),
+                                onCopy: () => _copyId(context, accountId, '账号'),
+                                copyKeyName: 'settings-copy-account',
+                              ),
+                            if (deviceId.isNotEmpty)
+                              ScrollingIdText(
+                                text: deviceId,
+                                keyName: 'settings-device-id-full',
+                                label: context.t('设备'),
+                                onCopy: () => _copyId(context, deviceId, '设备'),
+                                copyKeyName: 'settings-copy-device',
                               ),
                           ],
                         ),
@@ -180,7 +192,7 @@ class SettingsPage extends StatelessWidget {
                       const SizedBox(width: NexmemMetrics.space8),
                       Expanded(
                         child: Text(
-                          '仅在线接收：浏览器关闭后不再实时接收消息，离线消息将在下次打开时补齐。',
+                          context.t('仅在线接收：浏览器关闭后不再实时接收消息，离线消息将在下次打开时补齐。'),
                           style: TextStyle(
                             fontSize: 12,
                             color: scheme.onSurface.withValues(alpha: 0.8),
@@ -197,7 +209,7 @@ class SettingsPage extends StatelessWidget {
                   child: ListTile(
                     key: ValueKey<String>('settings-${_itemKey(label)}'),
                     leading: Icon(icon, size: 22),
-                    title: Text(label),
+                    title: Text(context.t(label)),
                     trailing: const Icon(Icons.chevron_right, size: 18),
                     onTap: () => _open(context, label),
                   ),
@@ -206,6 +218,25 @@ class SettingsPage extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  /// 复制账号/设备完整值并给出提示。文案在 await 之前取好。
+  static Future<void> _copyId(
+    BuildContext context,
+    String value,
+    String label,
+  ) async {
+    if (value.isEmpty) {
+      return;
+    }
+    final String message = context.t('{0}已复制', [label]);
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!context.mounted) {
+      return;
+    }
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
 
@@ -223,6 +254,8 @@ class SettingsPage extends StatelessWidget {
         return 'storage';
       case '外观':
         return 'appearance';
+      case '语言':
+        return 'language';
       case '关于':
         return 'about';
       default:
@@ -230,8 +263,24 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
-  /// 打开个人资料编辑：窄屏与宽屏均以对话框呈现聚焦编辑，
-  /// 宽屏三栏右栏也会同步常驻展示同一份资料（见 shell._buildDesktop）。
+  /// 账号卡片：只读资料展示。外层接入回调后由壳层在右栏 / 全屏页呈现；
+  /// 独立使用（Widget 测试等）时退回对话框。
+  void _openProfileView(BuildContext context) {
+    final VoidCallback? callback = onOpenProfileView;
+    if (callback != null) {
+      callback();
+      return;
+    }
+    unawaited(
+      showProfileViewDialog(
+        context: context,
+        account: account,
+        settings: settings,
+      ),
+    );
+  }
+
+  /// 「个人资料」菜单进入编辑面板。
   void _openProfile(BuildContext context) {
     unawaited(
       showProfileEditorDialog(
@@ -243,6 +292,11 @@ class SettingsPage extends StatelessWidget {
   }
 
   void _open(BuildContext context, String label) {
+    final ValueChanged<String>? callback = onOpenPane;
+    if (callback != null) {
+      callback(label);
+      return;
+    }
     if (label == '个人资料') {
       _openProfile(context);
       return;
@@ -290,6 +344,13 @@ class SettingsPage extends StatelessWidget {
       );
       return;
     }
+    if (label == '语言') {
+      showDialog<void>(
+        context: context,
+        builder: (BuildContext context) => const LanguageDialog(),
+      );
+      return;
+    }
     if (label == '关于') {
       showDialog<void>(
         context: context,
@@ -303,31 +364,93 @@ class SettingsPage extends StatelessWidget {
   }
 }
 
+/// 为设置列表项生成可嵌入面板的对话框内容构建器。
+///
+/// 桌面右栏与手机全屏页共用：把原本独立的 AlertDialog 放进
+/// `EmbeddedSettingsPane`，复用既有交互与内核服务，无需弹框。
+WidgetBuilder settingsPaneBuilder({
+  required String label,
+  required BackupService backup,
+  required SettingsService settings,
+  required DiagnosticsService diagnostics,
+  required PingService ping,
+  required StorageTestService storage,
+  required ThemeMode themeMode,
+  ValueChanged<ThemeMode>? onThemeModeChanged,
+  required ReportSink reportSink,
+  CoreInfo? coreInfo,
+}) {
+  switch (label) {
+    case '账号与安全':
+      return (BuildContext context) => AccountSecurityDialog(backup: backup);
+    case '多设备同步':
+      return (BuildContext context) => SettingsSyncDialog(settings: settings);
+    case '网络':
+      return (BuildContext context) => _NetworkDiagnosticsDialog(
+            diagnostics: diagnostics,
+            ping: ping,
+            settings: settings,
+          );
+    case '离线存储':
+      return (BuildContext context) => StorageConfigDialog(service: storage);
+    case '外观':
+      return (BuildContext context) => AppearanceDialog(
+            mode: themeMode,
+            onChanged: onThemeModeChanged,
+          );
+    case '语言':
+      return (BuildContext context) => const LanguageDialog();
+    case '关于':
+      return (BuildContext context) => _AboutDialog(
+            diagnostics: diagnostics,
+            reportSink: reportSink,
+            coreInfo: coreInfo,
+          );
+    default:
+      return (BuildContext context) => const SizedBox.shrink();
+  }
+}
+
+/// 账号卡片标题：个人资料昵称优先，回落内核昵称或账号 ID 缩略。
+class _AccountName extends StatelessWidget {
+  const _AccountName({required this.account, required this.settings});
+
+  final CoreAccount? account;
+  final SettingsService settings;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<String?>(
+      future: settings.read(profileNicknameSettingKey),
+      builder: (BuildContext context, AsyncSnapshot<String?> snapshot) {
+        final String? nickname = snapshot.data?.trim();
+        final String title = nickname != null && nickname.isNotEmpty
+            ? nickname
+            : _accountTitle(context, account);
+        return Text(
+          title,
+          key: const ValueKey<String>('settings-account-name'),
+          style: Theme.of(context).textTheme.titleSmall,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        );
+      },
+    );
+  }
+}
+
 /// 账号卡片标题：昵称优先，其次账号 ID 缩略；未接入内核时保持离线占位。
-String _accountTitle(CoreAccount? account) {
+String _accountTitle(BuildContext context, CoreAccount? account) {
   if (account == null) {
-    return '未登录设备';
+    return context.t('未登录设备');
   }
   final String name = account.displayName.trim();
   if (name.isNotEmpty) {
     return name;
   }
-  return account.accountId.isEmpty ? '本机设备' : _shortId(account.accountId);
-}
-
-/// 账号卡片副标题：`账号 xxx · 设备 xxx`；两者都缺失时返回 null。
-String? _accountMeta(CoreAccount? account) {
-  if (account == null) {
-    return null;
-  }
-  final List<String> parts = <String>[];
-  if (account.accountId.isNotEmpty) {
-    parts.add('账号 ${_shortId(account.accountId)}');
-  }
-  if (account.deviceId.isNotEmpty) {
-    parts.add('设备 ${_shortId(account.deviceId)}');
-  }
-  return parts.isEmpty ? null : parts.join(' · ');
+  return account.accountId.isEmpty
+      ? context.t('本机设备')
+      : _shortId(account.accountId);
 }
 
 /// 十六进制 ID 缩略：保留前 10 位，避免撑破移动端卡片宽度。
@@ -352,7 +475,7 @@ class AppearanceDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('外观'),
+      title: Text(context.t('外观')),
       content: SizedBox(
         width: 320,
         child: Column(
@@ -364,7 +487,7 @@ class AppearanceDialog extends StatelessWidget {
                 key: ValueKey<String>('appearance-${_optionKey(option)}'),
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(icon, size: 22),
-                title: Text(label),
+                title: Text(context.t(label)),
                 trailing: option == mode
                     ? const Icon(Icons.check, size: 20)
                     : null,
@@ -379,7 +502,7 @@ class AppearanceDialog extends StatelessWidget {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+          child: Text(context.t('关闭')),
         ),
       ],
     );
@@ -456,8 +579,8 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
       }
       setState(() {
         _pingError = error.code == 'NOT_STARTED'
-            ? '内核尚未接入，无法自检'
-            : '自检失败（${error.code}）';
+            ? context.t('内核尚未接入，无法自检')
+            : context.t('自检失败（{0}）', [error.code]);
         _pinging = false;
       });
     } catch (_) {
@@ -465,7 +588,7 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
         return;
       }
       setState(() {
-        _pingError = '自检失败，请稍后再试';
+        _pingError = context.t('自检失败，请稍后再试');
         _pinging = false;
       });
     }
@@ -483,7 +606,7 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('网络诊断'),
+      title: Text(context.t('网络诊断')),
       content: SizedBox(
         width: 360,
         child: Column(
@@ -503,23 +626,23 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
                       );
                     }
                     if (snapshot.hasError) {
-                      return Text(_errorText(snapshot.error));
+                      return Text(_errorText(context, snapshot.error));
                     }
                     final DiagnosticsSnapshot data = snapshot.data!;
                     return Column(
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
-                        _row('在线时长', data.uptimeText),
+                        _row(context.t('在线时长'), data.uptimeText),
                         _row(
-                          'DHT 寻址',
-                          '${data.dhtLookups} 次 · 失败 ${data.dhtErrors}',
+                          context.t('DHT 寻址'),
+                          context.t('{0} 次 · 失败 {1}', [data.dhtLookups, data.dhtErrors]),
                         ),
-                        _row('DHT 耗时', data.dhtLatencyText),
-                        _row('打洞结果', data.holePunchText),
-                        _row('S3 状态码', data.s3Text),
+                        _row(context.t('DHT 耗时'), data.dhtLatencyText),
+                        _row(context.t('打洞结果'), data.holePunchText),
+                        _row(context.t('S3 状态码'), data.s3Text),
                         _row(
-                          '日志缓冲',
-                          '${data.logRecords} 条 · 丢弃 ${data.logDropped}',
+                          context.t('日志缓冲'),
+                          context.t('{0} 条 · 丢弃 {1}', [data.logRecords, data.logDropped]),
                         ),
                       ],
                     );
@@ -531,11 +654,11 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
               contentPadding: EdgeInsets.zero,
               dense: true,
               leading: const Icon(Icons.network_ping, size: 20),
-              title: const Text('连接自检'),
+              title: Text(context.t('连接自检')),
               subtitle: Text(
                 _pingError ??
                     _pingResult?.summary ??
-                    '测试内核连接与往返延迟',
+                    context.t('测试内核连接与往返延迟'),
                 style: const TextStyle(fontSize: 12),
               ),
               trailing: _pinging
@@ -546,7 +669,7 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
                     )
                   : TextButton(
                       onPressed: _runPing,
-                      child: const Text('测试'),
+                      child: Text(context.t('测试')),
                     ),
             ),
             ListTile(
@@ -554,10 +677,10 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
               contentPadding: EdgeInsets.zero,
               dense: true,
               leading: const Icon(Icons.alt_route, size: 20),
-              title: const Text('中继设置'),
-              subtitle: const Text(
-                '直连失败时经中继兜底，默认关闭',
-                style: TextStyle(fontSize: 12),
+              title: Text(context.t('中继设置')),
+              subtitle: Text(
+                context.t('直连失败时经中继兜底，默认关闭'),
+                style: const TextStyle(fontSize: 12),
               ),
               trailing: const Icon(Icons.chevron_right, size: 18),
               onTap: _openRelay,
@@ -566,10 +689,10 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
         ),
       ),
       actions: <Widget>[
-        TextButton(onPressed: _refresh, child: const Text('刷新')),
+        TextButton(onPressed: _refresh, child: Text(context.t('刷新'))),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+          child: Text(context.t('关闭')),
         ),
       ],
     );
@@ -592,17 +715,32 @@ class _AboutDialog extends StatelessWidget {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     try {
       final String path = await diagnostics.exportBundle();
-      messenger.showSnackBar(SnackBar(content: Text('诊断包已导出：$path')));
+      if (!context.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.t('诊断包已导出：{0}', [path]))),
+      );
     } on NexmemException catch (e) {
+      if (!context.mounted) {
+        return;
+      }
       messenger.showSnackBar(
         SnackBar(
           content: Text(
-            e.code == 'NOT_STARTED' ? '诊断能力尚未接入内核' : '诊断导出失败（${e.code}），请稍后再试',
+            e.code == 'NOT_STARTED'
+                ? context.t('诊断能力尚未接入内核')
+                : context.t('诊断导出失败（{0}），请稍后再试', [e.code]),
           ),
         ),
       );
     } catch (_) {
-      messenger.showSnackBar(const SnackBar(content: Text('诊断导出失败，请稍后再试')));
+      if (!context.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.t('诊断导出失败，请稍后再试'))),
+      );
     }
   }
 
@@ -614,7 +752,12 @@ class _AboutDialog extends StatelessWidget {
           ReportDialog(reportSink: reportSink, diagnostics: diagnostics),
     );
     if (submitted == true) {
-      messenger.showSnackBar(const SnackBar(content: Text('举报已提交，感谢反馈')));
+      if (!context.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.t('举报已提交，感谢反馈'))),
+      );
     }
   }
 
@@ -622,7 +765,7 @@ class _AboutDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return AlertDialog(
-      title: const Text('关于 Nexmem'),
+      title: Text(context.t('关于 Nexmem')),
       content: SizedBox(
         width: 360,
         child: SingleChildScrollView(
@@ -630,20 +773,29 @@ class _AboutDialog extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
+              Center(child: NexmemBrand(name: context.t('奈讯联'))),
+              const SizedBox(height: NexmemMetrics.space12),
               Text(
-                '版本 $appVersion',
+                context.t('版本 {0}', [appVersion]),
                 key: const ValueKey<String>('about-client-version'),
               ),
               const SizedBox(height: NexmemMetrics.space4),
               Text(
                 coreInfo == null
-                    ? '内核版本 未知'
-                    : '内核 ${coreInfo!.coreVersion.isEmpty ? '未知' : coreInfo!.coreVersion}',
+                    ? context.t('内核版本 未知')
+                    : context.t('内核 {0}', [
+                        coreInfo!.coreVersion.isEmpty
+                            ? context.t('未知')
+                            : coreInfo!.coreVersion,
+                      ]),
                 key: const ValueKey<String>('about-core-version'),
               ),
               if (coreInfo != null && coreInfo!.apiVersion.isNotEmpty)
                 Text(
-                  'API ${coreInfo!.apiVersion} · 已接入 ${coreInfo!.features.length} 项能力',
+                  context.t('API {0} · 已接入 {1} 项能力', [
+                    coreInfo!.apiVersion,
+                    coreInfo!.features.length,
+                  ]),
                   key: const ValueKey<String>('about-api-version'),
                   style: TextStyle(
                     color: scheme.onSurface.withValues(alpha: 0.6),
@@ -653,14 +805,14 @@ class _AboutDialog extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(top: NexmemMetrics.space4),
                   child: Text(
-                    '内核 API 主版本与客户端不一致，部分功能可能不可用',
+                    context.t('内核 API 主版本与客户端不一致，部分功能可能不可用'),
                     key: const ValueKey<String>('about-api-incompatible'),
                     style: TextStyle(color: scheme.error),
                   ),
                 ),
               const SizedBox(height: NexmemMetrics.space8),
               Text(
-                '去中心化 P2P 即时通讯，消息端到端加密。',
+                context.t('去中心化 P2P 即时通讯，消息端到端加密。'),
                 style: TextStyle(
                   color: scheme.onSurface.withValues(alpha: 0.6),
                 ),
@@ -670,23 +822,23 @@ class _AboutDialog extends StatelessWidget {
                 key: const ValueKey<String>('about-export'),
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.description_outlined, size: 22),
-                title: const Text('诊断导出'),
-                subtitle: const Text('导出脱敏日志用于排障'),
+                title: Text(context.t('诊断导出')),
+                subtitle: Text(context.t('导出脱敏日志用于排障')),
                 onTap: () => _export(context),
               ),
               ListTile(
                 key: const ValueKey<String>('about-report'),
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.flag_outlined, size: 22),
-                title: const Text('举报与反馈'),
-                subtitle: const Text('可附脱敏诊断日志'),
+                title: Text(context.t('举报与反馈')),
+                subtitle: Text(context.t('可附脱敏诊断日志')),
                 onTap: () => _report(context),
               ),
               ListTile(
                 key: const ValueKey<String>('about-license'),
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.article_outlined, size: 22),
-                title: const Text('开源许可'),
+                title: Text(context.t('开源许可')),
                 onTap: () => showLicensePage(
                   context: context,
                   applicationName: 'Nexmem',
@@ -700,7 +852,7 @@ class _AboutDialog extends StatelessWidget {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+          child: Text(context.t('关闭')),
         ),
       ],
     );
@@ -729,12 +881,12 @@ Widget _row(String label, String value) {
   );
 }
 
-String _errorText(Object? error) {
+String _errorText(BuildContext context, Object? error) {
   if (error is NexmemException) {
     if (error.code == 'NOT_STARTED') {
-      return '诊断能力尚未接入内核';
+      return context.t('诊断能力尚未接入内核');
     }
-    return '读取诊断指标失败（${error.code}）';
+    return context.t('读取诊断指标失败（{0}）', [error.code]);
   }
-  return '读取诊断指标失败，请稍后再试';
+  return context.t('读取诊断指标失败，请稍后再试');
 }

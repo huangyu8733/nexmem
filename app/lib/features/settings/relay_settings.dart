@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/theme.dart';
+import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 import 'settings_service.dart';
 
@@ -137,14 +138,16 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
       setState(() {
         _saving = false;
         _addrs.text = addrs;
-        _savedNote = _enabled ? '已保存，重启应用后生效' : '已关闭中继，重启应用后生效';
+        _savedNote = _enabled
+            ? context.t('已保存，重启应用后生效')
+            : context.t('已关闭中继，重启应用后生效');
       });
     } on NexmemException catch (e) {
       if (!mounted) {
         return;
       }
       setState(() {
-        _error = _describeError(e);
+        _error = _describeError(context, e);
         _saving = false;
       });
     } catch (_) {
@@ -152,7 +155,7 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
         return;
       }
       setState(() {
-        _error = '保存失败，请稍后重试';
+        _error = context.t('保存失败，请稍后重试');
         _saving = false;
       });
     }
@@ -163,7 +166,7 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
     final ThemeData theme = Theme.of(context);
     final ColorScheme scheme = theme.colorScheme;
     return AlertDialog(
-      title: const Text('中继设置'),
+      title: Text(context.t('中继设置')),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
@@ -172,8 +175,10 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Text(
-                '中继仅在双方直连失败时兜底转发流量，默认关闭；'
-                '建议只在桌面端或网络受限时手动开启。',
+                context.t(
+                  '中继仅在双方直连失败时兜底转发流量，默认关闭；'
+                  '建议只在桌面端或网络受限时手动开启。',
+                ),
                 style: TextStyle(
                   fontSize: 12,
                   color: scheme.onSurface.withValues(alpha: 0.6),
@@ -184,10 +189,10 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
                 key: const ValueKey<String>('relay-enabled'),
                 contentPadding: EdgeInsets.zero,
                 dense: true,
-                title: const Text('启用中继'),
-                subtitle: const Text(
-                  '开启后，直连失败时经中继建立连接',
-                  style: TextStyle(fontSize: 12),
+                title: Text(context.t('启用中继')),
+                subtitle: Text(
+                  context.t('开启后，直连失败时经中继建立连接'),
+                  style: const TextStyle(fontSize: 12),
                 ),
                 value: _enabled,
                 onChanged: _loading || _saving
@@ -206,9 +211,9 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
                 minLines: 3,
                 maxLines: 6,
                 keyboardType: TextInputType.multiline,
-                decoration: const InputDecoration(
-                  labelText: '中继地址',
-                  hintText: '/ip4/1.2.3.4/tcp/4001/p2p/12D3KooW...\n每行一个',
+                decoration: InputDecoration(
+                  labelText: context.t('中继地址'),
+                  hintText: context.t('/ip4/1.2.3.4/tcp/4001/p2p/12D3KooW...\n每行一个'),
                   isDense: true,
                   alignLabelWithHint: true,
                 ),
@@ -217,7 +222,7 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
                 Padding(
                   padding: const EdgeInsets.only(top: NexmemMetrics.space8),
                   child: Text(
-                    _error!,
+                    context.t(_error!),
                     key: const ValueKey<String>('relay-error'),
                     style: const TextStyle(
                       fontSize: 13,
@@ -229,7 +234,7 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
                 Padding(
                   padding: const EdgeInsets.only(top: NexmemMetrics.space8),
                   child: Text(
-                    _savedNote!,
+                    context.t(_savedNote!),
                     key: const ValueKey<String>('relay-saved'),
                     style: const TextStyle(
                       fontSize: 13,
@@ -239,7 +244,7 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
                 ),
               const SizedBox(height: NexmemMetrics.space8),
               Text(
-                '地址形如 /ip4/<IP>/tcp/<端口>/p2p/<PeerID>，保存后重启应用生效。',
+                context.t('地址形如 /ip4/<IP>/tcp/<端口>/p2p/<PeerID>，保存后重启应用生效。'),
                 style: TextStyle(
                   fontSize: 12,
                   color: scheme.onSurface.withValues(alpha: 0.55),
@@ -252,7 +257,7 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: _saving ? null : () => Navigator.of(context).pop(false),
-          child: const Text('关闭'),
+          child: Text(context.t('关闭')),
         ),
         FilledButton.tonal(
           key: const ValueKey<String>('relay-save'),
@@ -263,22 +268,22 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('保存设置'),
+              : Text(context.t('保存设置')),
         ),
       ],
     );
   }
 }
 
-String _describeError(NexmemException e) {
+String _describeError(BuildContext context, NexmemException e) {
   switch (e.code) {
     case 'NOT_STARTED':
-      return '中继设置尚未接入内核';
+      return context.t('中继设置尚未接入内核');
     case 'INVALID_ARG':
-      return '中继配置格式不正确（INVALID_ARG）';
+      return context.t('中继配置格式不正确（INVALID_ARG）');
     case 'DB_ERROR':
-      return '保存失败：本机配置写入异常（DB_ERROR）';
+      return context.t('保存失败：本机配置写入异常（DB_ERROR）');
     default:
-      return '保存失败（${e.code}），请稍后再试';
+      return context.t('保存失败（{0}），请稍后再试', [e.code]);
   }
 }
