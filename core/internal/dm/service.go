@@ -117,6 +117,9 @@ type Options struct {
 	OnDelivery func(DeliveryEvent)
 	// Inbox 是接收方自己桶的只读客户端；非空时启用离线拉取（P3-07）。
 	Inbox OfflineStore
+	// ReadSyncStore 是可写的同账号共用收件箱，用于发布/拉取跨设备已读水位（C-04）。
+	// 留空则关闭跨设备已读同步；*blob.Client 同时满足 Inbox 与本接口。
+	ReadSyncStore ReadSyncStore
 	// DeleteAfterRead 开启「已读后删除 S3 密文对象」（C-02）。默认 false，即由桶
 	// 生命周期规则清理；仅当 Inbox 实现 OfflineObjectDeleter 时生效。多端共用桶
 	// 必须保持 false，否则一台设备删除会导致其他设备拉不到消息。
@@ -136,6 +139,9 @@ type Options struct {
 	// OnRead 处理对端回传的已读回执（P6-07）；回调在接收协程执行，
 	// 由上层把本机出站消息推进到已读并发出 message.updated。
 	OnRead func(ReadEvent)
+	// OnReadSync 在跨设备已读水位应用后通知上层刷新会话（C-04）；
+	// 参数为被推进的会话 ID 列表，回调在离线拉取协程执行。
+	OnReadSync func(conversationIDs []string)
 	// OnRecall 处理对端撤回通知（P6-12）；回调在接收协程执行，
 	// 由上层发出 message.recalled。消息本身已在回调前从本地库删除。
 	OnRecall func(RecallEvent)
@@ -210,6 +216,7 @@ type Service struct {
 
 	// 离线拉取（P3-07）。
 	inbox           OfflineStore
+	readSyncStore   ReadSyncStore
 	deleteAfterRead bool
 	fetchEvery      time.Duration
 	fetchMu         sync.Mutex
@@ -220,6 +227,8 @@ type Service struct {
 	onMessage func(InboundEvent)
 	// 已读回执回调（P6-07）。
 	onRead func(ReadEvent)
+	// 跨设备已读同步回调（C-04）。
+	onReadSync func([]string)
 	// 撤回通知回调（P6-12）。
 	onRecall func(RecallEvent)
 	// 输入状态回调（七-3）。
@@ -315,11 +324,13 @@ func New(opt Options) (*Service, error) {
 		onOfflineUpload: opt.OnOfflineUpload,
 		onTicketTake:    opt.OnTicketTake,
 		inbox:           opt.Inbox,
+		readSyncStore:   opt.ReadSyncStore,
 		deleteAfterRead: opt.DeleteAfterRead,
 		fetchEvery:      fetchEvery,
 		onGroupMeta:     opt.OnGroupMeta,
 		onMessage:       opt.OnMessage,
 		onRead:          opt.OnRead,
+		onReadSync:      opt.OnReadSync,
 		onRecall:        opt.OnRecall,
 		onTyping:        opt.OnTyping,
 		onEdit:          opt.OnEdit,

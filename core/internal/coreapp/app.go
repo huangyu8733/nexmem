@@ -394,6 +394,13 @@ func (a *App) Start(ctx context.Context, cfg Config) (string, error) {
 		OnProgress:  a.onProgress,
 		OnMessage:   a.onInbound,
 		OnRead:      a.onReadReceipt,
+		OnReadSync: func(conversationIDs []string) {
+			if len(conversationIDs) > 0 {
+				a.emit("conversation.changed", map[string]any{
+					"conversation_ids": conversationIDs,
+				})
+			}
+		},
 		OnRecall:    a.onRecallReceived,
 		OnTyping:    a.onTypingReceived,
 		OnEdit:      a.onEditReceived,
@@ -406,6 +413,8 @@ func (a *App) Start(ctx context.Context, cfg Config) (string, error) {
 	if bucket != nil {
 		// 接收方收件箱拉取只依赖本机桶；发送端离线投递还需索引服务。
 		dmOpts.Inbox = bucket
+		// C-04：同一账号多设备共用该桶，用它发布/拉取已读水位。
+		dmOpts.ReadSyncStore = bucket
 		dmOpts.DeleteAfterRead = cfg.Storage.DeleteAfterRead
 		dmOpts.FetchInterval = dm.DefaultOfflineFetchInterval
 		if dirClient != nil {
@@ -820,6 +829,10 @@ func (a *App) onGroupMessage(ev group.Received) {
 		a.handleGroupDissolved(ev)
 		return
 	}
+	if group.IsStorageRemovedNotice(ev.Plaintext) {
+		a.handleGroupStorageRemoved(ev)
+		return
+	}
 	if text, ok := group.ParseAnnouncementNotice(ev.Plaintext); ok {
 		a.handleGroupAnnouncement(ev, text)
 		return
@@ -897,6 +910,35 @@ func (a *App) handleGroupDissolved(ev group.Received) {
 // handleGroupAnnouncement 处理入站群公告帧（P6-26）：仅接受本地成员表里登记的
 // 管理员发来的公告；更新本机 groups.announcement 后发出 group.announcement。
 // 公告正文属于加密正文的一部分，日志只记录群 ID 与发送方，不打印明文。
+// handleGroupStorageRemoved 处理入站群盘移除控制帧（C-05）：
+// 校验发送方为管理员后清本机群盘配置，并发出 group.storageRemoved 事件供 UI 刷新。
+func (a *App) handleGroupStorageRemoved(ev group.Received) {
+	svc := a.groupService()
+	if svc == nil {
+		return
+	}
+	ctx := context.Background()
+	applied, err := svc.ApplyStorageRemoved(ctx, ev.GroupID, ev.SenderAccount)
+	if err != nil {
+		a.log.Warn("group", "群盘移除控制帧本地处理失败", map[string]any{
+			"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+			"sender":   base64.RawURLEncoding.EncodeToString(ev.SenderAccount),
+			"error":    err.Error(),
+		})
+		return
+	}
+	if !applied {
+		a.log.Warn("group", "忽略非管理员群盘移除控制帧", map[string]any{
+			"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+			"sender":   base64.RawURLEncoding.EncodeToString(ev.SenderAccount),
+		})
+		return
+	}
+	a.emit("group.storageRemoved", map[string]any{
+		"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+	})
+}
+
 func (a *App) handleGroupAnnouncement(ev group.Received, text string) {
 	svc := a.groupService()
 	if svc == nil {
@@ -1372,6 +1414,19 @@ func (a *App) notifyRead(conversationID string, upTo int64) {
 	if svc == nil {
 		return
 	}
+	// C-04：把本机已读水位发布到同账号共用收件箱，供其他设备上线时同步。
+	// 尽力而为：失败只记日志，不回滚本机已读、不阻断对端回执。
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), readReceiptTimeout)
+		defer cancel()
+		if err := svc.PublishReadWatermark(ctx, conversationID, upTo); err != nil &&
+			!errors.Is(err, dm.ErrReadSyncDisabled) {
+			a.log.Debug("dm", "跨设备已读水位发布失败", map[string]any{
+				"conversation_id": conversationID,
+				"error":           err.Error(),
+			})
+		}
+	}()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), readReceiptTimeout)
 		defer cancel()

@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/theme.dart';
+import '../settings/storage_config.dart' show looksLikeMasterAccessKey;
 import '../../transport/transport.dart';
 import 'group_service.dart';
 
@@ -76,6 +77,7 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
 
   bool _pathStyle = true;
   bool _obscureSecret = true;
+  bool _scopedKeyConfirmed = false;
   bool _saving = false;
   String? _error;
 
@@ -103,6 +105,15 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
     final String? problem = config.validate();
     if (problem != null) {
       setState(() => _error = problem);
+      return;
+    }
+    // C-05：拒绝疑似主密钥，并要求确认使用仅授权本群前缀的受限子密钥。
+    if (looksLikeMasterAccessKey(config.accessKey)) {
+      setState(() => _error = '拒绝保存：请使用仅授权本群前缀的受限子密钥，不要填入主密钥');
+      return;
+    }
+    if (!_scopedKeyConfirmed) {
+      setState(() => _error = '请先确认使用仅授权本群前缀的受限子密钥');
       return;
     }
     setState(() {
@@ -165,13 +176,29 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
                 ),
                 child: Text(
                   '群离线消息的上传与下载流量、存储占用计入群盘所属方（群主）的云存储账单；'
-                  '建议使用仅授权群前缀读写的子密钥，避免跨群访问。',
+                  '必须使用仅授权本群前缀读写的受限子密钥，严禁跨群访问或填入主密钥。',
                   style: TextStyle(
                     fontSize: 12,
                     height: 1.4,
                     color: scheme.onSurface.withValues(alpha: 0.75),
                   ),
                 ),
+              ),
+              const SizedBox(height: NexmemMetrics.space12),
+              // C-05：把「建议子密钥」升级为强制勾选门槛（对齐个人存储 C-06）。
+              CheckboxListTile(
+                key: const ValueKey<String>('group-storage-scoped-key-confirm'),
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                value: _scopedKeyConfirmed,
+                title: const Text(
+                  '我确认使用仅授权本群前缀的受限子密钥（非主密钥）',
+                  style: TextStyle(fontSize: 13),
+                ),
+                onChanged: _saving
+                    ? null
+                    : (bool? value) =>
+                        setState(() => _scopedKeyConfirmed = value ?? false),
               ),
               const SizedBox(height: NexmemMetrics.space12),
               _field(

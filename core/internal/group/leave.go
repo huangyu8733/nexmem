@@ -41,9 +41,14 @@ func (s *Service) LeaveGroup(ctx context.Context, groupID []byte) error {
 
 // DissolveGroup 解散群聊（仅管理员）：广播解散控制帧后执行本机退群。
 // 广播失败不阻断本机解散，成员下次上线也无法再获得新密钥。
+// C-05：解散前尽力清理群盘云端密文——必须在 LeaveGroup 丢弃群密钥之前进行，
+// 否则群盘配置无法解封；云端清理失败只记告警，不阻断本地解散。
 func (s *Service) DissolveGroup(ctx context.Context, groupID []byte) error {
 	if _, _, err := s.requireAdmin(ctx, groupID); err != nil {
 		return err
+	}
+	if _, cleanErr := s.cleanupGroupCloud(ctx, groupID); cleanErr != nil {
+		s.emitStorage(StorageEvent{GroupID: append([]byte(nil), groupID...), Err: cleanErr})
 	}
 	_, _ = s.PublishEncrypted(ctx, groupID, dissolveNotice)
 	return s.LeaveGroup(ctx, groupID)

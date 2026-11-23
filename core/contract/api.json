@@ -971,7 +971,7 @@
     },
     {
       "name": "group.dissolve",
-      "summary": "解散群聊（仅管理员）：广播解散通知并清理本地群记录与密钥",
+      "summary": "解散群聊（仅管理员）：广播解散通知、尽力清理群盘云端密文并清理本地群记录与密钥",
       "params": {
         "type": "object",
         "properties": {
@@ -1142,6 +1142,33 @@
           "group_id",
           "key_version",
           "failed"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.removeStorage",
+      "summary": "移除群盘（仅管理员）：尽力删除云端 group_offline/{gid}/ 密文、清本机配置并广播移除通知；返回 cloud_objects_deleted",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "cloud_objects_deleted": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cloud_objects_deleted"
         ]
       },
       "implemented": false
@@ -2260,6 +2287,21 @@
         "required": [
           "group_id",
           "announcement"
+        ]
+      }
+    },
+    {
+      "type": "group.storageRemoved",
+      "description": "管理员移除群盘，成员按 group_id 清本机群盘配置（不产生气泡）",
+      "data": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
         ]
       }
     }

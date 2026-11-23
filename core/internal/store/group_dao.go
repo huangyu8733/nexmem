@@ -114,6 +114,24 @@ func (d *DAO) SetGroupAnnouncement(ctx context.Context, groupID []byte, text str
 	return nil
 }
 
+// ClearGroupStorage 清空本机群盘配置（C-05 移除群盘 / 收到移除控制帧）。
+// 同时关闭离线开关；群不存在返回 ErrNotFound。
+func (d *DAO) ClearGroupStorage(ctx context.Context, groupID []byte) error {
+	res, err := d.db.ExecContext(ctx,
+		`UPDATE groups SET storage_cfg_enc = NULL, offline_enabled = 0 WHERE group_id = ?`, groupID)
+	if err != nil {
+		return fmt.Errorf("清除群盘配置 %x: %w", groupID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // GetGroupAlias 读取本机群备注；群不存在返回 ErrNotFound。
 func (d *DAO) GetGroupAlias(ctx context.Context, groupID []byte) (string, error) {
 	var alias string

@@ -134,5 +134,10 @@ func eventSpecs() []EventSpec {
 			Description: "管理员更新群公告，成员按 group_id 刷新本机公告（不产生气泡）",
 			Data:        json.RawMessage(`{"type":"object","properties":{"group_id":{"type":"string"},"announcement":{"type":"string"}},"required":["group_id","announcement"]}`),
 		},
+		{
+			Type:        "group.storageRemoved",
+			Description: "管理员移除群盘，成员按 group_id 清本机群盘配置（不产生气泡）",
+			Data:        json.RawMessage(`{"type":"object","properties":{"group_id":{"type":"string"}},"required":["group_id"]}`),
+		},
 	}
 }

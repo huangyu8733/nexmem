@@ -248,6 +248,9 @@ abstract class GroupService {
   /// 配置群盘并下发给全体成员（仅管理员）；凭证只在请求内使用。
   Future<void> configureStorage(String groupId, GroupStorageConfig config);
 
+  /// 移除群盘（仅管理员）：尽力删除云端密文并清本机配置，返回删除的对象数（C-05）。
+  Future<int> removeStorage(String groupId);
+
   /// 设置群公告（仅管理员）：空串表示清除，最多 512 字；返回内核保存的文本（P6-26）。
   Future<String> setAnnouncement(String groupId, String announcement);
 
@@ -338,6 +341,22 @@ class TransportGroupService implements GroupService {
       'group.setStorage',
       params: <String, dynamic>{'group_id': groupId, ...config.toParams()},
     );
+  }
+
+  @override
+  Future<int> removeStorage(String groupId) async {
+    final Map<String, dynamic> data = await transport.call(
+      'group.removeStorage',
+      params: <String, dynamic>{'group_id': groupId},
+    );
+    final Object? deleted = data['cloud_objects_deleted'];
+    if (deleted is! num) {
+      throw const NexmemException(
+        'BAD_RESPONSE',
+        'group.removeStorage 缺少 cloud_objects_deleted',
+      );
+    }
+    return deleted.toInt();
   }
 
   @override
@@ -446,6 +465,11 @@ class UnavailableGroupService implements GroupService {
     String groupId,
     GroupStorageConfig config,
   ) async {
+    throw const NexmemException('NOT_STARTED', '群聊服务尚未接入内核');
+  }
+
+  @override
+  Future<int> removeStorage(String groupId) async {
     throw const NexmemException('NOT_STARTED', '群聊服务尚未接入内核');
   }
 

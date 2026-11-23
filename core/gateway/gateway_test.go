@@ -31,8 +31,8 @@ func errorCode(t *testing.T, resp map[string]any) string {
 func TestMethodsHaveSchema(t *testing.T) {
 	g := New()
 	methods := g.Methods()
-	if len(methods) != 55 {
-		t.Fatalf("契约方法数 = %d，期望 55", len(methods))
+	if len(methods) != 56 {
+		t.Fatalf("契约方法数 = %d，期望 56", len(methods))
 	}
 	prev := ""
 	for _, m := range methods {

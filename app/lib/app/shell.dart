@@ -425,6 +425,10 @@ class _AppShellState extends State<AppShell> {
       // A-03：内核已更新本机群公告并发出事件，递增版本号让打开的群资料页刷新。
       // 无需解析 data——群资料页 reload 时会重新拉取 group.members 权威数据。
       _announcementRevision.value++;
+    } else if (event.type == 'group.storageRemoved') {
+      // C-05：管理员移除了群盘，内核已清本机配置；复用同一版本号让群资料页
+      // 重新拉取 group.members 刷新 storage_configured 展示。
+      _announcementRevision.value++;
     } else if (event.type == 'conversation.changed') {
       unawaited(_reloadConversations());
     } else if (event.type == 'transfer.progress') {

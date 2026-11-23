@@ -321,4 +321,15 @@ func (s *Service) runOfflineFetch() {
 	ctx, cancel := context.WithTimeout(context.Background(), offlineFetchPassTimeout)
 	defer cancel()
 	_, _ = s.FetchOffline(ctx)
+	// C-04：同一账号其他设备发布的已读水位在本机应用，推进 messages.state=read。
+	// 尽力而为：失败只记诊断日志，不影响离线消息拉取。
+	if s.readSyncStore != nil {
+		changed, err := s.SyncReadStates(ctx)
+		if err != nil && s.diag != nil {
+			s.diag.Warn("dm", "跨设备已读水位同步失败", map[string]any{"error": err.Error()})
+		}
+		if len(changed) > 0 && s.onReadSync != nil {
+			s.onReadSync(changed)
+		}
+	}
 }

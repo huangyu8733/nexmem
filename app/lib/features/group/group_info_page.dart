@@ -303,6 +303,53 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     await _load();
   }
 
+  /// 管理员移除群盘（C-05）：二次确认后删除云端密文并清本机配置。
+  Future<void> _removeStorage() async {
+    if (_busy) {
+      return;
+    }
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        key: const ValueKey<String>('group-storage-remove-dialog'),
+        title: const Text('移除群盘'),
+        content: const Text(
+          '将尽力删除群盘中的离线密文对象并停止群盘同步；'
+          '群消息仍可在线收发，但成员离线期间无法从群盘补齐。此操作不可恢复。',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const ValueKey<String>('group-storage-remove-confirm'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('移除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final int deleted = await widget.service.removeStorage(widget.groupId);
+      if (mounted) {
+        _toast(deleted > 0 ? '群盘已移除，清理了 $deleted 个云端对象' : '群盘已移除');
+      }
+    } on NexmemException catch (error) {
+      if (mounted) {
+        _toast(error.message.isEmpty ? error.code : error.message);
+      }
+    }
+    if (mounted) {
+      setState(() => _busy = false);
+      await _load();
+    }
+  }
+
   /// 管理员设置或清除群公告（P6-26）；成功后只替换本地字段，不整页重建。
   Future<void> _editAnnouncement() async {
     final GroupInfo? info = _info;
@@ -479,10 +526,21 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
             style: const TextStyle(fontSize: 12),
           ),
           trailing: isAdmin
-              ? TextButton(
-                  key: const ValueKey<String>('group-storage-config'),
-                  onPressed: _busy ? null : _configureStorage,
-                  child: Text(info.storageConfigured ? '重新配置' : '配置'),
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    if (info.storageConfigured)
+                      TextButton(
+                        key: const ValueKey<String>('group-storage-remove'),
+                        onPressed: _busy ? null : _removeStorage,
+                        child: const Text('移除'),
+                      ),
+                    TextButton(
+                      key: const ValueKey<String>('group-storage-config'),
+                      onPressed: _busy ? null : _configureStorage,
+                      child: Text(info.storageConfigured ? '重新配置' : '配置'),
+                    ),
+                  ],
                 )
               : null,
         ),

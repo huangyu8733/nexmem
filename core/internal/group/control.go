@@ -64,6 +64,22 @@ func IsControlFrame(body []byte) bool {
 	return strings.HasPrefix(string(body), controlFrameDomain)
 }
 
+// storageRemovedNotice 是群盘移除控制帧正文（C-05）。
+//
+// 管理员移除群盘后广播该帧；成员收到后校验发送方为管理员，清掉本机群盘配置，
+// 之后不再写入/拉取群盘密文。与解散帧类似，控制帧不落库、不生成聊天气泡。
+const storageRemovedNotice = controlFrameDomain + "storage-removed"
+
+// StorageRemovedNotice 返回群盘移除控制帧正文。
+func StorageRemovedNotice() string {
+	return storageRemovedNotice
+}
+
+// IsStorageRemovedNotice 判断正文是否为群盘移除控制帧。
+func IsStorageRemovedNotice(body []byte) bool {
+	return strings.TrimSpace(string(body)) == storageRemovedNotice
+}
+
 // announcementNoticePrefix 是群公告控制帧的固定前缀（P6-26）。
 // 公告正文按 base64url 编码携带，控制帧本身不落库、不生成聊天气泡。
 const announcementNoticePrefix = controlFrameDomain + "announcement:"

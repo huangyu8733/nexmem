@@ -61,6 +61,17 @@ func (f *fakeObjectStore) List(_ context.Context, prefix string) ([]blob.ObjectI
 	return out, nil
 }
 
+// Delete 让 fakeObjectStore 实现 ObjectDeleter，供 C-05 云端清理测试。
+func (f *fakeObjectStore) Delete(_ context.Context, key string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.objects[key]; !ok {
+		return blob.ErrNotFound
+	}
+	delete(f.objects, key)
+	return nil
+}
+
 // snapshot 返回对象键与内容的副本。
 func (f *fakeObjectStore) snapshot() map[string][]byte {
 	f.mu.Lock()

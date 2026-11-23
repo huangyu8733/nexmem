@@ -76,6 +76,7 @@ func Bind(g *gateway.Gateway, gw *Gateway) error {
 		"group.leave":           gw.leaveHandler(),
 		"group.dissolve":        gw.dissolveHandler(),
 		"group.setStorage":      gw.setStorageHandler(),
+		"group.removeStorage":   gw.removeStorageHandler(),
 		"group.setAnnouncement": gw.setAnnouncementHandler(),
 		"group.setAlias":        gw.setAliasHandler(),
 		"dm.sendGroupText":      gw.sendTextHandler(),
@@ -448,6 +449,26 @@ func (gw *Gateway) setStorageHandler() gateway.HandlerFunc {
 			return nil, mapGroupError("配置群盘失败", err)
 		}
 		return map[string]any{}, nil
+	}
+}
+
+// removeStorageHandler 处理 group.removeStorage：管理员移除群盘，
+// 尽力清理云端密文并广播移除控制帧（C-05）。
+func (gw *Gateway) removeStorageHandler() gateway.HandlerFunc {
+	return func(ctx context.Context, params json.RawMessage) (any, *gateway.Error) {
+		groupID, gerr := gw.groupIDParam("group.removeStorage", params)
+		if gerr != nil {
+			return nil, gerr
+		}
+		svc, gerr := gw.service()
+		if gerr != nil {
+			return nil, gerr
+		}
+		deleted, err := svc.RemoveStorage(ctx, groupID)
+		if err != nil {
+			return nil, mapGroupError("移除群盘失败", err)
+		}
+		return map[string]any{"cloud_objects_deleted": deleted}, nil
 	}
 }
 

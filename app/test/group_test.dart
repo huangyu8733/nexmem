@@ -87,6 +87,7 @@ class _FakeGroups implements GroupService {
   final List<String> dissolved = <String>[];
   final List<(String, GroupStorageConfig)> storageConfigs =
       <(String, GroupStorageConfig)>[];
+  final List<String> storageRemoved = <String>[];
   final List<(String, String)> announcements = <(String, String)>[];
   final List<(String, String)> aliases = <(String, String)>[];
 
@@ -190,6 +191,24 @@ class _FakeGroups implements GroupService {
         members: current.members,
       );
     }
+  }
+
+  @override
+  Future<int> removeStorage(String groupId) async {
+    storageRemoved.add(groupId);
+    final GroupInfo? current = info;
+    if (current != null) {
+      info = GroupInfo(
+        groupId: current.groupId,
+        title: current.title,
+        keyVersion: current.keyVersion,
+        storageConfigured: false,
+        announcement: current.announcement,
+        alias: current.alias,
+        members: current.members,
+      );
+    }
+    return 0;
   }
 
   @override
@@ -974,6 +993,11 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('计入群盘所属方（群主）的云存储账单'), findsOneWidget);
+    // C-05：强制受限子密钥勾选门槛存在。
+    expect(
+      find.byKey(const ValueKey<String>('group-storage-scoped-key-confirm')),
+      findsOneWidget,
+    );
 
     // 空表单先做行内校验，不产生提交。
     await tester.tap(find.byKey(const ValueKey<String>('group-storage-save')));
@@ -991,12 +1015,23 @@ void main() {
     );
     await tester.enterText(
       find.byKey(const ValueKey<String>('group-storage-ak')),
-      'minioadmin',
+      'groupScopedKey01',
     );
     await tester.enterText(
       find.byKey(const ValueKey<String>('group-storage-sk')),
-      'minioadmin',
+      'scoped-secret',
     );
+    // 未勾选门槛时提交被拦截。
+    await tester.tap(find.byKey(const ValueKey<String>('group-storage-save')));
+    await tester.pump();
+    expect(find.textContaining('请先确认使用仅授权本群前缀'), findsOneWidget);
+    expect(groups.storageConfigs, isEmpty);
+
+    final Finder scopedCheckbox = find.byKey(
+      const ValueKey<String>('group-storage-scoped-key-confirm'),
+    );
+    await tester.ensureVisible(scopedCheckbox);
+    await tester.tap(scopedCheckbox);
     await tester.tap(find.byKey(const ValueKey<String>('group-storage-save')));
     await tester.pumpAndSettle();
 
@@ -1006,8 +1041,8 @@ void main() {
     expect(call.$2.bucket, 'nexmem');
     expect(call.$2.prefix, 'nexmem-group');
     expect(call.$2.region, 'us-east-1');
-    expect(call.$2.accessKey, 'minioadmin');
-    expect(call.$2.secretKey, 'minioadmin');
+    expect(call.$2.accessKey, 'groupScopedKey01');
+    expect(call.$2.secretKey, 'scoped-secret');
     expect(call.$2.pathStyle, isTrue);
 
     expect(find.text(GroupStorageNotice.message), findsNothing);
@@ -1265,5 +1300,128 @@ void main() {
 
     expect(find.text('读取群列表失败'), findsNothing);
     expect(find.text('周末爬山'), findsOneWidget);
+  });
+
+  // C-05：`group.removeStorage` 经统一传输层调用并返回删除对象数。
+  test('TransportGroupService.removeStorage 调用契约并解析删除数', () async {
+    final _FakeTransport transport = _FakeTransport((
+      String method,
+      Map<String, dynamic>? params,
+    ) async {
+      expect(method, 'group.removeStorage');
+      expect(params, <String, dynamic>{'group_id': 'Z3JvdXA'});
+      return <String, dynamic>{'cloud_objects_deleted': 3};
+    });
+    final int deleted = await TransportGroupService(
+      transport,
+    ).removeStorage('Z3JvdXA');
+    expect(deleted, 3);
+    expect(transport.calls, hasLength(1));
+  });
+
+  // C-05：管理员移除群盘经二次确认后调用 removeStorage 并刷新状态。
+  testWidgets('管理员移除群盘：二次确认后调用 removeStorage', (
+    WidgetTester tester,
+  ) async {
+    final _FakeGroups groups = _FakeGroups(
+      info: const GroupInfo(
+        groupId: 'Z3JvdXA',
+        title: '周末爬山',
+        keyVersion: 2,
+        storageConfigured: true,
+        members: <GroupMember>[
+          GroupMember(account: 'admin-account', role: 'admin'),
+        ],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: NexmemTheme.light(),
+        home: GroupInfoPage(
+          groupId: 'Z3JvdXA',
+          title: '周末爬山',
+          service: groups,
+          selfAccount: 'admin-account',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey<String>('group-storage-remove')),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('group-storage-remove')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('group-storage-remove-dialog')),
+      findsOneWidget,
+    );
+
+    // 取消不产生调用。
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(groups.storageRemoved, isEmpty);
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('group-storage-remove')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('group-storage-remove-confirm')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(groups.storageRemoved, <String>['Z3JvdXA']);
+  });
+
+  // C-05：疑似主密钥被拒绝，不产生提交。
+  testWidgets('群盘配置拒绝主密钥', (WidgetTester tester) async {
+    final _FakeGroups groups = _FakeGroups(
+      info: const GroupInfo(
+        groupId: 'Z3JvdXA',
+        title: '周末爬山',
+        keyVersion: 2,
+        storageConfigured: false,
+        members: <GroupMember>[
+          GroupMember(account: 'admin-account', role: 'admin'),
+        ],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: NexmemTheme.light(),
+        home: GroupInfoPage(
+          groupId: 'Z3JvdXA',
+          title: '周末爬山',
+          service: groups,
+          selfAccount: 'admin-account',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('group-storage-config')));
+    await tester.pumpAndSettle();
+
+    for (final (String key, String value) in <(String, String)>[
+      ('group-storage-endpoint', 'https://s3.example.com'),
+      ('group-storage-bucket', 'nexmem'),
+      ('group-storage-ak', 'AKIA1234567890'),
+      ('group-storage-sk', 'secret'),
+    ]) {
+      await tester.enterText(find.byKey(ValueKey<String>(key)), value);
+    }
+    final Finder scopedCheckbox2 = find.byKey(
+      const ValueKey<String>('group-storage-scoped-key-confirm'),
+    );
+    await tester.ensureVisible(scopedCheckbox2);
+    await tester.tap(scopedCheckbox2);
+    await tester.tap(find.byKey(const ValueKey<String>('group-storage-save')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('拒绝保存'), findsOneWidget);
+    expect(groups.storageConfigs, isEmpty);
   });
 }
