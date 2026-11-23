@@ -55,7 +55,8 @@ if (-not (Test-Path $exe)) { throw "未找到 $exe，请去掉 -NoBuild 重新�
 if ($RebuildWeb -or -not (Test-Path (Join-Path $StaticDir "index.html"))) {
     Write-Host "构建 Flutter Web 产物 ..."
     $env:FLUTTER_STORAGE_BASE_URL = "https://storage.flutter-io.cn"
-    & $flutterExe build web --release --project-directory (Join-Path $repoRoot "app")
+    Push-Location (Join-Path $repoRoot "app")
+    try { & $flutterExe build web --release } finally { Pop-Location }
     if ($LASTEXITCODE -ne 0) { throw "flutter build web 失败" }
 }
 

@@ -34,7 +34,7 @@ CGO_ENABLED=1 "$GO" -C core build -buildmode=c-shared -o ../bin/libnexmem.so ./f
 
 # 2. Flutter Linux 产物
 echo "==> 构建 Flutter Linux 产物"
-"$FLUTTER" build linux --release --project-directory app
+(cd app && "$FLUTTER" build linux --release)
 
 if [ ! -x "$BUNDLE/nexmem_app" ]; then
   echo "缺少 $BUNDLE/nexmem_app，Flutter 构建可能失败" >&2

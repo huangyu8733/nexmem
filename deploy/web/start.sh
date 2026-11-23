@@ -45,8 +45,11 @@ BIN=$REPO_ROOT/bin/nexmem-webd
 # 3. Flutter Web 产物
 if [ ! -f "$STATIC_DIR/index.html" ]; then
     echo "构建 Flutter Web 产物 ..."
-    FLUTTER_STORAGE_BASE_URL=${FLUTTER_STORAGE_BASE_URL:-https://storage.flutter-io.cn} \
-        "$FLUTTER" build web --release --project-directory "$REPO_ROOT/app"
+    (
+      cd "$REPO_ROOT/app"
+      FLUTTER_STORAGE_BASE_URL=${FLUTTER_STORAGE_BASE_URL:-https://storage.flutter-io.cn} \
+        "$FLUTTER" build web --release
+    )
 fi
 
 # 4. 前台启动

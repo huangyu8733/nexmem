@@ -125,7 +125,7 @@ webdtest:
 	$(GO) -C core test ./server/webd -v -count=1
 
 webdist:
-	FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn .toolchain/flutter/flutter/bin/flutter build web --release --project-directory app
+	cd app && FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn ../.toolchain/flutter/flutter/bin/flutter build web --release
 
 keystoretest:
 	$(GO) -C core run ./cmd/nexmem-keystoretest

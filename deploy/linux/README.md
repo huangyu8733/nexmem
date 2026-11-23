@@ -25,7 +25,7 @@ bash deploy/linux/build-linux.sh
 脚本依次执行：
 
 1. `CGO_ENABLED=1 go -C core build -buildmode=c-shared -o ../bin/libnexmem.so ./ffi/capi`
-2. `flutter build linux --release --project-directory app`
+2. 在 `app/` 目录执行 `flutter build linux --release`
 3. 暂存包根 `dist/debroot`：
    - `/opt/nexmem/`：完整 Flutter bundle + `libnexmem.so`（与 `nexmem_app` 同目录，供 `dart:ffi` 按 `resolvedExecutable` 加载）
    - `/usr/bin/nexmem` → `/opt/nexmem/nexmem_app`
