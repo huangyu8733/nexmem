@@ -45,6 +45,11 @@ dependencies:
   http: ^1.6.0
   archive: ^4.7.1
   path_provider: ^2.1.6
+  path: ^1.9.1
+  # 媒体预览播放：图片用 image，视频/音频用原生播放器，
+  # 不支持的格式由内置 ffmpeg 工具链转码后再播放。
+  video_player: ^2.14.1
+  audioplayers: ^6.8.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

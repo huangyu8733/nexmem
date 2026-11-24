@@ -601,3 +601,22 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	}
 	t.Fatal("等待条件超时")
 }
+
+// TestDiscoveryDefaultsEnabled 校验发现源默认开启，且用户显式 false 仍可关闭。
+func TestDiscoveryDefaultsEnabled(t *testing.T) {
+	tests := []struct {
+		raw      string
+		fallback bool
+		want     bool
+	}{
+		{raw: "", fallback: true, want: true},
+		{raw: "true", fallback: true, want: true},
+		{raw: "false", fallback: true, want: false},
+		{raw: "invalid", fallback: true, want: true},
+	}
+	for _, tt := range tests {
+		if got := boolSetting(tt.raw, tt.fallback); got != tt.want {
+			t.Fatalf("boolSetting(%q, %v) = %v, want %v", tt.raw, tt.fallback, got, tt.want)
+		}
+	}
+}

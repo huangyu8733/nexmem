@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../l10n/l10n.dart';
 
+import '../../app/avatar.dart';
 import '../../app/empty_state.dart';
 import '../../app/pane_header.dart';
 import '../../app/theme.dart';
@@ -37,6 +38,7 @@ class ChatsPage extends StatefulWidget {
     this.onSetMuted,
     this.loading = false,
     this.offline = false,
+    this.selectedId,
   });
 
   /// 由上层注入的数据源；为空时使用页面私有实例（P1-16 接通后改由内核事件驱动）。
@@ -79,6 +81,9 @@ class ChatsPage extends StatefulWidget {
 
   /// 链路断开：列表顶部提示「网络已断开，正在重连」（ui-spec.md §8）。
   final bool offline;
+
+  /// 当前打开的会话 ID；用于桌面列表高亮选中项（QQ 式观感）。
+  final String? selectedId;
 
   @override
   State<ChatsPage> createState() => ChatsPageState();
@@ -351,6 +356,7 @@ class ChatsPageState extends State<ChatsPage> {
                       child: ConversationTile(
                         key: ValueKey<String>('conversation-${item.id}'),
                         item: item,
+                        selected: widget.selectedId == item.id,
                         onTap: widget.onOpen == null
                             ? null
                             : () => widget.onOpen!(item),
@@ -503,10 +509,16 @@ class _SwipeBackground extends StatelessWidget {
 
 /// 单个会话项，高度与内边距见 ui-spec.md §2。
 class ConversationTile extends StatelessWidget {
-  const ConversationTile({super.key, required this.item, this.onTap});
+  const ConversationTile({
+    super.key,
+    required this.item,
+    this.onTap,
+    this.selected = false,
+  });
 
   final ConversationItem item;
   final VoidCallback? onTap;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -519,9 +531,11 @@ class ConversationTile extends StatelessWidget {
     return SizedBox(
       height: NexmemMetrics.listItemHeight,
       child: Material(
-        color: item.pinned
-            ? scheme.onSurface.withValues(alpha: 0.04)
-            : Colors.transparent,
+        color: selected
+            ? NexmemColors.primary.withValues(alpha: 0.12)
+            : item.pinned
+                ? scheme.onSurface.withValues(alpha: 0.03)
+                : Colors.transparent,
         child: InkWell(
           onTap: onTap,
           child: Padding(
@@ -612,56 +626,18 @@ class _Avatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
-    final Color base = colors[item.id.hashCode.abs() % colors.length];
-    final String initial = item.title.isEmpty
-        ? '?'
-        : item.title.substring(0, 1);
-    return SizedBox(
-      width: NexmemMetrics.avatarSize,
-      height: NexmemMetrics.avatarSize,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: <Widget>[
-          CircleAvatar(
-            radius: NexmemMetrics.avatarSize / 2,
-            backgroundColor: base.withValues(alpha: 0.16),
-            child: item.isGroup
-                ? Icon(Icons.groups_outlined, size: 22, color: base)
-                : Text(
-                    initial,
-                    style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                      color: base,
-                    ),
-                  ),
-          ),
-          if (!item.isGroup)
-            Positioned(
-              right: 0,
-              bottom: 0,
-              child: Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  color: _presenceColor(item.presence),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: scheme.surface, width: 1.5),
-                ),
-              ),
-            ),
-        ],
-      ),
+    return AppAvatar(
+      seed: item.id,
+      label: item.title,
+      icon: item.isGroup ? Icons.groups_outlined : null,
+      size: NexmemMetrics.avatarSize,
+      showPresence: !item.isGroup,
+      presence: switch (item.presence) {
+        PresenceStatus.online => AvatarPresence.online,
+        PresenceStatus.relay => AvatarPresence.relay,
+        PresenceStatus.offline => AvatarPresence.offline,
+      },
     );
-  }
-
-  static Color _presenceColor(PresenceStatus status) {
-    return switch (status) {
-      PresenceStatus.online => NexmemColors.success,
-      PresenceStatus.relay => NexmemColors.warning,
-      PresenceStatus.offline => const Color(0xFFB0B0B0),
-    };
   }
 }
 
@@ -683,7 +659,7 @@ class _UnreadBadge extends StatelessWidget {
         height: 8,
         margin: const EdgeInsets.symmetric(vertical: 5),
         decoration: const BoxDecoration(
-          color: Color(0xFFB0B0B0),
+          color: NexmemColors.unreadMuted,
           shape: BoxShape.circle,
         ),
       );
@@ -694,7 +670,7 @@ class _UnreadBadge extends StatelessWidget {
       height: 18,
       padding: const EdgeInsets.symmetric(horizontal: 5),
       decoration: BoxDecoration(
-        color: NexmemColors.danger,
+        color: NexmemColors.unread,
         borderRadius: BorderRadius.circular(9),
       ),
       alignment: Alignment.center,

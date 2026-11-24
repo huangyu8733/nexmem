@@ -4,9 +4,11 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../l10n/l10n.dart';
 
+import '../../app/avatar.dart';
 import '../../app/pane_header.dart';
 import '../../app/theme.dart';
 import '../../transport/transport.dart';
+import '../chats/start_chat_sheet.dart';
 import 'group_service.dart';
 
 /// 群聊列表页（P4-13，ui-spec.md §4 通讯录「群聊」分组）。
@@ -18,6 +20,7 @@ class GroupListPage extends StatefulWidget {
     super.key,
     required this.service,
     this.onOpenGroup,
+    this.onGroupCreated,
     this.embedded = false,
   });
 
@@ -25,6 +28,9 @@ class GroupListPage extends StatefulWidget {
 
   /// 点击群聊时回调 `(groupId, title)`，由调用方打开群会话。
   final void Function(String groupId, String title)? onOpenGroup;
+
+  /// 创建空群成功后回调 `(groupId, title)`，由调用方打开新群会话。
+  final void Function(String groupId, String title)? onGroupCreated;
 
   /// 为 true 时以面板形式渲染（供桌面右栏 / 手机全屏页复用），
   /// 不套 Scaffold、不在打开群聊时 pop 外层路由。
@@ -37,6 +43,7 @@ class GroupListPage extends StatefulWidget {
 class _GroupListPageState extends State<GroupListPage> {
   List<GroupSummary> _items = const <GroupSummary>[];
   bool _loading = true;
+  bool _creating = false;
   String? _error;
 
   @override
@@ -77,19 +84,74 @@ class _GroupListPageState extends State<GroupListPage> {
     widget.onOpenGroup?.call(group.groupId, group.displayTitle);
   }
 
+  /// 右上角「创建群聊」：只需群名即可建空群，无需先选人。
+  /// 成功后刷新列表并让调用方打开新群，随后可在群资料页邀请/分享拉人。
+  Future<void> _createGroup() async {
+    if (_creating) {
+      return;
+    }
+    final String? title = await showCreateGroupByNameDialog(context);
+    if (title == null || !mounted) {
+      return;
+    }
+    setState(() => _creating = true);
+    try {
+      final String groupId = await widget.service.create(
+        title: title,
+        members: const <String>[],
+      );
+      await _load();
+      if (!mounted) {
+        return;
+      }
+      if (!widget.embedded) {
+        Navigator.of(context).pop();
+      }
+      widget.onGroupCreated?.call(groupId, title);
+    } on NexmemException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(
+            error.message.isEmpty ? error.code : error.message,
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _creating = false);
+      }
+    }
+  }
+
+  Widget _createButton() => IconButton(
+        key: const ValueKey<String>('group-list-create'),
+        tooltip: context.t('创建群聊'),
+        onPressed: _creating ? null : _createGroup,
+        icon: const Icon(Icons.group_add_outlined),
+      );
+
   @override
   Widget build(BuildContext context) {
     if (widget.embedded) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          PaneHeader(title: context.t('群聊')),
+          PaneHeader(
+            title: context.t('群聊'),
+            actions: <Widget>[_createButton()],
+          ),
           Expanded(child: _body()),
         ],
       );
     }
     return Scaffold(
-      appBar: AppBar(title: Text(context.t('群聊'))),
+      appBar: AppBar(
+        title: Text(context.t('群聊')),
+        actions: <Widget>[_createButton()],
+      ),
       body: _body(),
     );
   }
@@ -109,7 +171,7 @@ class _GroupListPageState extends State<GroupListPage> {
               vertical: NexmemMetrics.space24,
             ),
             child: Text(
-              context.t('还没有群聊，在会话页右上角「+」发起群聊'),
+              context.t('还没有群聊，点右上角创建'),
               key: const ValueKey<String>('group-list-empty'),
               textAlign: TextAlign.center,
               style: TextStyle(
@@ -139,8 +201,6 @@ class _GroupTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final String title = group.displayTitle;
-    final Color base = NexmemColors
-        .avatarPalette[title.hashCode.abs() % NexmemColors.avatarPalette.length];
     return SizedBox(
       height: NexmemMetrics.listItemHeight,
       child: InkWell(
@@ -149,17 +209,11 @@ class _GroupTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space12),
           child: Row(
             children: <Widget>[
-              CircleAvatar(
-                radius: 20,
-                backgroundColor: base.withValues(alpha: 0.16),
-                child: Text(
-                  title.substring(0, 1),
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: base,
-                  ),
-                ),
+              AppAvatar(
+                seed: group.groupId,
+                label: title,
+                icon: Icons.groups_outlined,
+                size: 40,
               ),
               const SizedBox(width: NexmemMetrics.space12),
               Expanded(

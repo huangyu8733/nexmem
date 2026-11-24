@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/theme.dart';
@@ -25,6 +26,8 @@ class GroupInfoPage extends StatefulWidget {
     this.contacts,
     this.onAliasChanged,
     this.announcementRevision,
+    this.onAllowFriendAddChanged,
+    this.allowFriendAddRevision,
   });
 
   /// base64url 群 ID（会话 ID 去掉 `group:` 前缀）。
@@ -49,6 +52,12 @@ class GroupInfoPage extends StatefulWidget {
   /// 可选参数——未接入内核事件的场景（如 widget 测试）不监听，行为不变。
   final ValueListenable<int>? announcementRevision;
 
+  /// 管理员切换「允许成员加好友」后的回调，用于刷新聊天右侧资料面板。
+  final ValueChanged<bool>? onAllowFriendAddChanged;
+
+  /// 成员收到管理员广播的加好友开关变更事件时递增，本页监听后刷新设置展示。
+  final ValueListenable<int>? allowFriendAddRevision;
+
   @override
   State<GroupInfoPage> createState() => _GroupInfoPageState();
 }
@@ -59,18 +68,22 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
   bool _busy = false;
   String? _error;
   late final int _initialRevision;
+  late final int _initialAllowFriendRevision;
 
   @override
   void initState() {
     super.initState();
     _initialRevision = widget.announcementRevision?.value ?? 0;
+    _initialAllowFriendRevision = widget.allowFriendAddRevision?.value ?? 0;
     widget.announcementRevision?.addListener(_onAnnouncementChanged);
+    widget.allowFriendAddRevision?.addListener(_onAllowFriendAddChanged);
     unawaited(_load());
   }
 
   @override
   void dispose() {
     widget.announcementRevision?.removeListener(_onAnnouncementChanged);
+    widget.allowFriendAddRevision?.removeListener(_onAllowFriendAddChanged);
     super.dispose();
   }
 
@@ -79,6 +92,18 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
   void _onAnnouncementChanged() {
     final int? revision = widget.announcementRevision?.value;
     if (revision == null || revision == _initialRevision || !mounted) {
+      return;
+    }
+    unawaited(_load());
+  }
+
+  /// 其他成员收到管理员广播的加好友开关时内核发出事件，壳层递增版本号；
+  /// 仅相对打开时发生变化才重新拉取群资料。
+  void _onAllowFriendAddChanged() {
+    final int? revision = widget.allowFriendAddRevision?.value;
+    if (revision == null ||
+        revision == _initialAllowFriendRevision ||
+        !mounted) {
       return;
     }
     unawaited(_load());
@@ -183,6 +208,32 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
         return;
       }
       _toast(context.t('已邀请 {0}，密钥版本 v{1}', [picked.name, version]));
+      await _load();
+    } on NexmemException catch (error) {
+      _toast(error.message.isEmpty ? error.code : error.message);
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  /// 管理员开关「允许成员互加好友」；内核落本机设置后广播给群成员。
+  Future<void> _setAllowFriendAdd(bool enabled) async {
+    if (_busy) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final bool saved = await widget.service.setAllowFriendAdd(
+        widget.groupId,
+        enabled,
+      );
+      if (!mounted) {
+        return;
+      }
+      widget.onAllowFriendAddChanged?.call(saved);
+      _toast(context.t('操作成功'));
       await _load();
     } on NexmemException catch (error) {
       _toast(error.message.isEmpty ? error.code : error.message);
@@ -441,6 +492,26 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     }
   }
 
+  /// 复制群信息到剪贴板：群名 + 群号 + 群主账号，发给好友即可申请入群。
+  Future<void> _shareGroupInfo() async {
+    final GroupInfo? info = _info;
+    final String title = info?.displayTitle ?? widget.title;
+    final String owner = info?.members
+            .where((GroupMember m) => m.isAdmin)
+            .map((GroupMember m) => m.account)
+            .firstWhere((_) => true, orElse: () => '') ??
+        '';
+    final String text = context.t(
+      '群聊「{0}」群号：{1}，群主：{2}。把群号发给好友即可申请入群。',
+      <String>[title, widget.groupId, owner],
+    );
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) {
+      return;
+    }
+    _toast(context.t('{0}已复制', [context.t('群信息')]));
+  }
+
   void _toast(String message) {
     if (!mounted) {
       return;
@@ -459,6 +530,12 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
           info != null ? info.displayTitle : widget.title,
         ),
         actions: <Widget>[
+          IconButton(
+            key: const ValueKey<String>('group-share-button'),
+            tooltip: context.t('分享群信息'),
+            onPressed: _shareGroupInfo,
+            icon: const Icon(Icons.ios_share),
+          ),
           if (info != null && widget.contacts != null && _isAdmin(info))
             IconButton(
               key: const ValueKey<String>('group-invite-button'),
@@ -616,6 +693,21 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
                       ?.copyWith(fontSize: 14, height: 1.4),
                 ),
             ],
+          ),
+        ),
+        const Divider(height: 1),
+        SwitchListTile(
+          key: const ValueKey<String>('group-allow-friend-switch'),
+          value: info.allowFriendAdd,
+          onChanged: isAdmin && !_busy ? _setAllowFriendAdd : null,
+          title: Text(context.t('允许群成员加好友')),
+          subtitle: Text(
+            context.t('开启后可在成员列表直接发起好友申请'),
+            style: const TextStyle(fontSize: 12),
+          ),
+          secondary: Icon(
+            Icons.person_add_alt_outlined,
+            color: info.allowFriendAdd ? NexmemColors.primary : null,
           ),
         ),
         const Divider(height: 1),

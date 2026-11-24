@@ -121,6 +121,13 @@ func (s *Service) acceptInbound(ctx context.Context, msg *nexmemv1.DirectMessage
 	if msg.GetContentType() == nexmemv1.ContentType_CONTENT_TYPE_GROUP_META {
 		return s.acceptGroupMeta(msg)
 	}
+	// 社交控制帧在落库前拦截：不产生聊天气泡，交给上层处理业务。
+	if msg.GetContentType() == nexmemv1.ContentType_CONTENT_TYPE_TEXT && s.onControlText != nil {
+		if text := searchableText(msg); text != "" && s.onControlText(ctx, msg.GetSenderAccount(), text) {
+			s.replay.mark(msg.GetMsgUuid())
+			return AckOK
+		}
+	}
 
 	convID := ConversationID(s.account.Pub(), msg.GetSenderAccount())
 	inserted, err := s.dao.AcceptInboundMessage(ctx, store.ConversationKindDM, store.Message{

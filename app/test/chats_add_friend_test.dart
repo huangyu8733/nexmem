@@ -29,6 +29,9 @@ class _FakeContacts implements ContactService {
   Future<void> setBlocked(String account, bool blocked) async {}
 
   @override
+  Future<void> remove(String account) async {}
+
+  @override
   Future<DeviceListResult> devices({String? peer}) async =>
       const DeviceListResult(items: <DeviceInfo>[], found: true, self: true);
 }

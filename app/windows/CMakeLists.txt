@@ -32,6 +32,10 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
 
+# 第三方插件（flutter_webrtc）源码含 UTF-8 注释，MSVC 在简体中文代码页 936 下
+# 会报 C4819 并被 /WX 提升为错误；统一按 UTF-8 解析源码，避免中文系统构建失败。
+add_compile_options(/utf-8)
+
 # Compilation settings that should be applied to most targets.
 #
 # Be cautious about adding new options here, as plugins use this function by

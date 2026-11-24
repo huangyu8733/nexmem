@@ -1,12 +1,15 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../l10n/l10n.dart';
 
+import '../../app/avatar.dart';
 import '../../app/theme.dart';
 import '../../transport/transport.dart';
+import '../chat/chat_page.dart' show MentionCandidate;
 import '../chats/conversation.dart';
 import '../contacts/contact_service.dart';
 import '../group/group_service.dart';
@@ -24,6 +27,9 @@ class ChatProfilePanel extends StatefulWidget {
     this.selfAccount = '',
     this.onClose,
     this.onOpenGroupInfo,
+    this.onMentionMember,
+    this.onAddFriend,
+    this.allowFriendAddRevision,
   });
 
   final ConversationItem conversation;
@@ -37,6 +43,15 @@ class ChatProfilePanel extends StatefulWidget {
   final VoidCallback? onClose;
   final VoidCallback? onOpenGroupInfo;
 
+  /// 点击群成员时在聊天输入框插入 @；单聊或不需要此能力时为 null。
+  final ValueChanged<MentionCandidate>? onMentionMember;
+
+  /// 群设置允许加好友时，点击成员行的加好友按钮回调成员账号。
+  final ValueChanged<String>? onAddFriend;
+
+  /// 群加好友开关变更版本号；内核事件或管理员本机切换后递增，面板重新拉取成员表。
+  final ValueListenable<int>? allowFriendAddRevision;
+
   @override
   State<ChatProfilePanel> createState() => _ChatProfilePanelState();
 }
@@ -45,13 +60,35 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
   GroupInfo? _info;
   bool _loading = false;
   String? _error;
+  late final int _initialAllowFriendRevision;
 
   @override
   void initState() {
     super.initState();
+    _initialAllowFriendRevision = widget.allowFriendAddRevision?.value ?? 0;
+    widget.allowFriendAddRevision?.addListener(_onAllowFriendAddChanged);
     if (widget.conversation.isGroup) {
       unawaited(_load());
     }
+  }
+
+  @override
+  void dispose() {
+    widget.allowFriendAddRevision?.removeListener(_onAllowFriendAddChanged);
+    super.dispose();
+  }
+
+  /// 管理员本机切换或成员收到控制帧后壳层递增版本号，重新拉取群资料以刷新
+  /// 成员行的加好友入口。单调计数不区分群，成本可忽略且避免漏刷。
+  void _onAllowFriendAddChanged() {
+    final int? revision = widget.allowFriendAddRevision?.value;
+    if (revision == null ||
+        revision == _initialAllowFriendRevision ||
+        !mounted ||
+        !widget.conversation.isGroup) {
+      return;
+    }
+    unawaited(_load());
   }
 
   @override
@@ -343,6 +380,22 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
             member: member,
             isSelf: selfHex.isNotEmpty &&
                 normalizeAccountHex(member.account) == selfHex,
+            onMention: widget.onMentionMember == null ||
+                    (selfHex.isNotEmpty &&
+                        normalizeAccountHex(member.account) == selfHex)
+                ? null
+                : () => widget.onMentionMember!(
+                      MentionCandidate(
+                        account: member.account,
+                        name: member.label,
+                      ),
+                    ),
+            onAddFriend: !info.allowFriendAdd ||
+                    widget.onAddFriend == null ||
+                    (selfHex.isNotEmpty &&
+                        normalizeAccountHex(member.account) == selfHex)
+                ? null
+                : () => widget.onAddFriend!(member.account),
           ),
         if (info.members.isEmpty)
           Padding(
@@ -456,60 +509,92 @@ class _MemberRow extends StatelessWidget {
     super.key,
     required this.member,
     this.isSelf = false,
+    this.onMention,
+    this.onAddFriend,
   });
 
   final GroupMember member;
   final bool isSelf;
 
+  /// 非空时成员资料区可点：在聊天输入框插入 `@成员`。
+  final VoidCallback? onMention;
+
+  /// 非空时显示加好友按钮（仅群设置开启后由面板传入）。
+  final VoidCallback? onAddFriend;
+
   @override
   Widget build(BuildContext context) {
-    final Color base = NexmemColors
-        .avatarPalette[member.account.hashCode.abs() %
-            NexmemColors.avatarPalette.length];
+    final Widget profile = Row(
+      children: <Widget>[
+        AppAvatar(
+          seed: member.account,
+          label: member.label,
+          size: 32,
+        ),
+        const SizedBox(width: NexmemMetrics.space12),
+        Expanded(
+          child: Text(
+            isSelf ? context.t('{0}（我）', [member.label]) : member.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodyMedium
+                ?.copyWith(fontSize: 14),
+          ),
+        ),
+        if (member.isAdmin)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: NexmemColors.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              context.t('群主'),
+              style: const TextStyle(
+                fontSize: 11,
+                color: NexmemColors.primary,
+              ),
+            ),
+          ),
+        if (onMention != null) ...<Widget>[
+          const SizedBox(width: NexmemMetrics.space8),
+          Tooltip(
+            message: context.t('在聊天中 @ 该成员'),
+            child: Icon(
+              Icons.alternate_email,
+              size: 16,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+        ],
+      ],
+    );
     return SizedBox(
       height: 48,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space16),
+        padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space8),
         child: Row(
           children: <Widget>[
-            CircleAvatar(
-              radius: 16,
-              backgroundColor: base.withValues(alpha: 0.16),
-              child: Text(
-                member.label.isEmpty ? '?' : member.label.substring(0, 1),
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: base,
-                ),
-              ),
-            ),
-            const SizedBox(width: NexmemMetrics.space12),
             Expanded(
-              child: Text(
-                isSelf
-                    ? context.t('{0}（我）', [member.label])
-                    : member.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodyMedium
-                    ?.copyWith(fontSize: 14),
-              ),
+              child: onMention == null
+                  ? profile
+                  : InkWell(
+                      key: ValueKey<String>(
+                        'chat-profile-mention-${member.account}',
+                      ),
+                      onTap: onMention,
+                      child: profile,
+                    ),
             ),
-            if (member.isAdmin)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: NexmemColors.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(4),
+            if (onAddFriend != null)
+              IconButton(
+                key: ValueKey<String>(
+                  'chat-profile-add-friend-${member.account}',
                 ),
-                child: Text(
-                  context.t('群主'),
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: NexmemColors.primary,
-                  ),
-                ),
+                tooltip: context.t('加为好友'),
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.person_add_alt_outlined, size: 18),
+                onPressed: onAddFriend,
               ),
           ],
         ),

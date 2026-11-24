@@ -111,6 +111,7 @@ class GroupInfo {
     required this.members,
     this.announcement = '',
     this.alias = '',
+    this.allowFriendAdd = false,
   });
 
   factory GroupInfo.fromJson(Map<String, dynamic> json) {
@@ -136,6 +137,7 @@ class GroupInfo {
       storageConfigured: json['storage_configured'] == true,
       announcement: json['announcement'] is String ? json['announcement'] as String : '',
       alias: json['alias'] is String ? json['alias'] as String : '',
+      allowFriendAdd: json['allow_friend_add'] == true,
       members: members,
     );
   }
@@ -152,6 +154,10 @@ class GroupInfo {
 
   /// 本机群备注；空串表示未设置，仅本机可见（P6-27）。
   final String alias;
+
+  /// 群设置：是否允许成员互相添加好友；默认关闭。
+  final bool allowFriendAdd;
+
   final List<GroupMember> members;
 
   /// 展示标题：群备注优先于群名，均为空时回退占位（P6-27）。
@@ -253,6 +259,9 @@ abstract class GroupService {
 
   /// 设置群公告（仅管理员）：空串表示清除，最多 512 字；返回内核保存的文本（P6-26）。
   Future<String> setAnnouncement(String groupId, String announcement);
+
+  /// 开关「允许群成员互加好友」（仅管理员），返回内核保存的开关值。
+  Future<bool> setAllowFriendAdd(String groupId, bool enabled);
 
   /// 设置本机群备注：空串表示清除，最多 32 字；仅本机可见、不上行（P6-27）。
   Future<String> setAlias(String groupId, String alias);
@@ -379,6 +388,25 @@ class TransportGroupService implements GroupService {
   }
 
   @override
+  Future<bool> setAllowFriendAdd(String groupId, bool enabled) async {
+    final Map<String, dynamic> data = await transport.call(
+      'group.setAllowFriendAdd',
+      params: <String, dynamic>{
+        'group_id': groupId,
+        'enabled': enabled,
+      },
+    );
+    final Object? saved = data['enabled'];
+    if (saved is! bool) {
+      throw const NexmemException(
+        'BAD_RESPONSE',
+        'group.setAllowFriendAdd 缺少 enabled',
+      );
+    }
+    return saved;
+  }
+
+  @override
   Future<String> setAlias(String groupId, String alias) async {
     final Map<String, dynamic> data = await transport.call(
       'group.setAlias',
@@ -475,6 +503,11 @@ class UnavailableGroupService implements GroupService {
 
   @override
   Future<String> setAnnouncement(String groupId, String announcement) async {
+    throw const NexmemException('NOT_STARTED', '群聊服务尚未接入内核');
+  }
+
+  @override
+  Future<bool> setAllowFriendAdd(String groupId, bool enabled) async {
     throw const NexmemException('NOT_STARTED', '群聊服务尚未接入内核');
   }
 

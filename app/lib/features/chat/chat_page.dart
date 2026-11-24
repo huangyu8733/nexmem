@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../l10n/l10n.dart';
 
+import '../../app/avatar.dart';
 import '../../app/empty_state.dart';
 import '../../app/theme.dart';
 import '../chats/conversation.dart';
@@ -16,12 +17,117 @@ import 'chat_message.dart';
 import 'chat_store.dart';
 import 'local_image.dart';
 
+/// QQ 风格气泡：圆角矩形 + 朝向发送方的小尖角。
+///
+/// 尖角位于气泡靠头像一侧的上部。自己发出的消息尖角朝右，对方朝左。
+/// 通过自定义 [ShapeBorder] 实现，避免额外叠层影响命中测试与长按菜单。
+class _BubbleShape extends ShapeBorder {
+  const _BubbleShape({required this.mine, this.borderColor});
+
+  final bool mine;
+  final Color? borderColor;
+
+  static const double _tail = NexmemMetrics.bubbleTail;
+
+  @override
+  EdgeInsetsGeometry get dimensions => EdgeInsets.zero;
+
+  @override
+  ShapeBorder scale(double t) => this;
+
+  @override
+  Path getInnerPath(Rect rect, {TextDirection? textDirection}) =>
+      _build(rect);
+
+  @override
+  Path getOuterPath(Rect rect, {TextDirection? textDirection}) =>
+      _build(rect);
+
+  Path _build(Rect rect) {
+    final double l = rect.left;
+    final double t = rect.top;
+    final double r = rect.right;
+    final double b = rect.bottom;
+    final double radius = NexmemMetrics.radiusBubble.toDouble();
+    final double tailTop = t + 16;
+    final Path path = Path();
+    if (mine) {
+      // 尖角在右上，朝右。
+      path
+        ..moveTo(l + radius, t)
+        ..lineTo(r - radius, t)
+        ..quadraticBezierTo(r, t, r, t + radius)
+        ..lineTo(r, tailTop)
+        ..lineTo(r + _tail, tailTop + _tail * 0.6)
+        ..lineTo(r, tailTop + _tail * 1.2)
+        ..lineTo(r, b - radius)
+        ..quadraticBezierTo(r, b, r - radius, b)
+        ..lineTo(l + radius, b)
+        ..quadraticBezierTo(l, b, l, b - radius)
+        ..lineTo(l, t + radius)
+        ..quadraticBezierTo(l, t, l + radius, t);
+    } else {
+      // 尖角在左上，朝左。
+      path
+        ..moveTo(l + radius, t)
+        ..lineTo(r - radius, t)
+        ..quadraticBezierTo(r, t, r, t + radius)
+        ..lineTo(r, b - radius)
+        ..quadraticBezierTo(r, b, r - radius, b)
+        ..lineTo(l + radius, b)
+        ..quadraticBezierTo(l, b, l, b - radius)
+        ..lineTo(l, tailTop + _tail * 1.2)
+        ..lineTo(l - _tail, tailTop + _tail * 0.6)
+        ..lineTo(l, tailTop)
+        ..lineTo(l, t + radius)
+        ..quadraticBezierTo(l, t, l + radius, t);
+    }
+    return path..close();
+  }
+
+  @override
+  void paint(Canvas canvas, Rect rect, {TextDirection? textDirection}) {
+    final Color? color = borderColor;
+    if (color == null) {
+      return;
+    }
+    canvas.drawPath(
+      _build(rect),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..color = color
+        ..strokeWidth = 1,
+    );
+  }
+}
+
 /// 群聊 @ 候选成员（七-1）：[account] 是账号公钥 base64，[name] 是展示名。
 class MentionCandidate {
   const MentionCandidate({required this.account, required this.name});
 
   final String account;
   final String name;
+}
+
+/// 右侧群成员面板 → 聊天输入框的 @ 插入通道。
+///
+/// 面板只负责提交候选人；输入框监听版本号并在下一次构建周期取出，
+/// 这样两侧不需要互相持有 State，也不会因聊天页重建丢失待插入内容。
+class MentionInsertController extends ValueNotifier<int> {
+  MentionInsertController() : super(0);
+
+  MentionCandidate? _pending;
+
+  void insert(MentionCandidate candidate) {
+    _pending = candidate;
+    value++;
+  }
+
+  MentionCandidate? take() {
+    final MentionCandidate? candidate = _pending;
+    _pending = null;
+    return candidate;
+  }
 }
 
 /// 桌面 / Web 右侧聊天区空态（未选中会话）。
@@ -63,6 +169,7 @@ class ChatPage extends StatelessWidget {
     this.reportSink = const UnavailableReportSink(),
     this.diagnostics = const UnavailableDiagnosticsService(),
     this.mentionCandidates = const <MentionCandidate>[],
+    this.mentionController,
     this.onTypingChanged,
     this.onEditMessage,
   });
@@ -72,6 +179,9 @@ class ChatPage extends StatelessWidget {
 
   /// 群聊可 @ 的成员候选（七-1）；为空时不展示 @ 入口。
   final List<MentionCandidate> mentionCandidates;
+
+  /// 右侧成员面板点成员时插入 @ 的通道（与 [mentionCandidates] 配套）。
+  final MentionInsertController? mentionController;
 
   /// 单聊输入状态上报（七-3）；由壳层接到内核 dm.setTyping。
   final ValueChanged<bool>? onTypingChanged;
@@ -285,6 +395,7 @@ class ChatPage extends StatelessWidget {
             },
             onTypingChanged: onTypingChanged,
             mentionCandidates: mentionCandidates,
+            mentionController: mentionController,
             onAttachFile: () => _pickAndSendFile(context),
             onAttachImage: () => _pickAndSendImage(context),
             onAttachVoice: () => _pickAndSendVoice(context),
@@ -369,6 +480,7 @@ class ChatInputArea extends StatelessWidget {
     this.onAttachVoice,
     this.onTypingChanged,
     this.mentionCandidates = const <MentionCandidate>[],
+    this.mentionController,
   });
 
   final ConversationItem conversation;
@@ -383,6 +495,9 @@ class ChatInputArea extends StatelessWidget {
 
   /// 群聊 @ 候选成员（七-1）。
   final List<MentionCandidate> mentionCandidates;
+
+  /// 右侧成员面板触发的 @ 插入通道。
+  final MentionInsertController? mentionController;
 
   /// 「文件」工具入口；为空时提示功能未开放。
   final VoidCallback? onAttachFile;
@@ -435,6 +550,7 @@ class ChatInputArea extends StatelessWidget {
               onAttachVoice: onAttachVoice,
               onTypingChanged: onTypingChanged,
               mentionCandidates: mentionCandidates,
+              mentionController: mentionController,
             ),
           ],
         );
@@ -889,10 +1005,23 @@ class _MessageListState extends State<_MessageList> {
   /// 编辑：经内核 `msg.edit` 更新正文，成功后即时刷新本地气泡（七-2）。
   Future<void> _editMessage(ChatMessage message, String newText) async {
     final Future<void> Function(String, String)? call = widget.onEditMessage;
-    if (call != null) {
-      await call(message.id, newText);
+    try {
+      if (call != null) {
+        await call(message.id, newText);
+      }
+      widget.store.updateEdited(
+        message.id,
+        newText,
+        DateTime.now().millisecondsSinceEpoch,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.t('编辑失败：{0}', <String>['$e'])),
+        ),
+      );
     }
-    widget.store.updateEdited(message.id, newText, DateTime.now().millisecondsSinceEpoch);
   }
 
   void _scrollToLatest() {
@@ -1457,16 +1586,14 @@ class MessageBubble extends StatelessWidget {
                       horizontal: 12,
                       vertical: 8,
                     ),
-                    decoration: BoxDecoration(
+                    decoration: ShapeDecoration(
                       color: mine ? NexmemColors.primary : scheme.surface,
-                      borderRadius: BorderRadius.circular(
-                        NexmemMetrics.radiusBubble,
+                      shape: _BubbleShape(
+                        mine: mine,
+                        borderColor: mine
+                            ? null
+                            : scheme.onSurface.withValues(alpha: 0.1),
                       ),
-                      border: mine
-                          ? null
-                          : Border.all(
-                              color: scheme.onSurface.withValues(alpha: 0.08),
-                            ),
                     ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -1797,27 +1924,12 @@ class _BubbleAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color base =
-        NexmemColors.avatarPalette[(message.senderId.isEmpty
-                    ? message.conversationId
-                    : message.senderId)
-                .hashCode
-                .abs() %
-            NexmemColors.avatarPalette.length];
-    final String initial = message.senderName.isEmpty
-        ? '?'
-        : message.senderName.substring(0, 1);
-    return CircleAvatar(
-      radius: 18,
-      backgroundColor: base.withValues(alpha: 0.16),
-      child: Text(
-        initial,
-        style: TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          color: base,
-        ),
-      ),
+    return AppAvatar(
+      seed: message.senderId.isEmpty
+          ? message.conversationId
+          : message.senderId,
+      label: message.senderName,
+      size: 36,
     );
   }
 }
@@ -1876,6 +1988,7 @@ class ChatInputBar extends StatefulWidget {
     this.onAttachVoice,
     this.onTypingChanged,
     this.mentionCandidates = const <MentionCandidate>[],
+    this.mentionController,
   });
 
   /// 发送回调：[mentions] 为本次文本中 @ 到的成员账号 ID（七-1），
@@ -1887,6 +2000,9 @@ class ChatInputBar extends StatefulWidget {
 
   /// 群聊可 @ 的成员候选（七-1）；为空时不展示 @ 入口。
   final List<MentionCandidate> mentionCandidates;
+
+  /// 右侧成员面板点成员时触发插入；本组件只消费一次候选。
+  final MentionInsertController? mentionController;
 
   /// 「文件」工具入口（P2-04）；为空时提示功能未开放。
   final VoidCallback? onAttachFile;
@@ -1929,15 +2045,27 @@ class _ChatInputBarState extends State<ChatInputBar> {
   void initState() {
     super.initState();
     _controller.addListener(_onChanged);
+    widget.mentionController?.addListener(_onMentionRequested);
   }
 
   @override
   void dispose() {
     _controller.removeListener(_onChanged);
+    widget.mentionController?.removeListener(_onMentionRequested);
     _typingTimer?.cancel();
     _controller.dispose();
     _focus.dispose();
     super.dispose();
+  }
+
+  /// 右侧成员面板提交了候选人：在光标处插入 `@名字 ` 并登记提及账号。
+  void _onMentionRequested() {
+    final MentionCandidate? candidate = widget.mentionController?.take();
+    if (candidate == null || !mounted) {
+      return;
+    }
+    _insertMention(candidate);
+    _focus.requestFocus();
   }
 
   void _onChanged() {

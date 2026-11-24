@@ -9,6 +9,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'package:nexmem_app/app/core_session.dart';
 import 'package:nexmem_app/app/theme.dart';
+import 'package:nexmem_app/features/settings/profile_avatar.dart';
 import 'package:nexmem_app/features/settings/profile_image.dart';
 import 'package:nexmem_app/features/settings/profile_panel.dart';
 import 'package:nexmem_app/features/settings/settings_service.dart';
@@ -41,6 +42,22 @@ class _MemorySettings implements SettingsService {
 
   @override
   Future<int> importSnapshot(String snapshot, {bool dryRun = false}) async => 0;
+}
+
+/// 模拟内核尚未启动：前 [failures] 次读取抛 NOT_STARTED。
+class _BootingSettings extends _MemorySettings {
+  _BootingSettings(this.failures);
+
+  int failures;
+
+  @override
+  Future<String?> read(String key) async {
+    if (failures > 0) {
+      failures--;
+      throw StateError('NOT_STARTED');
+    }
+    return super.read(key);
+  }
 }
 
 Future<ProfileImageData> _sampleImage({int width = 8, int height = 8}) async {
@@ -219,5 +236,58 @@ void main() {
 
     expect(settings.values[profileNicknameSettingKey], '测试昵称');
     expect(find.text('已保存'), findsOneWidget);
+  });
+
+  testWidgets('全局头像缓存读取已保存头像，SelfAvatar 显示图片而非占位图标',
+      (WidgetTester tester) async {
+    final _MemorySettings settings = _MemorySettings();
+    final ProfileImageData image = await _sampleImage();
+    await ProfileImageStore(settings).save(ProfileImageSlot.avatar, image);
+
+    final ProfileAvatarStore store = ProfileAvatarStore.instance;
+    store.attach(settings);
+    await tester.pumpAndSettle();
+    addTearDown(() => store.resetForTest());
+
+    expect(store.bytes, isNotNull);
+    expect(store.bytes!.length, image.bytes.length);
+
+    await tester.pumpWidget(_wrap(const SelfAvatar()));
+    await tester.pumpAndSettle();
+    expect(find.byType(Image), findsOneWidget);
+  });
+
+  testWidgets('内核启动前头像读取失败，就绪后 reload 能补上头像', (
+    WidgetTester tester,
+  ) async {
+    final _BootingSettings settings = _BootingSettings(0);
+    final ProfileImageData image = await _sampleImage();
+    await ProfileImageStore(settings).save(ProfileImageSlot.avatar, image);
+    settings.failures = 1; // 模拟壳层初始化早于 core.start
+
+    final ProfileAvatarStore store = ProfileAvatarStore.instance;
+    store.resetForTest();
+    addTearDown(store.resetForTest);
+    store.attach(settings);
+    await tester.pumpAndSettle();
+    expect(store.bytes, isNull);
+
+    // 内核就绪后壳层再次 reload（见 AppShell._boot）。
+    await store.reload();
+    await tester.pumpAndSettle();
+    expect(store.bytes, isNotNull);
+    expect(store.bytes!.length, image.bytes.length);
+  });
+
+  testWidgets('未设置头像时 SelfAvatar 显示占位图标', (WidgetTester tester) async {
+    final ProfileAvatarStore store = ProfileAvatarStore.instance;
+    store.attach(_MemorySettings());
+    await tester.pumpAndSettle();
+    addTearDown(() => store.resetForTest());
+
+    await tester.pumpWidget(_wrap(const SelfAvatar()));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.person_outline), findsOneWidget);
+    expect(find.byType(Image), findsNothing);
   });
 }

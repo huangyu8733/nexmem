@@ -110,8 +110,8 @@ class AccountSecurityDialog extends StatelessWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return AlertDialog(
       title: Text(context.t('账号与安全')),
-      content: SizedBox(
-        width: 360,
+      content: responsiveDialogContent(
+        maxWidth: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -250,8 +250,8 @@ class _BackupFlowDialogState extends State<_BackupFlowDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(_isExport ? context.t('导出备份') : context.t('导入备份')),
-      content: SizedBox(
-        width: 360,
+      content: responsiveDialogContent(
+        maxWidth: 360,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,

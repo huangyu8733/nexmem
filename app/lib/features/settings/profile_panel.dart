@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -7,6 +9,7 @@ import '../../app/core_session.dart';
 import '../../app/pane_header.dart';
 import '../../app/theme.dart';
 import 'image_crop_page.dart';
+import 'profile_avatar.dart';
 import 'profile_image.dart';
 import 'scrolling_id_text.dart';
 import 'settings_service.dart';
@@ -176,6 +179,8 @@ class _ProfileBodyState extends State<ProfileBody> {
         return;
       }
       setState(() => _status = context.t('已保存'));
+      // 头像变更即时同步到全局缓存，左栏 / 我的页头像无需重建即可刷新。
+      unawaited(ProfileAvatarStore.instance.reload());
       widget.onSaved?.call();
     } on Object catch (error) {
       if (!mounted) {
@@ -245,6 +250,8 @@ class _ProfileBodyState extends State<ProfileBody> {
           data.height,
         ]);
       });
+      // 头像变更即时同步到全局缓存，左栏 / 我的页头像无需重建即可刷新。
+      unawaited(ProfileAvatarStore.instance.reload());
       widget.onSaved?.call();
     } on ProfileImageException catch (error) {
       if (mounted) {
@@ -311,6 +318,8 @@ class _ProfileBodyState extends State<ProfileBody> {
           data.height,
         ]);
       });
+      // 头像变更即时同步到全局缓存，左栏 / 我的页头像无需重建即可刷新。
+      unawaited(ProfileAvatarStore.instance.reload());
       widget.onSaved?.call();
     } on ProfileImageException catch (error) {
       if (mounted) {
@@ -338,6 +347,8 @@ class _ProfileBodyState extends State<ProfileBody> {
         _status = context.t('{0}已移除', [slot.label]);
         _error = null;
       });
+      // 头像变更即时同步到全局缓存，左栏 / 我的页头像无需重建即可刷新。
+      unawaited(ProfileAvatarStore.instance.reload());
       widget.onSaved?.call();
     } on Object catch (error) {
       if (mounted) {

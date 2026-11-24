@@ -1,8 +1,8 @@
 package coreapp
 
 // 三种发现源的本机设置：mDNS 开关、公共 DHT 开关、手动地址列表。
-// 与中继设置一致：设置页写 KV，`core.start` 时在显式入参缺失的情况下生效。
-// 显式 config 入参始终优先。
+// mDNS 与公共 DHT 默认开启；设置页写 KV，`core.start` 显式入参优先。
+// 手动地址簿始终参与解析，无需开关。
 
 import (
 	"context"
@@ -20,27 +20,42 @@ const (
 	manualAddrsSettingKey      = "net.manual_addrs"
 )
 
-// applyStoredDiscovery 在显式入参未提供时，从设置页 KV 补齐发现源配置。
+// boolSetting 把设置页 KV 转为开关值；缺失或非法值回落到 defaultValue。
+func boolSetting(raw string, defaultValue bool) bool {
+	switch strings.TrimSpace(raw) {
+	case "true":
+		return true
+	case "false":
+		return false
+	default:
+		return defaultValue
+	}
+}
+
+// applyStoredDiscovery 在显式入参未提供时套用默认开启策略与设置页 KV。
 func (a *App) applyStoredDiscovery(ctx context.Context, dao *store.DAO, cfg *Config) {
-	if dao == nil {
-		return
-	}
-	if !cfg.EnableMDNS {
-		if raw, err := dao.GetKV(ctx, mdnsEnabledSettingKey); err == nil && strings.TrimSpace(string(raw)) == "true" {
-			cfg.EnableMDNS = true
+	read := func(key string) string {
+		if dao == nil {
+			return ""
 		}
-	}
-	if !cfg.PublicDHT {
-		if raw, err := dao.GetKV(ctx, publicDHTEnabledSettingKey); err == nil && strings.TrimSpace(string(raw)) == "true" {
-			cfg.PublicDHT = true
+		raw, err := dao.GetKV(ctx, key)
+		if err != nil {
+			return ""
 		}
+		return string(raw)
+	}
+	if cfg.EnableMDNS == nil {
+		enabled := boolSetting(read(mdnsEnabledSettingKey), true)
+		cfg.EnableMDNS = &enabled
+	}
+	if cfg.PublicDHT == nil {
+		enabled := boolSetting(read(publicDHTEnabledSettingKey), true)
+		cfg.PublicDHT = &enabled
 	}
 	if len(cfg.ManualAddrs) == 0 {
-		if raw, err := dao.GetKV(ctx, manualAddrsSettingKey); err == nil {
-			addrs := splitRelayAddrs(string(raw)) // 复用换行/逗号拆分
-			if len(addrs) > 0 {
-				cfg.ManualAddrs = addrs
-			}
+		addrs := splitRelayAddrs(read(manualAddrsSettingKey)) // 复用换行/逗号拆分
+		if len(addrs) > 0 {
+			cfg.ManualAddrs = addrs
 		}
 	}
 }

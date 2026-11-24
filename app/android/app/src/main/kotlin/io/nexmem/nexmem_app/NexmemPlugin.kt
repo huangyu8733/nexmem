@@ -5,6 +5,7 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -42,6 +43,7 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
 
     private var channel: MethodChannel? = null
     private var context: Context? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
     private var activity: Activity? = null
     private var activityBinding: ActivityPluginBinding? = null
     private var pendingPick: MethodChannel.Result? = null
@@ -56,6 +58,7 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
         ch.setMethodCallHandler(this)
         channel = ch
         context = binding.applicationContext
+        acquireMulticastLock(context!!)
         NexmemCore.attach { payload ->
             if (!detached.get()) {
                 ch.invokeMethod("event", payload)
@@ -69,6 +72,31 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
         channel?.setMethodCallHandler(null)
         channel = null
         context = null
+        releaseMulticastLock()
+    }
+
+    /**
+     * Android 默认过滤 Wi-Fi 组播包。mDNS 依赖 224.0.0.251:5353，
+     * 必须持有 MulticastLock 才能收发局域网发现报文。
+     */
+    private fun acquireMulticastLock(ctx: Context) {
+        val wifi = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
+        try {
+            val lock = wifi.createMulticastLock("nexmem-mdns")
+            lock.setReferenceCounted(true)
+            lock.acquire()
+            multicastLock = lock
+        } catch (_: Throwable) {
+            // 设备不支持或用户策略禁止时静默降级为其他发现源。
+        }
+    }
+
+    private fun releaseMulticastLock() {
+        try {
+            multicastLock?.release()
+        } catch (_: Throwable) {
+        }
+        multicastLock = null
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {

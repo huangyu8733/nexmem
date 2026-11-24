@@ -167,8 +167,8 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
     final ColorScheme scheme = theme.colorScheme;
     return AlertDialog(
       title: Text(context.t('中继设置')),
-      content: SizedBox(
-        width: 420,
+      content: responsiveDialogContent(
+        maxWidth: 420,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,

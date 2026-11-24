@@ -131,6 +131,10 @@ type Options struct {
 	// OnGroupMeta 处理经单聊通道收到的群密钥信封（P4-08）。
 	// 返回错误时对端会收到 ACK 拒收；回调在接收协程执行，需自行保证线程安全。
 	OnGroupMeta GroupMetaHook
+	// OnControlText 在入站文本落库前回调，用于拦截社交控制帧（好友申请/入群审批等）。
+	// 返回 true 表示该文本已被消费为控制帧：不落消息表、不产生聊天气泡。
+	// 回调在接收协程执行，需自行保证线程安全。
+	OnControlText func(ctx context.Context, sender []byte, text string) bool
 	// OnMessage 在入站消息落库成功后回调（P1-20），用于上层发出 message.new；
 	// 回调在接收协程执行，需自行保证线程安全。
 	OnMessage func(InboundEvent)
@@ -223,6 +227,8 @@ type Service struct {
 
 	// 群密钥信封（P4-08）。
 	onGroupMeta GroupMetaHook
+	// 入站文本控制帧回调（社交信令）。
+	onControlText func(ctx context.Context, sender []byte, text string) bool
 	// 入站消息回调（P1-20）。
 	onMessage func(InboundEvent)
 	// 已读回执回调（P6-07）。
@@ -328,6 +334,7 @@ func New(opt Options) (*Service, error) {
 		deleteAfterRead: opt.DeleteAfterRead,
 		fetchEvery:      fetchEvery,
 		onGroupMeta:     opt.OnGroupMeta,
+		onControlText:   opt.OnControlText,
 		onMessage:       opt.OnMessage,
 		onRead:          opt.OnRead,
 		onReadSync:      opt.OnReadSync,

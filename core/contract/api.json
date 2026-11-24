@@ -329,6 +329,33 @@
       "implemented": false
     },
     {
+      "name": "contact.delete",
+      "summary": "删除本机联系人（含备注与分组）；不影响对端，也不删除聊天记录",
+      "params": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer"
+        ]
+      },
+      "implemented": false
+    },
+    {
       "name": "contact.list",
       "summary": "列出本地联系人",
       "params": {
@@ -936,6 +963,164 @@
       "implemented": false
     },
     {
+      "name": "friend.request.clear",
+      "summary": "清空本机所有好友申请记录",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "friend.request.count",
+      "summary": "统计待处理的好友申请数量，供入口角标使用",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "friend.request.delete",
+      "summary": "删除一条好友申请记录（仅本机可见记录，不影响对方）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "friend.request.list",
+      "summary": "列出与本机相关的好友申请，可按状态过滤",
+      "params": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "friend.request.respond",
+      "summary": "同意或拒绝一条好友申请；同意后自动把对方写入通讯录",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "accept": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "accept"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "friend.request.send",
+      "summary": "向指定账号发送好友申请（带验证消息），对方同意后双方互加好友",
+      "params": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "implemented": false
+    },
+    {
       "name": "fs.download",
       "summary": "从种子并行下载共享到本地目录：多分片多连接加速、SHA-256 校验、完成后本机自动做种",
       "params": {
@@ -1279,6 +1464,154 @@
       "implemented": false
     },
     {
+      "name": "group.join.clear",
+      "summary": "清空本机所有入群申请记录",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.join.delete",
+      "summary": "删除一条入群申请记录（仅本机可见记录）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.join.list",
+      "summary": "列出与本机相关的入群申请，可按群号与状态过滤",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.join.request",
+      "summary": "向群主发起入群申请（带验证消息）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "group_title": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "owner"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.join.respond",
+      "summary": "管理员同意或拒绝入群申请；同意后自动把申请人加入群并投递群密钥",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "accept": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "accept"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "implemented": false
+    },
+    {
       "name": "group.leave",
       "summary": "退出群聊：清理本地群记录、密钥与订阅，之后不再接收该群消息",
       "params": {
@@ -1321,8 +1654,41 @@
       "implemented": false
     },
     {
+      "name": "group.member.set",
+      "summary": "设置群成员角色（owner/admin/member）、头衔与禁言时长（分钟，负数解除）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "mute_minutes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group_id",
+          "account"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {}
+      },
+      "implemented": false
+    },
+    {
       "name": "group.members",
-      "summary": "列出群成员与密钥版本；`storage_configured` 供客户端展示群盘未配置提示，`announcement` 为本机群公告",
+      "summary": "列出群成员与密钥版本；`storage_configured` 供客户端展示群盘未配置提示，`announcement` 为本机群公告，`allow_friend_add` 表示是否允许成员互加好友",
       "params": {
         "type": "object",
         "properties": {
@@ -1348,6 +1714,9 @@
           },
           "announcement": {
             "type": "string"
+          },
+          "allow_friend_add": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -1456,6 +1825,37 @@
       "implemented": false
     },
     {
+      "name": "group.setAllowFriendAdd",
+      "summary": "管理员开关「允许群成员互相加好友」（默认关闭）；开启后成员资料可发起好友申请",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "group_id",
+          "enabled"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "implemented": false
+    },
+    {
       "name": "group.setAnnouncement",
       "summary": "设置群公告（仅管理员）：空串表示清除，最多 512 字；成员离线可补收",
       "params": {
@@ -1527,6 +1927,119 @@
       },
       "result": {
         "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "moment.comment",
+      "summary": "评论一条动态",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {}
+      },
+      "implemented": false
+    },
+    {
+      "name": "moment.like",
+      "summary": "对动态点赞或取消点赞",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "unlike": {
+            "type": "boolean"
+          },
+          "voter": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {}
+      },
+      "implemented": false
+    },
+    {
+      "name": "moment.list",
+      "summary": "拉取动态流（最新在前）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "moment.post",
+      "summary": "发布一条好友动态，并广播给指定好友",
+      "params": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "attachments": {
+            "type": "string"
+          },
+          "peers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
       },
       "implemented": false
     },
@@ -1869,6 +2382,242 @@
       },
       "result": {
         "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "notification.clear",
+      "summary": "清空全部系统通知",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "notification.delete",
+      "summary": "删除一条系统通知",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "notification.list",
+      "summary": "列出系统通知（好友申请结果、入群结果等）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer"
+          },
+          "unread_only": {
+            "type": "boolean"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "unread": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "unread"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "notification.read",
+      "summary": "标记通知为已读；id 为空表示全部已读",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "properties": {}
+      },
+      "implemented": false
+    },
+    {
+      "name": "poll.create",
+      "summary": "在群内发起投票",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "closes_at": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group_id",
+          "question",
+          "options"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "poll.list",
+      "summary": "列出群内投票",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group_id"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "poll.vote",
+      "summary": "对群投票投票（同一账号可改票）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "option": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "option"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "votes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "votes"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "presence.list",
+      "summary": "查询一批账号的在线状态（基于地址解析与本机缓存）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "accounts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "accounts"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
       },
       "implemented": false
     },
@@ -2685,6 +3434,145 @@
         },
         "required": [
           "group_id"
+        ]
+      }
+    },
+    {
+      "type": "group.allowFriendAddChanged",
+      "description": "管理员开关群成员互加好友权限，成员按 group_id 刷新本机设置（不产生气泡）",
+      "data": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "group_id",
+          "enabled"
+        ]
+      }
+    },
+    {
+      "type": "friend.request.new",
+      "description": "收到新的好友申请，UI 刷新申请列表与角标",
+      "data": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "peer": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "peer"
+        ]
+      }
+    },
+    {
+      "type": "friend.request.resolved",
+      "description": "好友申请被同意或拒绝，UI 刷新申请状态",
+      "data": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "accepted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "accepted"
+        ]
+      }
+    },
+    {
+      "type": "group.joinRequested",
+      "description": "收到入群申请，管理员 UI 刷新审批列表",
+      "data": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "group_id": {
+            "type": "string"
+          },
+          "peer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "group_id",
+          "peer"
+        ]
+      }
+    },
+    {
+      "type": "group.joinResolved",
+      "description": "入群申请被同意或拒绝",
+      "data": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "group_id": {
+            "type": "string"
+          },
+          "accepted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "group_id",
+          "accepted"
+        ]
+      }
+    },
+    {
+      "type": "moment.new",
+      "description": "好友发布新动态",
+      "data": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "peer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "type": "poll.updated",
+      "description": "群投票有新投票，UI 刷新结果",
+      "data": {
+        "type": "object",
+        "properties": {
+          "poll_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "poll_id"
         ]
       }
     }

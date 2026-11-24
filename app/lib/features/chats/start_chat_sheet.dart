@@ -82,6 +82,105 @@ Future<NewGroupRequest?> showCreateGroupDialog(
   );
 }
 
+/// 轻量建群对话框：只需填写群名即可创建空群，不依赖通讯录。
+///
+/// 群聊页右上角入口使用；建好后可在群资料页邀请成员或分享群信息拉人。
+/// 取消或空名返回 null。
+Future<String?> showCreateGroupByNameDialog(BuildContext context) {
+  return showDialog<String>(
+    context: context,
+    builder: (BuildContext dialogContext) => const _CreateGroupByNameDialog(),
+  );
+}
+
+class _CreateGroupByNameDialog extends StatefulWidget {
+  const _CreateGroupByNameDialog();
+
+  @override
+  State<_CreateGroupByNameDialog> createState() =>
+      _CreateGroupByNameDialogState();
+}
+
+class _CreateGroupByNameDialogState extends State<_CreateGroupByNameDialog> {
+  final TextEditingController _controller = TextEditingController();
+  String? _validation;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final String title = _controller.text.trim();
+    if (title.isEmpty) {
+      setState(() => _validation = context.t('请输入群名称'));
+      return;
+    }
+    Navigator.of(context).pop(title);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      key: const ValueKey<String>('create-group-by-name-dialog'),
+      title: Text(context.t('创建群聊')),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          TextField(
+            key: const ValueKey<String>('create-group-by-name-title'),
+            controller: _controller,
+            autofocus: true,
+            maxLength: 30,
+            decoration: InputDecoration(
+              labelText: context.t('群名称'),
+              hintText: context.t('请输入群名称'),
+              isDense: true,
+            ),
+            onChanged: (_) {
+              if (_validation != null) {
+                setState(() => _validation = null);
+              }
+            },
+            onSubmitted: (_) => _submit(),
+          ),
+          if (_validation != null)
+            Padding(
+              padding: const EdgeInsets.only(top: NexmemMetrics.space4),
+              child: Text(
+                _validation!,
+                key: const ValueKey<String>('create-group-by-name-error'),
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: NexmemColors.danger,
+                ),
+              ),
+            ),
+          const SizedBox(height: NexmemMetrics.space8),
+          Text(
+            context.t('创建后可邀请成员或分享群信息拉人入群'),
+            key: const ValueKey<String>('create-group-by-name-hint'),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(context.t('取消')),
+        ),
+        FilledButton(
+          key: const ValueKey<String>('create-group-by-name-confirm'),
+          onPressed: _submit,
+          child: Text(context.t('创建')),
+        ),
+      ],
+    );
+  }
+}
+
 class _ContactPickerDialog extends StatefulWidget {
   const _ContactPickerDialog({required this.service});
 
@@ -299,10 +398,7 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
       setState(() => _validation = context.t('请输入群名称'));
       return;
     }
-    if (_selected.isEmpty) {
-      setState(() => _validation = context.t('请至少选择一名成员'));
-      return;
-    }
+    // 允许先建空群再邀请成员（与 QQ 习惯一致）；群主始终自动入群。
     final List<Contact> members = <Contact>[
       for (final Contact contact in _contacts)
         if (_selected.contains(contact.id)) contact,

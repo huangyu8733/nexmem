@@ -1,4 +1,5 @@
 // P4-09 验收：`+` 建群入口、群资料页与 `group.*` 契约映射。
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -70,6 +71,9 @@ class _FakeContacts implements ContactService {
       throw UnimplementedError();
 
   @override
+  Future<void> remove(String account) async => throw UnimplementedError();
+
+  @override
   Future<DeviceListResult> devices({String? peer}) async =>
       const DeviceListResult(items: <DeviceInfo>[], found: true, self: true);
 }
@@ -89,6 +93,7 @@ class _FakeGroups implements GroupService {
       <(String, GroupStorageConfig)>[];
   final List<String> storageRemoved = <String>[];
   final List<(String, String)> announcements = <(String, String)>[];
+  final List<(String, bool)> allowFriendAddUpdates = <(String, bool)>[];
   final List<(String, String)> aliases = <(String, String)>[];
 
   @override
@@ -134,6 +139,7 @@ class _FakeGroups implements GroupService {
         storageConfigured: current.storageConfigured,
         announcement: current.announcement,
         alias: current.alias,
+        allowFriendAdd: current.allowFriendAdd,
         members: <GroupMember>[
           ...current.members,
           GroupMember(account: account, role: 'member'),
@@ -155,6 +161,7 @@ class _FakeGroups implements GroupService {
         storageConfigured: current.storageConfigured,
         announcement: current.announcement,
         alias: current.alias,
+        allowFriendAdd: current.allowFriendAdd,
         members: current.members
             .where((GroupMember m) => m.account != account)
             .toList(),
@@ -188,6 +195,7 @@ class _FakeGroups implements GroupService {
         storageConfigured: true,
         announcement: current.announcement,
         alias: current.alias,
+        allowFriendAdd: current.allowFriendAdd,
         members: current.members,
       );
     }
@@ -205,6 +213,7 @@ class _FakeGroups implements GroupService {
         storageConfigured: false,
         announcement: current.announcement,
         alias: current.alias,
+        allowFriendAdd: current.allowFriendAdd,
         members: current.members,
       );
     }
@@ -223,10 +232,30 @@ class _FakeGroups implements GroupService {
         storageConfigured: current.storageConfigured,
         announcement: announcement,
         alias: current.alias,
+        allowFriendAdd: current.allowFriendAdd,
         members: current.members,
       );
     }
     return announcement;
+  }
+
+  @override
+  Future<bool> setAllowFriendAdd(String groupId, bool enabled) async {
+    allowFriendAddUpdates.add((groupId, enabled));
+    final GroupInfo? current = info;
+    if (current != null) {
+      info = GroupInfo(
+        groupId: current.groupId,
+        title: current.title,
+        keyVersion: current.keyVersion,
+        storageConfigured: current.storageConfigured,
+        announcement: current.announcement,
+        alias: current.alias,
+        allowFriendAdd: enabled,
+        members: current.members,
+      );
+    }
+    return enabled;
   }
 
   @override
@@ -497,6 +526,58 @@ void main() {
       find.byKey(const ValueKey<String>('group-member-member-account')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('群资料页分享群信息：复制含群号与群主的文本', (
+    WidgetTester tester,
+  ) async {
+    final _FakeGroups groups = _FakeGroups(
+      info: const GroupInfo(
+        groupId: 'Z3JvdXA',
+        title: '周末爬山',
+        keyVersion: 2,
+        storageConfigured: true,
+        members: <GroupMember>[
+          GroupMember(account: 'admin-account', role: 'admin'),
+          GroupMember(account: 'member-account', role: 'member'),
+        ],
+      ),
+    );
+    String? clipboard;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (
+      MethodCall call,
+    ) async {
+      if (call.method == 'Clipboard.setData') {
+        clipboard = (call.arguments as Map)['text'] as String;
+      }
+      return null;
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: NexmemTheme.light(),
+        home: GroupInfoPage(
+          groupId: 'Z3JvdXA',
+          title: '周末爬山',
+          service: groups,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey<String>('group-share-button')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey<String>('group-share-button')));
+    await tester.pumpAndSettle();
+
+    expect(clipboard, isNotNull);
+    expect(clipboard, contains('Z3JvdXA'));
+    expect(clipboard, contains('周末爬山'));
+    expect(clipboard, contains('admin-account'));
   });
 
   testWidgets('A-03 群公告事件推送后群资料页重新拉取并刷新公告', (
@@ -854,7 +935,7 @@ void main() {
     expect(createdTitle, '周末爬山');
   });
 
-  testWidgets('建群对话框校验：空群名与空成员均被拦截', (WidgetTester tester) async {
+  testWidgets('建群对话框校验：空群名被拦截，允许创建空群', (WidgetTester tester) async {
     final _FakeGroups groups = _FakeGroups();
 
     await tester.pumpWidget(
@@ -886,9 +967,11 @@ void main() {
     await tester.tap(
       find.byKey(const ValueKey<String>('create-group-confirm')),
     );
-    await tester.pump();
-    expect(find.text('请至少选择一名成员'), findsOneWidget);
-    expect(groups.created, isEmpty);
+    await tester.pumpAndSettle();
+    // 与 QQ 一致：允许先建空群，之后再邀请成员；群主自动入群。
+    expect(groups.created, hasLength(1));
+    expect(groups.created.single.$1, '周末爬山');
+    expect(groups.created.single.$2, isEmpty);
   });
 
   testWidgets('管理员可邀请联系人并把成员移出群', (WidgetTester tester) async {
@@ -1269,6 +1352,70 @@ void main() {
     expect(openedId, 'Alpha');
     expect(openedTitle, '周末爬山');
     expect(find.byType(GroupListPage), findsNothing);
+  });
+
+  testWidgets('群列表右上角直接建空群：只需群名，成功后回调打开新群',
+      (WidgetTester tester) async {
+    final _FakeGroups groups = _FakeGroups();
+    String? createdId;
+    String? createdTitle;
+
+    await tester.pumpWidget(
+      _wrap(
+        GroupListPage(
+          service: groups,
+          onGroupCreated: (String groupId, String title) {
+            createdId = groupId;
+            createdTitle = title;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 右上角创建入口存在，空态提示指向右上角。
+    expect(find.byKey(const ValueKey<String>('group-list-create')), findsOneWidget);
+    expect(find.text('还没有群聊，点右上角创建'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey<String>('group-list-create')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('create-group-by-name-dialog')),
+      findsOneWidget,
+    );
+    // 轻量对话框只有群名输入框，不出现联系人勾选列表。
+    expect(
+      find.byKey(const ValueKey<String>('create-group-by-name-title')),
+      findsOneWidget,
+    );
+    expect(find.byType(CheckboxListTile), findsNothing);
+
+    // 空名被拦截。
+    await tester.tap(
+      find.byKey(const ValueKey<String>('create-group-by-name-confirm')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('create-group-by-name-error')),
+      findsOneWidget,
+    );
+    expect(groups.created, isEmpty);
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('create-group-by-name-title')),
+      '新群',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('create-group-by-name-confirm')),
+    );
+    await tester.pumpAndSettle();
+
+    // 以空成员建群，成功后回调打开新会话。
+    expect(groups.created.length, 1);
+    expect(groups.created.single.$1, '新群');
+    expect(groups.created.single.$2, isEmpty);
+    expect(createdId, 'Z3JvdXA');
+    expect(createdTitle, '新群');
   });
 
   testWidgets('群列表加载失败可重试', (WidgetTester tester) async {

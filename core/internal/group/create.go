@@ -42,8 +42,10 @@ type GroupInfo struct {
 	// Announcement 是本机记录的群公告；空串表示未设置。
 	Announcement string
 	// Alias 是本机群备注；空串表示未设置，仅本机可见、不上行。
-	Alias   string
-	Members []MemberInfo
+	Alias string
+	// AllowFriendAdd 是群设置：是否允许成员互相添加好友（默认关闭）。
+	AllowFriendAdd bool
+	Members        []MemberInfo
 }
 
 // CreateGroup 创建群聊并分发 v1 群密钥。
@@ -123,6 +125,7 @@ func (s *Service) GroupInfo(ctx context.Context, groupID []byte) (GroupInfo, err
 		StorageConfigured: len(g.StorageCfgEnc) > 0,
 		Announcement:      g.Announcement,
 		Alias:             g.Alias,
+		AllowFriendAdd:    g.AllowFriendAdd,
 		Members:           make([]MemberInfo, 0, len(members)),
 	}
 	for _, m := range members {

@@ -93,6 +93,10 @@ void main() {
     expect(find.text('aaaaaa…'), findsOneWidget);
     expect(find.text('bbbbbb…（我）'), findsOneWidget);
     expect(find.text('群主'), findsOneWidget);
+    expect(
+      find.byKey(ValueKey<String>("chat-profile-add-friend-${_hex('a')}")),
+      findsNothing,
+    );
 
     await tester.tap(find.byKey(const ValueKey<String>('chat-profile-open-group')));
     expect(opened, isTrue);
@@ -137,5 +141,47 @@ void main() {
     expect(find.text(shortAccountLabel(_hex('c'))), findsOneWidget);
     expect(find.text('在线'), findsOneWidget);
     expect(find.text('消息端到端加密，仅你与对方可读'), findsOneWidget);
+  });
+
+  testWidgets('群设置允许时成员行可发起好友申请，自己无入口', (
+    WidgetTester tester,
+  ) async {
+    final GroupInfo info = GroupInfo(
+      groupId: 'g1',
+      title: '项目群',
+      keyVersion: 3,
+      storageConfigured: true,
+      allowFriendAdd: true,
+      members: <GroupMember>[
+        GroupMember(account: _hex('a'), role: 'admin'),
+        GroupMember(account: _hex('b'), role: 'member'),
+      ],
+    );
+    final List<String> added = <String>[];
+
+    await tester.pumpWidget(
+      _wrap(
+        ChatProfilePanel(
+          conversation: _groupConversation,
+          groups: _FakeGroups(info),
+          selfAccount: _hex('b'),
+          onAddFriend: added.add,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final Finder addA = find.byKey(
+      ValueKey<String>("chat-profile-add-friend-${_hex('a')}"),
+    );
+    expect(addA, findsOneWidget);
+    expect(
+      find.byKey(ValueKey<String>("chat-profile-add-friend-${_hex('b')}")),
+      findsNothing,
+    );
+
+    await tester.tap(addA);
+    await tester.pumpAndSettle();
+    expect(added, <String>[_hex('a')]);
   });
 }

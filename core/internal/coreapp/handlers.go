@@ -19,6 +19,8 @@ func (a *App) startHandler() gateway.HandlerFunc {
 				return nil, gateway.NewError(gateway.CodeInvalidArg, "core.start 参数不是合法 JSON: %v", err)
 			}
 		}
+		// 客户端未显式配置时发现源默认开启；显式 false 仍可关闭。
+		req.Config.applyDiscoveryDefaults = true
 		state, err := a.Start(ctx, req.Config)
 		if err != nil {
 			if errors.Is(err, ErrDataDirRequired) {

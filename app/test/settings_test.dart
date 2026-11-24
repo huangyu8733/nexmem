@@ -15,6 +15,18 @@ import 'package:nexmem_app/features/settings/settings_page.dart';
 import 'package:nexmem_app/features/settings/settings_service.dart';
 import 'package:nexmem_app/transport/transport.dart';
 
+
+/// 设置页新增顶部快捷入口后，部分菜单需要在列表中滚动后才能点击。
+Future<void> _tapSetting(WidgetTester tester, String key) async {
+  final Finder finder = find.byKey(ValueKey<String>(key));
+  await tester.scrollUntilVisible(
+    finder,
+    240,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await tester.tap(finder);
+}
+
 Widget _wrap(Widget child) {
   return MaterialApp(
     theme: NexmemTheme.light(),
@@ -282,7 +294,7 @@ void main() {
       _wrap(SettingsPage(diagnostics: _FakeDiagnostics(value: _sample))),
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('settings-network')));
+    await _tapSetting(tester, 'settings-network');
     await tester.pumpAndSettle();
 
     expect(find.text('网络诊断'), findsOneWidget);
@@ -303,7 +315,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('settings-network')));
+    await _tapSetting(tester, 'settings-network');
     await tester.pumpAndSettle();
 
     expect(find.text('诊断能力尚未接入内核'), findsOneWidget);
@@ -336,7 +348,7 @@ void main() {
       ping: ping,
     )));
 
-    await tester.tap(find.byKey(const ValueKey<String>('settings-network')));
+    await _tapSetting(tester, 'settings-network');
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey<String>('settings-network-ping')),
@@ -358,7 +370,7 @@ void main() {
       ping: ping,
     )));
 
-    await tester.tap(find.byKey(const ValueKey<String>('settings-network')));
+    await _tapSetting(tester, 'settings-network');
     await tester.pumpAndSettle();
     await tester.tap(find.text('测试'));
     await tester.pumpAndSettle();
@@ -373,11 +385,11 @@ void main() {
     );
     await tester.pumpWidget(_wrap(SettingsPage(diagnostics: diagnostics)));
 
-    await tester.tap(find.byKey(const ValueKey<String>('settings-about')));
+    await _tapSetting(tester, 'settings-about');
     await tester.pumpAndSettle();
     expect(find.text('版本 1.1.0'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey<String>('about-export')));
+    await _tapSetting(tester, 'about-export');
     await tester.pumpAndSettle();
 
     expect(diagnostics.exportCalls, 1);
@@ -391,9 +403,9 @@ void main() {
     );
     await tester.pumpWidget(_wrap(SettingsPage(diagnostics: diagnostics)));
 
-    await tester.tap(find.byKey(const ValueKey<String>('settings-about')));
+    await _tapSetting(tester, 'settings-about');
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey<String>('about-export')));
+    await _tapSetting(tester, 'about-export');
     await tester.pumpAndSettle();
 
     expect(find.text('诊断导出失败（IO_ERROR），请稍后再试'), findsOneWidget);
@@ -409,9 +421,9 @@ void main() {
       _wrap(SettingsPage(diagnostics: diagnostics, reportSink: sink)),
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('settings-about')));
+    await _tapSetting(tester, 'settings-about');
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey<String>('about-report')));
+    await _tapSetting(tester, 'about-report');
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey<String>('report-reason-spam')));
@@ -465,9 +477,9 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('settings-about')));
+    await _tapSetting(tester, 'settings-about');
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey<String>('about-report')));
+    await _tapSetting(tester, 'about-report');
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey<String>('report-submit')));
     await tester.pumpAndSettle();
@@ -620,7 +632,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('settings-appearance')));
+    await _tapSetting(tester, 'settings-appearance');
     await tester.pumpAndSettle();
     expect(find.byType(AppearanceDialog), findsOneWidget);
     expect(find.text('跟随系统'), findsOneWidget);
@@ -665,7 +677,7 @@ void main() {
     });
     await tester.pumpWidget(_wrap(SettingsPage(coreInfo: info)));
 
-    await tester.tap(find.byKey(const ValueKey<String>('settings-about')));
+    await _tapSetting(tester, 'settings-about');
     await tester.pumpAndSettle();
 
     expect(find.text('版本 1.1.0'), findsOneWidget);
@@ -686,7 +698,7 @@ void main() {
 
   testWidgets('关于页在内核未接入时显示未知版本', (WidgetTester tester) async {
     await tester.pumpWidget(_wrap(const SettingsPage()));
-    await tester.tap(find.byKey(const ValueKey<String>('settings-about')));
+    await _tapSetting(tester, 'settings-about');
     await tester.pumpAndSettle();
 
     expect(
@@ -706,7 +718,7 @@ void main() {
     });
     await tester.pumpWidget(_wrap(SettingsPage(coreInfo: info)));
 
-    await tester.tap(find.byKey(const ValueKey<String>('settings-about')));
+    await _tapSetting(tester, 'settings-about');
     await tester.pumpAndSettle();
 
     expect(
@@ -888,7 +900,7 @@ void main() {
 
     expect(find.byKey(const ValueKey<String>('settings-profile')), findsOneWidget);
     // 账号卡片点击打开只读资料（不含编辑/保存）。
-    await tester.tap(find.byKey(const ValueKey<String>('settings-account-name')));
+    await _tapSetting(tester, 'settings-account-name');
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey<String>('profile-view-name')), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('profile-save')), findsNothing);
@@ -896,7 +908,7 @@ void main() {
     // 关闭只读弹窗，再从「个人资料」菜单项进入编辑。
     await tester.tap(find.byIcon(Icons.close));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey<String>('settings-profile')));
+    await _tapSetting(tester, 'settings-profile');
     await tester.pumpAndSettle();
 
     await tester.scrollUntilVisible(

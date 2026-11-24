@@ -27,24 +27,34 @@ class ConnectionStatusBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return Container(
-      height: 24,
+      height: 26,
       width: double.infinity,
       color: scheme.surface,
-      padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space12),
+      padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space16),
       alignment: AlignmentDirectional.centerStart,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(color: status.color, shape: BoxShape.circle),
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(
+              color: status.color,
+              shape: BoxShape.circle,
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: status.color.withValues(alpha: 0.45),
+                  blurRadius: 5,
+                ),
+              ],
+            ),
           ),
           const SizedBox(width: NexmemMetrics.space8),
           Text(
             context.t(status.label),
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
                   fontSize: 11,
+                  fontWeight: FontWeight.w500,
                   color: scheme.onSurface.withValues(alpha: 0.7),
                 ),
           ),

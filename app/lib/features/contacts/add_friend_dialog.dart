@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/core_session.dart';
 import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
@@ -43,6 +44,7 @@ class AddFriendDialog extends StatefulWidget {
     required this.service,
     this.initialAccount = '',
     this.initialAlias = '',
+    this.session,
   });
 
   final ContactService service;
@@ -50,6 +52,11 @@ class AddFriendDialog extends StatefulWidget {
   /// 二维码名片解析后的预填账号与备注（P6-39）。
   final String initialAccount;
   final String initialAlias;
+
+  /// 传入时用「好友申请」流程（发送验证消息），否则直接添加（P2-06）。
+  final CoreSession? session;
+
+  bool get _useRequest => session != null;
 
   @override
   State<AddFriendDialog> createState() => _AddFriendDialogState();
@@ -62,6 +69,7 @@ class _AddFriendDialogState extends State<AddFriendDialog> {
   late final TextEditingController _alias = TextEditingController(
     text: widget.initialAlias,
   );
+  late final TextEditingController _message = TextEditingController();
   bool _busy = false;
   String? _error;
 
@@ -69,6 +77,7 @@ class _AddFriendDialogState extends State<AddFriendDialog> {
   void dispose() {
     _account.dispose();
     _alias.dispose();
+    _message.dispose();
     super.dispose();
   }
 
@@ -84,7 +93,14 @@ class _AddFriendDialogState extends State<AddFriendDialog> {
       _error = null;
     });
     try {
-      await widget.service.add(account, alias: _alias.text.trim());
+      if (widget._useRequest) {
+        await widget.session!.social.sendFriendRequest(
+          account,
+          message: _message.text.trim(),
+        );
+      } else {
+        await widget.service.add(account, alias: _alias.text.trim());
+      }
       if (mounted) {
         Navigator.of(context).pop(true);
       }
@@ -117,16 +133,32 @@ class _AddFriendDialogState extends State<AddFriendDialog> {
               border: const OutlineInputBorder(),
             ),
           ),
-          const SizedBox(height: NexmemMetrics.space12),
-          TextField(
-            key: const ValueKey<String>('contact-add-alias'),
-            controller: _alias,
-            decoration: InputDecoration(
-              labelText: context.t('备注（可选）'),
-              helperText: context.t('仅本机可见'),
-              border: const OutlineInputBorder(),
+          if (widget._useRequest)
+            Padding(
+              padding: const EdgeInsets.only(top: NexmemMetrics.space12),
+              child: TextField(
+                key: const ValueKey<String>('contact-add-message'),
+                controller: _message,
+                decoration: InputDecoration(
+                  labelText: context.t('验证消息（可选）'),
+                  helperText: context.t('对方同意申请时会看到'),
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(top: NexmemMetrics.space12),
+              child: TextField(
+                key: const ValueKey<String>('contact-add-alias'),
+                controller: _alias,
+                decoration: InputDecoration(
+                  labelText: context.t('备注（可选）'),
+                  helperText: context.t('仅本机可见'),
+                  border: const OutlineInputBorder(),
+                ),
+              ),
             ),
-          ),
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: NexmemMetrics.space12),
@@ -146,7 +178,11 @@ class _AddFriendDialogState extends State<AddFriendDialog> {
         FilledButton(
           key: const ValueKey<String>('contact-add-submit'),
           onPressed: _busy ? null : _submit,
-          child: Text(_busy ? context.t('添加中…') : context.t('添加')),
+          child: Text(_busy
+              ? context.t('发送中…')
+              : widget._useRequest
+                  ? context.t('发送申请')
+                  : context.t('添加')),
         ),
       ],
     );

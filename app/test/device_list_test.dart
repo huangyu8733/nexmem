@@ -78,6 +78,9 @@ class _FakeContactService implements ContactService {
 
   @override
   Future<void> setBlocked(String account, bool blocked) async {}
+
+  @override
+  Future<void> remove(String account) async {}
 }
 
 const DeviceInfo _phone = DeviceInfo(

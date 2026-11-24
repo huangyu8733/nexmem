@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:nexmem_app/app/app.dart';
 import 'package:nexmem_app/app/connection_status.dart';
 import 'package:nexmem_app/app/core_session.dart';
+import 'package:nexmem_app/features/settings/settings_pane.dart';
 import 'package:nexmem_app/transport/transport.dart';
 
 /// 提供 account.me / settings.get / conversation.list 的最小内核替身。
@@ -68,7 +69,7 @@ Future<void> _pumpWithSessionAt(
 }
 
 void main() {
-  testWidgets('移动端宽度使用底部三 Tab', (WidgetTester tester) async {
+  testWidgets('移动端宽度使用底部四 Tab', (WidgetTester tester) async {
     await _pumpAt(tester, const Size(390, 844));
 
     expect(find.byType(NavigationBar), findsOneWidget);
@@ -82,6 +83,18 @@ void main() {
     expect(find.byType(NavigationBar), findsNothing);
     expect(find.text('选择一个会话开始聊天'), findsOneWidget);
     expect(find.text('消息'), findsWidgets);
+  });
+
+  testWidgets('1079/1080px 宽屏断点切换列表栏宽度', (WidgetTester tester) async {
+    await _pumpAt(tester, const Size(1079, 800));
+    final double narrowPane =
+        tester.getSize(find.byKey(const ValueKey<String>('desktop-pages'))).width;
+
+    await _pumpAt(tester, const Size(1080, 800));
+    final double widePane =
+        tester.getSize(find.byKey(const ValueKey<String>('desktop-pages'))).width;
+
+    expect(widePane, greaterThan(narrowPane));
   });
 
   testWidgets('第 719px 仍为移动布局，720px 切换为三栏', (WidgetTester tester) async {
@@ -232,5 +245,169 @@ void main() {
       find.byKey(const ValueKey<String>('pane-friends-empty')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('移动端文件入口位于设置之前，打开后展示共享/传输/下载',
+      (WidgetTester tester) async {
+    await _pumpWithSessionAt(
+      tester,
+      const Size(390, 844),
+      CoreSession(_ProfileTransport()),
+    );
+
+    final NavigationBar nav = tester.widget<NavigationBar>(
+      find.byType(NavigationBar),
+    );
+    expect(
+      nav.destinations
+          .map((Widget d) => (d as NavigationDestination).label)
+          .toList(),
+      <String>['消息', '联系人', '文件', '我的'],
+    );
+
+    await tester.tap(find.text('文件'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('发布文件夹'), findsOneWidget);
+    expect(find.text('导入分享码'), findsOneWidget);
+    expect(find.text('共享'), findsWidgets);
+    expect(find.text('传输'), findsWidgets);
+    expect(find.text('下载'), findsWidgets);
+    // 文件入口已从设置页内部移除。
+    expect(find.byKey(const ValueKey<String>('settings-file-hub-shortcut')),
+        findsNothing);
+  });
+
+  testWidgets('窄屏内容面板使用全屏不透明页面，不再叠半透明浮层',
+      (WidgetTester tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(size: Size(390, 844)),
+          child: Scaffold(
+            body: Builder(
+              builder: (BuildContext context) => TextButton(
+                onPressed: () => showPaneDialog<void>(
+                  context: context,
+                  builder: (BuildContext _) => const Text('面板内容'),
+                ),
+                child: const Text('打开面板'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('打开面板'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('面板内容'), findsOneWidget);
+    expect(find.byType(CloseButton), findsOneWidget);
+
+    await tester.tap(find.byType(CloseButton));
+    await tester.pumpAndSettle();
+    expect(find.text('面板内容'), findsNothing);
+  });
+
+  testWidgets('桌面内容面板仍使用带表面色的模态对话框',
+      (WidgetTester tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1280, 800);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(size: Size(1280, 800)),
+          child: Scaffold(
+            body: Builder(
+              builder: (BuildContext context) => TextButton(
+                onPressed: () => showPaneDialog<void>(
+                  context: context,
+                  builder: (BuildContext _) => const Text('面板内容'),
+                ),
+                child: const Text('打开面板'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('打开面板'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CloseButton), findsNothing);
+    expect(find.text('面板内容'), findsOneWidget);
+  });
+
+  testWidgets('桌面重复点击「我的」会回到资料首页，不残留设置子面板',
+      (WidgetTester tester) async {
+    await _pumpWithSessionAt(
+      tester,
+      const Size(1280, 800),
+      CoreSession(_ProfileTransport()),
+    );
+
+    await tester.tap(find.byTooltip('我的'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('settings-language')));
+    await tester.pumpAndSettle();
+    expect(find.text('语言'), findsWidgets);
+
+    await tester.tap(find.byTooltip('我的'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('profile-view-name')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('桌面切换到文件分区后再返回，文件页 Tab 状态保留',
+      (WidgetTester tester) async {
+    await _pumpWithSessionAt(
+      tester,
+      const Size(1280, 800),
+      CoreSession(_ProfileTransport()),
+    );
+
+    await tester.tap(find.byTooltip('文件'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(Tab, '传输'));
+    await tester.pumpAndSettle();
+    TabBar bar = tester.widget<TabBar>(find.byType(TabBar));
+    expect(bar.controller?.index, 1);
+
+    await tester.tap(find.byTooltip('消息'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('文件'));
+    await tester.pumpAndSettle();
+
+    bar = tester.widget<TabBar>(find.byType(TabBar));
+    expect(bar.controller?.index, 1);
+  });
+
+  testWidgets('桌面文件图标在设置上方，文件页占用整块工作区',
+      (WidgetTester tester) async {
+    await _pumpWithSessionAt(
+      tester,
+      const Size(1280, 800),
+      CoreSession(_ProfileTransport()),
+    );
+
+    expect(
+      tester.getCenter(find.byTooltip('文件')).dy,
+      lessThan(tester.getCenter(find.byTooltip('我的')).dy),
+    );
+
+    await tester.tap(find.byTooltip('文件'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('发布文件夹'), findsOneWidget);
+    expect(find.text('导入分享码'), findsOneWidget);
+    expect(find.text('选择一个会话开始聊天'), findsNothing);
   });
 }

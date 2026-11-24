@@ -18,6 +18,8 @@ import '../features/contacts/contact_service.dart';
 import '../features/contacts/contacts_page.dart';
 import '../features/contacts/device_list_page.dart';
 import '../features/contacts/friends_pane.dart';
+import '../features/files/file_hub_page.dart';
+import '../features/files/transfer_store.dart';
 import '../features/group/group_info_page.dart';
 import '../features/group/group_list_page.dart';
 import '../features/group/group_service.dart';
@@ -28,6 +30,7 @@ import '../features/rtc/rtc_media.dart';
 import '../features/search/message_search.dart';
 import '../features/settings/backup.dart';
 import '../features/settings/diagnostics.dart';
+import '../features/settings/profile_avatar.dart';
 import '../features/settings/profile_panel.dart';
 import '../features/settings/profile_view.dart';
 import '../features/settings/report.dart';
@@ -37,6 +40,7 @@ import '../features/settings/settings_service.dart';
 import '../features/settings/storage_config.dart';
 import '../l10n/l10n.dart';
 import '../transport/transport.dart';
+import 'pane_header.dart';
 import 'connection_status.dart';
 import 'core_session.dart';
 import 'theme.dart';
@@ -83,18 +87,34 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
+  /// 分区索引：文件入口独立成栏，位置在「我的 / 设置」之前。
+  static const int _sectionChats = 0;
+  static const int _sectionContacts = 1;
+  static const int _sectionFiles = 2;
+  static const int _sectionSettings = 3;
+
   List<String> get _titles => <String>[
     context.t('消息'),
     context.t('联系人'),
+    context.t('文件'),
     context.t('我的'),
   ];
   static const List<IconData> _icons = <IconData>[
     Icons.chat_bubble_outline,
     Icons.people_outline,
-    Icons.settings_outlined,
+    Icons.folder_outlined,
+    Icons.person_outline,
   ];
 
-  int _section = 0;
+  int _section = _sectionChats;
+
+  /// 由 LayoutBuilder 在 build 时写入，避免行为分流再次读 MediaQuery
+  /// 导致「看到移动布局却走桌面点击逻辑」。
+  bool _desktopLayout = true;
+  bool _wideLayout = true;
+
+  /// 桌面切走再切回文件分区时保留 Tab / 筛选状态。
+  Widget? _filePageCache;
 
   /// 连接状态由 P1-12 状态机的 `state.changed` 推送，导航壳先以在线占位。
   final ValueNotifier<LinkStatus> _link = ValueNotifier<LinkStatus>(
@@ -105,6 +125,10 @@ class _AppShellState extends State<AppShell> {
   /// 已打开的群资料页监听后重新拉取 `group.members` 刷新公告展示。
   /// 用全局单调计数而非按群计数——页面收到任意公告更新即 reload，成本低且避免漏刷。
   final ValueNotifier<int> _announcementRevision = ValueNotifier<int>(0);
+
+  /// 群「允许成员加好友」开关版本号：管理员本机切换或成员收到控制帧时递增，
+  /// 已打开的群资料页与聊天右侧面板监听后重新拉取群资料。
+  final ValueNotifier<int> _allowFriendAddRevision = ValueNotifier<int>(0);
 
   /// 会话数据由壳层持有，P1-16 传输层接通后在此写入内核推送。
   final ConversationStore _conversations = ConversationStore();
@@ -133,8 +157,17 @@ class _AppShellState extends State<AppShell> {
   /// 桌面端当前打开的会话；移动端通过路由进入聊天页。
   ConversationItem? _selected;
 
-  /// 桌面宽屏右侧资料面板是否展开（P6-22）。
-  bool _profileOpen = false;
+  /// 桌面宽屏右侧资料面板开关（P6-22）。null 表示按会话类型自动决定：
+  /// 群聊默认展开群信息/成员，单聊默认收起；用户手动切换后以显式值为准。
+  bool? _profileOpenOverride;
+
+  /// 会话的 @ 插入通道：群成员面板与聊天输入框共用同一个实例。
+  final Map<String, MentionInsertController> _mentionControllers =
+      <String, MentionInsertController>{};
+
+  /// 从联系人右栏进入会话前所在的列表，供聊天页返回按钮恢复。
+  String _contactsChatReturnPane = '好友';
+  Object? _contactsChatReturnData;
 
   /// 「我的」右栏当前展示的设置面板 label；null 表示只读资料展示。
   /// 点击左栏头像 / 账号卡片重置为 null，点击设置列表项切换为对应 label。
@@ -235,23 +268,39 @@ class _AppShellState extends State<AppShell> {
   }
 
   /// 发起通话：单聊直呼对端；群聊拉取成员后对每人各建一路 Mesh 会话。
+  bool _callStarting = false;
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   void _startCall(ConversationItem item, bool video) {
+    if (_callStarting) return;
     final CallService? call = _call;
     if (call == null) {
+      _showMessage(context.t('通话功能暂不可用'));
       return;
     }
     setState(() {
       _callPeerName = item.title;
       _callCameraEnabled = true;
+      _callStarting = true;
     });
     if (item.isGroup) {
-      unawaited(_startGroupCall(call, item.id, video));
+      unawaited(_startGroupCall(call, item.id, video).whenComplete(() {
+        if (mounted) setState(() => _callStarting = false);
+      }));
       return;
     }
     if (item.peer.isEmpty) {
+      if (mounted) setState(() => _callStarting = false);
+      _showMessage(context.t('会话缺少对端账号，无法发送'));
       return;
     }
-    unawaited(call.startOutgoing(item.peer, video: video));
+    unawaited(call.startOutgoing(item.peer, video: video).whenComplete(() {
+      if (mounted) setState(() => _callStarting = false);
+    }));
   }
 
   /// 群聊通话：从 `group.members` 取成员账号，排除自己后交给 CallService。
@@ -268,11 +317,15 @@ class _AppShellState extends State<AppShell> {
           .map((GroupMember m) => m.account)
           .toList(growable: false);
       if (peers.isEmpty) {
+        if (mounted) _showMessage(context.t('群聊暂无其他成员'));
         return;
       }
       await call.startGroupOutgoing(peers, video: video);
     } on Object catch (error) {
       debugPrint('Nexmem 群聊通话发起失败：$error');
+      if (mounted) {
+        _showMessage(context.t('发起通话失败：{0}', <String>['$error']));
+      }
     }
   }
 
@@ -287,11 +340,16 @@ class _AppShellState extends State<AppShell> {
     _loadingConversations = true;
     _initCall(session);
     _events = session.transport.events.listen(_onEvent);
+    // 传输进度是全局状态：不打开文件分区也要订阅，避免下载期间切页丢进度。
+    TransferStore.instance.attach(session.transport);
+    // 头像：内核就绪后加载本机已保存头像，供左栏/资料卡等位置展示。
+    ProfileAvatarStore.instance.attach(session.settings);
     unawaited(_boot(session));
   }
 
   @override
   void dispose() {
+    TransferStore.instance.detach();
     unawaited(_events?.cancel());
     unawaited(_callChanges?.cancel());
     unawaited(_call?.dispose());
@@ -301,9 +359,13 @@ class _AppShellState extends State<AppShell> {
     for (final ChatStore chat in _chats.values) {
       chat.dispose();
     }
+    for (final MentionInsertController controller in _mentionControllers.values) {
+      controller.dispose();
+    }
     _conversations.dispose();
     _link.dispose();
     _announcementRevision.dispose();
+    _allowFriendAddRevision.dispose();
     super.dispose();
   }
 
@@ -313,6 +375,9 @@ class _AppShellState extends State<AppShell> {
       for (int attempt = 0; attempt < 3 && mounted; attempt++) {
         try {
           await session.bootstrap();
+          // 头像缓存初始化早于 core.start，彼时 settings.get 会失败；
+          // 内核就绪后必须重新读取一次，否则左栏/「我的」页一直显示占位图标。
+          unawaited(ProfileAvatarStore.instance.reload());
           await _reloadConversations();
           if (mounted) {
             _link.value = LinkStatus.online;
@@ -436,6 +501,17 @@ class _AppShellState extends State<AppShell> {
   List<MentionCandidate> _mentionsFor(ConversationItem item) =>
       item.isGroup ? (_mentionCandidates[item.id] ?? const <MentionCandidate>[]) : const <MentionCandidate>[];
 
+  /// 每个会话独立的 @ 插入通道，供右侧群成员面板写、聊天输入框读。
+  MentionInsertController _mentionControllerFor(ConversationItem item) =>
+      _mentionControllers.putIfAbsent(
+        item.id,
+        MentionInsertController.new,
+      );
+
+  /// 群聊在宽屏默认展开资料面板；单聊默认收起；手动操作后保留用户选择。
+  bool _profileVisibleFor(ConversationItem item, bool allowProfile) =>
+      allowProfile && (_profileOpenOverride ?? item.isGroup);
+
   /// 向上翻页加载更早消息（P6-07）；返回是否还有更早的历史。
   Future<bool> _loadOlder(ConversationItem item) async {
     final CoreSession? session = widget.session;
@@ -491,6 +567,9 @@ class _AppShellState extends State<AppShell> {
       // C-05：管理员移除了群盘，内核已清本机配置；复用同一版本号让群资料页
       // 重新拉取 group.members 刷新 storage_configured 展示。
       _announcementRevision.value++;
+    } else if (event.type == 'group.allowFriendAddChanged') {
+      // 管理员广播了加好友开关变更，刷新已打开的群资料与成员面板。
+      _allowFriendAddRevision.value++;
     } else if (event.type == 'conversation.changed') {
       unawaited(_reloadConversations());
     } else if (event.type == 'transfer.progress') {
@@ -503,8 +582,20 @@ class _AppShellState extends State<AppShell> {
       _highlights.clear();
       _lastSeq.clear();
       unawaited(_reloadConversations());
+    } else if (event.type == 'friend.request.new' ||
+        event.type == 'friend.request.resolved' ||
+        event.type == 'group.joinRequested' ||
+        event.type == 'group.joinResolved' ||
+        event.type == 'moment.new' ||
+        event.type == 'poll.updated') {
+      // 社交事件：递增版本号，-social 页面与联系人列表监听后刷新自身数据。
+      _socialRevision.value++;
     }
   }
+
+  /// 社交事件版本号：社交中心页面监听后刷新自身数据。
+  final ValueNotifier<int> _socialRevision = ValueNotifier<int>(0);
+  ValueNotifier<int> get socialRevision => _socialRevision;
 
   /// 收到对端 RTC 信令（P6-28）：交给通话状态机，来电时解析对端显示名。
   void _onRtcSignal(Map<String, dynamic> data) {
@@ -732,11 +823,27 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
-  void _open(ConversationItem item, bool desktop) {
+  void _open(
+    ConversationItem item,
+    bool desktop, {
+    bool inlineInContacts = false,
+  }) {
     _conversations.markRead(item.id);
     unawaited(_ensureLoaded(item).then((_) => _markReadOnCore(item)));
     if (desktop) {
-      setState(() => _selected = item);
+      setState(() {
+        _selected = item;
+        _profileOpenOverride = null;
+        if (inlineInContacts) {
+          // 从联系人列表进入时记住来源，聊天页左上角的返回箭头据此回到列表。
+          if (_contactsPane != '会话') {
+            _contactsChatReturnPane = _contactsPane;
+            _contactsChatReturnData = _contactsPaneData;
+          }
+          _contactsPane = '会话';
+          _contactsPaneData = item;
+        }
+      });
       return;
     }
     Navigator.of(context).push(
@@ -769,6 +876,7 @@ class _AppShellState extends State<AppShell> {
                         widget.session!.setTyping(item.peer, typing),
                       ),
               mentionCandidates: _mentionsFor(item),
+              mentionController: _mentionControllerFor(item),
               onClearHistory: () => _clearHistory(item),
               onLoadOlder: () => _loadOlder(item),
               highlightMsgUuid: _highlights[item.id],
@@ -1010,7 +1118,11 @@ class _AppShellState extends State<AppShell> {
   }
 
   /// 从好友资料「发消息」打开单聊：会话 ID 与内核 `dm.ConversationID` 同构。
-  void _openContact(Contact contact, bool desktop) {
+  void _openContact(
+    Contact contact,
+    bool desktop, {
+    bool inlineInContacts = false,
+  }) {
     final String self = widget.session?.accountId ?? '';
     if (self.isEmpty || contact.peer.isEmpty) {
       ScaffoldMessenger.of(context)
@@ -1026,17 +1138,22 @@ class _AppShellState extends State<AppShell> {
           peer: contact.peer,
         );
     _conversations.upsert(item);
-    _open(item, desktop);
+    _open(item, desktop, inlineInContacts: inlineInContacts);
   }
 
   /// 建群成功后落一条本地会话并直接打开；后续消息由内核事件补齐摘要。
-  void _createGroupConversation(String groupId, String title, bool desktop) {
+  void _createGroupConversation(
+    String groupId,
+    String title,
+    bool desktop, {
+    bool inlineInContacts = false,
+  }) {
     final String id = groupConversationId(groupId);
     final ConversationItem item =
         _conversations.byId(id) ??
         ConversationItem(id: id, title: title, isGroup: true);
     _conversations.upsert(item);
-    _open(item, desktop);
+    _open(item, desktop, inlineInContacts: inlineInContacts);
   }
 
   /// 群资料页（P4-09）：数据源为 `group.members`；
@@ -1053,6 +1170,9 @@ class _AppShellState extends State<AppShell> {
             contacts: widget.session == null ? null : _contacts,
             onAliasChanged: (_) => unawaited(_applyGroupAlias(item.id)),
             announcementRevision: _announcementRevision,
+            onAllowFriendAddChanged: (_) =>
+                _allowFriendAddRevision.value++,
+            allowFriendAddRevision: _allowFriendAddRevision,
           ),
         ),
       ),
@@ -1074,12 +1194,34 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  /// 群设置允许时，从聊天右侧成员面板直接向该成员发送好友申请。
+  Future<void> _addGroupMemberAsFriend(String account) async {
+    final CoreSession? session = widget.session;
+    if (session == null) {
+      _showMessage(context.t('群聊服务尚未接入内核'));
+      return;
+    }
+    try {
+      await session.social.sendFriendRequest(account);
+      if (!mounted) {
+        return;
+      }
+      _showMessage(context.t('已发送好友申请'));
+    } on NexmemException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage(error.message.isEmpty ? error.code : error.message);
+    }
+  }
+
   List<Widget> _pages(bool desktop) => <Widget>[
     ChatsPage(
       key: _chatsKey,
       store: _conversations,
       loading: _loadingConversations,
       offline: _link.value == LinkStatus.offline,
+      selectedId: _selected?.id,
       onOpen: (ConversationItem item) => _open(item, desktop),
       search: _search,
       onOpenHit: (SearchHit hit) => unawaited(_openSearchHit(hit, desktop)),
@@ -1100,6 +1242,8 @@ class _AppShellState extends State<AppShell> {
       groups: widget.session == null ? null : _groups,
       session: widget.session,
       onSendMessage: (Contact contact) => _openContact(contact, desktop),
+      onOpenContactChat: (Contact contact) =>
+          _openContact(contact, desktop, inlineInContacts: true),
       onOpenGroup: (String groupId, String title) =>
           _createGroupConversation(groupId, title, desktop),
       onOpenPane: _openContactsPane,
@@ -1109,6 +1253,7 @@ class _AppShellState extends State<AppShell> {
         }
       },
     ),
+    _buildFilePage(),
     SettingsPage(
       account: widget.session?.account,
       themeMode: widget.themeMode,
@@ -1126,6 +1271,23 @@ class _AppShellState extends State<AppShell> {
       onOpenPane: (String label) => _openSettingsPane(label, desktop),
     ),
   ];
+
+  /// 「文件」分区：有内核会话时展示共享 / 传输 / 下载；
+  /// Widget 测试等无会话场景给出明确占位，避免空屏。
+  Widget _buildFilePage() {
+    return _filePageCache ??= _createFilePage();
+  }
+
+  Widget _createFilePage() {
+    final CoreSession? session = widget.session;
+    if (session == null) {
+      return Center(child: Text(context.t('内核尚未启动，文件功能暂不可用')));
+    }
+    return FileHubPage(
+      key: const ValueKey<String>('file-hub'),
+      session: session,
+    );
+  }
 
   /// 桌面 / Web 快捷键（ui-spec.md §9）。
   Map<ShortcutActivator, VoidCallback>
@@ -1163,8 +1325,15 @@ class _AppShellState extends State<AppShell> {
       setState(() => _selected = null);
       return;
     }
-    if (_section != 0) {
-      setState(() => _section = 0);
+    if (_section != _sectionChats ||
+        _settingsPane != null ||
+        _contactsPane != '好友') {
+      setState(() {
+        _section = _sectionChats;
+        _settingsPane = null;
+        _contactsPane = '好友';
+        _contactsPaneData = null;
+      });
     }
   }
 
@@ -1177,6 +1346,8 @@ class _AppShellState extends State<AppShell> {
           builder: (BuildContext context, BoxConstraints constraints) {
             final bool desktop =
                 constraints.maxWidth >= NexmemMetrics.desktopBreakpoint;
+            _desktopLayout = desktop;
+            _wideLayout = constraints.maxWidth >= 1080;
             return CallbackShortcuts(
               bindings: _shortcuts,
               child: Focus(
@@ -1271,24 +1442,42 @@ class _AppShellState extends State<AppShell> {
   }
 
   Widget _buildDesktop() {
-    final bool wide = MediaQuery.sizeOf(context).width >= 1080;
+    final bool wide = _wideLayout;
+    final bool files = _section == _sectionFiles;
+    final List<Widget> pages = _pages(true);
+    // 所有分区常驻同一个 IndexedStack：文件分区占满工作区时只把右栏收起，
+    // 这样切换分区不会销毁页面 State（Tab、筛选、滚动位置都保留）。
     return Row(
       children: <Widget>[
         _buildRail(),
         const VerticalDivider(width: 1),
-        SizedBox(
-          width: wide
-              ? NexmemMetrics.listPaneWidthWide
-              : NexmemMetrics.listPaneWidth,
-          child: IndexedStack(index: _section, children: _pages(true)),
+        Flexible(
+          flex: files ? 1 : 0,
+          fit: files ? FlexFit.tight : FlexFit.loose,
+          child: SizedBox(
+            width: files
+                ? double.infinity
+                : (wide
+                    ? NexmemMetrics.listPaneWidthWide
+                    : NexmemMetrics.listPaneWidth),
+            child: IndexedStack(
+              key: const ValueKey<String>('desktop-pages'),
+              index: _section,
+              children: pages,
+            ),
+          ),
         ),
-        const VerticalDivider(width: 1),
-        Expanded(
-          child: _section == 2
-              ? _buildSettingsPane()
-              : _section == 1
-                  ? _buildContactsPane()
-                  : _buildChatPane(allowProfile: wide),
+        VerticalDivider(width: files ? 0 : 1),
+        Flexible(
+          flex: files ? 0 : 1,
+          fit: files ? FlexFit.loose : FlexFit.tight,
+          child: files
+              ? const SizedBox.shrink()
+              : (_section == _sectionSettings
+                  ? _buildSettingsPane()
+                  : _section == _sectionContacts
+                      ? _buildContactsPane()
+                      : _buildChatPane(allowProfile: wide)),
         ),
       ],
     );
@@ -1304,64 +1493,85 @@ class _AppShellState extends State<AppShell> {
       builder: (BuildContext context, Widget? _) {
         final ConversationItem current =
             _conversations.byId(selected.id) ?? selected;
-        final Widget chat = ChatPage(
-          conversation: current,
-          store: _chatFor(current),
-          onSent: (String text) => _conversations.touch(current.id, text),
-          onOpenGroupInfo: current.isGroup
-              ? () => _openGroupInfo(current)
-              : null,
-          onStartCall: (bool video) => _startCall(current, video),
-          onToggleProfile: allowProfile
-              ? () => setState(() => _profileOpen = !_profileOpen)
-              : null,
-          profileOpen: allowProfile && _profileOpen,
-          onPickFile: widget.session?.pickFile,
-          onDeleteMessage: widget.session == null
-              ? null
-              : (String msgUuid) =>
-                    widget.session!.deleteMessage(current.id, msgUuid),
-          onForwardMessage: _forwardMessage,
-          onRecallMessage: (ChatMessage message) =>
-              _recallMessage(current, message),
-          onEditMessage: widget.session == null
-              ? null
-              : (String uuid, String text) =>
-                    widget.session!.editMessage(current.id, uuid, text),
-          onTypingChanged: current.isGroup || current.peer.isEmpty ||
-                  widget.session == null
-              ? null
-              : (bool typing) =>
-                    unawaited(widget.session!.setTyping(current.peer, typing)),
-          mentionCandidates: _mentionsFor(current),
-          onClearHistory: () => _clearHistory(current),
-          onLoadOlder: () => _loadOlder(current),
-          highlightMsgUuid: _highlights[current.id],
-          diagnostics: _diagnostics,
-          reportSink: _reportSink,
-        );
-        if (!allowProfile || !_profileOpen) {
-          return chat;
-        }
-        return Row(
-          children: <Widget>[
-            Expanded(child: chat),
-            const VerticalDivider(width: 1),
-            SizedBox(
-              width: NexmemMetrics.profilePaneWidth,
-              child: ChatProfilePanel(
-                conversation: current,
-                groups: _groups,
-                selfAccount: widget.session?.accountId ?? '',
-                onClose: () => setState(() => _profileOpen = false),
-                onOpenGroupInfo: current.isGroup
-                    ? () => _openGroupInfo(current)
-                    : null,
-              ),
-            ),
-          ],
-        );
+        return _buildChatView(current, allowProfile: allowProfile);
       },
+    );
+  }
+
+  /// 聊天区统一构建：消息分区右栏与联系人分区内联聊天共用同一套回调，
+  /// 避免两处入口的 @、群资料、消息操作行为不一致。
+  Widget _buildChatView(
+    ConversationItem current, {
+    required bool allowProfile,
+    VoidCallback? onBack,
+  }) {
+    final bool showProfile = _profileVisibleFor(current, allowProfile);
+    final MentionInsertController mention = _mentionControllerFor(current);
+    final Widget chat = ChatPage(
+      conversation: current,
+      store: _chatFor(current),
+      onBack: onBack,
+      onSent: (String text) => _conversations.touch(current.id, text),
+      onOpenGroupInfo: current.isGroup
+          ? () => _openGroupInfo(current)
+          : null,
+      onStartCall: (bool video) => _startCall(current, video),
+      onToggleProfile: allowProfile
+          ? () => setState(() => _profileOpenOverride = !showProfile)
+          : null,
+      profileOpen: showProfile,
+      onPickFile: widget.session?.pickFile,
+      onDeleteMessage: widget.session == null
+          ? null
+          : (String msgUuid) =>
+                widget.session!.deleteMessage(current.id, msgUuid),
+      onForwardMessage: _forwardMessage,
+      onRecallMessage: (ChatMessage message) =>
+          _recallMessage(current, message),
+      onEditMessage: widget.session == null
+          ? null
+          : (String uuid, String text) =>
+                widget.session!.editMessage(current.id, uuid, text),
+      onTypingChanged: current.isGroup || current.peer.isEmpty ||
+              widget.session == null
+          ? null
+          : (bool typing) =>
+                unawaited(widget.session!.setTyping(current.peer, typing)),
+      mentionCandidates: _mentionsFor(current),
+      mentionController: mention,
+      onClearHistory: () => _clearHistory(current),
+      onLoadOlder: () => _loadOlder(current),
+      highlightMsgUuid: _highlights[current.id],
+      diagnostics: _diagnostics,
+      reportSink: _reportSink,
+    );
+    if (!showProfile) {
+      return chat;
+    }
+    return Row(
+      children: <Widget>[
+        Expanded(child: chat),
+        const VerticalDivider(width: 1),
+        SizedBox(
+          width: NexmemMetrics.profilePaneWidth,
+          child: ChatProfilePanel(
+            conversation: current,
+            groups: _groups,
+            selfAccount: widget.session?.accountId ?? '',
+            onClose: () => setState(() => _profileOpenOverride = false),
+            onOpenGroupInfo: current.isGroup
+                ? () => _openGroupInfo(current)
+                : null,
+            onMentionMember: current.isGroup
+                ? (MentionCandidate candidate) => mention.insert(candidate)
+                : null,
+            onAddFriend: current.isGroup && widget.session != null
+                ? _addGroupMemberAsFriend
+                : null,
+            allowFriendAddRevision: _allowFriendAddRevision,
+          ),
+        ),
+      ],
     );
   }
 
@@ -1369,7 +1579,7 @@ class _AppShellState extends State<AppShell> {
   /// 窄屏理论上不渲染左栏，但仍以只读全屏页兜底，避免入口失效。
   void _openProfileFromAvatar() {
     _openProfileView(
-      MediaQuery.sizeOf(context).width >= NexmemMetrics.desktopBreakpoint,
+      _desktopLayout,
     );
   }
 
@@ -1377,7 +1587,7 @@ class _AppShellState extends State<AppShell> {
   void _openProfileView(bool desktop) {
     if (desktop) {
       setState(() {
-        _section = 2;
+        _section = _sectionSettings;
         _settingsPane = null;
       });
       return;
@@ -1401,7 +1611,7 @@ class _AppShellState extends State<AppShell> {
   /// 联系人页各入口：桌面在右栏展示对应内容，手机 push 全屏页。
   void _openContactsPane(String pane, {Object? data}) {
     final bool desktop =
-        MediaQuery.sizeOf(context).width >= NexmemMetrics.desktopBreakpoint;
+        _desktopLayout;
     if (desktop) {
       setState(() {
         _section = 1;
@@ -1428,6 +1638,25 @@ class _AppShellState extends State<AppShell> {
 
   Widget _contactsPaneBody(String pane, Object? data) {
     switch (pane) {
+      case '会话':
+        if (data is! ConversationItem) {
+          return const SizedBox.shrink();
+        }
+        return ListenableBuilder(
+          listenable: _conversations,
+          builder: (BuildContext context, Widget? _) {
+            final ConversationItem current =
+                _conversations.byId(data.id) ?? data;
+            return _buildChatView(
+              current,
+              allowProfile: _desktopLayout && _wideLayout,
+              onBack: () => _openContactsPane(
+                _contactsChatReturnPane,
+                data: _contactsChatReturnData,
+              ),
+            );
+          },
+        );
       case '群聊':
         final GroupService? groups = widget.session == null ? null : _groups;
         if (groups == null) {
@@ -1437,7 +1666,19 @@ class _AppShellState extends State<AppShell> {
           service: groups,
           embedded: true,
           onOpenGroup: (String groupId, String title) =>
-              _createGroupConversation(groupId, title, true),
+              _createGroupConversation(
+            groupId,
+            title,
+            _desktopLayout,
+            inlineInContacts: _desktopLayout,
+          ),
+          onGroupCreated: (String groupId, String title) =>
+              _createGroupConversation(
+            groupId,
+            title,
+            _desktopLayout,
+            inlineInContacts: _desktopLayout,
+          ),
         );
       case '好友资料':
         if (data is! Contact) {
@@ -1450,9 +1691,11 @@ class _AppShellState extends State<AppShell> {
           embedded: true,
           onChanged: (Contact next) =>
               _contactsKey.currentState?.apply(next),
+          onDeleted: (_) => unawaited(_contactsKey.currentState?.reload()),
           onSendMessage: () => _openContact(
             contact,
-            MediaQuery.sizeOf(context).width >= NexmemMetrics.desktopBreakpoint,
+            _desktopLayout,
+            inlineInContacts: _desktopLayout,
           ),
           onOpenDevices: (String peer, String title) => _openContactsPane(
             '设备列表',
@@ -1479,7 +1722,12 @@ class _AppShellState extends State<AppShell> {
       default:
         return FriendsPane(
           friends: _contactsKey.currentState?.friends ?? const <Contact>[],
-          onOpenContact: (Contact contact) =>
+          onOpenContact: (Contact contact) => _openContact(
+            contact,
+            _desktopLayout,
+            inlineInContacts: _desktopLayout,
+          ),
+          onOpenProfile: (Contact contact) =>
               _openContactsPane('好友资料', data: contact),
           onAdd: widget.session == null
               ? null
@@ -1492,7 +1740,7 @@ class _AppShellState extends State<AppShell> {
   void _openSettingsPane(String label, bool desktop) {
     if (desktop) {
       setState(() {
-        _section = 2;
+        _section = _sectionSettings;
         _settingsPane = label;
       });
       return;
@@ -1541,8 +1789,7 @@ class _AppShellState extends State<AppShell> {
             widget.session?.settings ?? const UnavailableSettingsService(),
       );
     }
-    // 不传 title：内容自带标题（原 AlertDialog.title），避免重复标题栏。
-    return EmbeddedSettingsPane(
+    final Widget pane = EmbeddedSettingsPane(
       key: ValueKey<String>('settings-pane-$label-$_settingsPaneRevision'),
       builder: _settingsPaneBuilder(label),
       onDismiss: () {
@@ -1551,12 +1798,31 @@ class _AppShellState extends State<AppShell> {
         }
       },
     );
+    if (label == '社交中心') {
+      // 内嵌版社交中心不带自己的 PaneHeader，统一由右栏/全屏页外层提供标题。
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          PaneHeader(title: context.t(label)),
+          Expanded(child: pane),
+        ],
+      );
+    }
+    return pane;
   }
   Widget _buildRail() {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
     return Container(
       width: NexmemMetrics.railWidth,
-      color: scheme.surface,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: <Color>[
+            NexmemColors.railTop,
+            NexmemColors.railBottom,
+          ],
+        ),
+      ),
       child: Column(
         children: <Widget>[
           const SizedBox(height: NexmemMetrics.space16),
@@ -1568,14 +1834,13 @@ class _AppShellState extends State<AppShell> {
               borderRadius: BorderRadius.circular(
                 NexmemMetrics.radiusListItem,
               ),
-              child: CircleAvatar(
-                radius: NexmemMetrics.avatarSize / 2,
-                backgroundColor: scheme.onSurface.withValues(alpha: 0.08),
-                child: Icon(
-                  Icons.person_outline,
-                  size: 22,
-                  color: scheme.onSurface.withValues(alpha: 0.45),
+              child: Container(
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
                 ),
+                child: const SelfAvatar(radius: 19, iconSize: 20),
               ),
             ),
           ),
@@ -1585,7 +1850,17 @@ class _AppShellState extends State<AppShell> {
               icon: _icons[i],
               tooltip: _titles[i],
               selected: _section == i,
-              onTap: () => setState(() => _section = i),
+              onTap: () => setState(() {
+                    _section = i;
+                    if (i == _sectionSettings || i == _sectionContacts) {
+                      // 重新点一级入口时回到该分区首页，避免残留旧面板。
+                      if (i == _sectionSettings) _settingsPane = null;
+                      if (i == _sectionContacts) {
+                        _contactsPane = '好友';
+                        _contactsPaneData = null;
+                      }
+                    }
+                  }),
             ),
         ],
       ),
@@ -1608,26 +1883,41 @@ class _RailButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
-    final Color color = selected
-        ? NexmemColors.primary
-        : scheme.onSurface.withValues(alpha: 0.5);
     return Tooltip(
       message: tooltip,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(NexmemMetrics.radiusListItem),
         child: Container(
-          width: 40,
-          height: 40,
+          width: 44,
+          height: 44,
           margin: const EdgeInsets.symmetric(vertical: NexmemMetrics.space4),
           decoration: BoxDecoration(
-            color: selected
-                ? NexmemColors.primary.withValues(alpha: 0.12)
-                : null,
+            color: selected ? Colors.white.withValues(alpha: 0.22) : null,
             borderRadius: BorderRadius.circular(NexmemMetrics.radiusListItem),
           ),
-          child: Icon(icon, size: 22, color: color),
+          child: Stack(
+            alignment: Alignment.center,
+            children: <Widget>[
+              Icon(
+                icon,
+                size: 23,
+                color: Colors.white.withValues(alpha: selected ? 1 : 0.82),
+              ),
+              if (selected)
+                Positioned(
+                  left: 0,
+                  child: Container(
+                    width: 3,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

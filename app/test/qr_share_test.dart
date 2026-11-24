@@ -150,6 +150,9 @@ class _FakeContactService implements ContactService {
   Future<void> setBlocked(String account, bool blocked) async {}
 
   @override
+  Future<void> remove(String account) async {}
+
+  @override
   Future<DeviceListResult> devices({String? peer}) async =>
       const DeviceListResult.empty();
 }

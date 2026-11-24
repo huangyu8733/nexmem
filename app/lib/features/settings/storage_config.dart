@@ -654,8 +654,8 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
     final ColorScheme scheme = theme.colorScheme;
     return AlertDialog(
       title: Text(context.t('离线存储')),
-      content: SizedBox(
-        width: 420,
+      content: responsiveDialogContent(
+        maxWidth: 420,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,

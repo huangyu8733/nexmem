@@ -4,6 +4,7 @@ import '../../app/theme.dart';
 import '../../app/core_session.dart';
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
+import 'settings_pane.dart';
 import 'settings_service.dart';
 
 /// 三种发现源的本机设置键，与内核 `discovery_settings.go` 保持一致。
@@ -49,8 +50,9 @@ class DiscoverySettingsDialog extends StatefulWidget {
 }
 
 class _DiscoverySettingsDialogState extends State<DiscoverySettingsDialog> {
-  bool _mdns = false;
-  bool _publicDht = false;
+  // mDNS 与公共 DHT 默认开启；手动地址簿始终参与解析。
+  bool _mdns = true;
+  bool _publicDht = true;
   bool _saving = false;
   String? _error;
   String? _savedNote;
@@ -84,8 +86,9 @@ class _DiscoverySettingsDialogState extends State<DiscoverySettingsDialog> {
         return;
       }
       setState(() {
-        _mdns = mdns == 'true';
-        _publicDht = dht == 'true';
+        // 未保存过（null）或非 'false' 一律视为默认开启。
+        _mdns = mdns == null || mdns != 'false';
+        _publicDht = dht == null || dht != 'false';
       });
     } catch (_) {
       // 内核未启动时保持默认值。
@@ -204,11 +207,35 @@ class _DiscoverySettingsDialogState extends State<DiscoverySettingsDialog> {
     if (session == null) {
       return;
     }
+    final bool? confirm = await showPaneDialog<bool>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        title: Text(context.t('删除')),
+        content: Text(context.t('确定移除该手动地址？')),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(context.t('取消')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(context.t('删除')),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
     try {
       await session.removePeer(accountId);
       await _loadPeers();
-    } catch (_) {
-      // 删除失败保持原状。
+      if (!mounted) return;
+      setState(() {
+        _error = null;
+        _savedNote = context.t('已删除');
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = context.t('移除失败：{0}', <String>['$e']));
     }
   }
 
@@ -217,8 +244,8 @@ class _DiscoverySettingsDialogState extends State<DiscoverySettingsDialog> {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return AlertDialog(
       title: Text(context.t('发现源设置')),
-      content: SizedBox(
-        width: 460,
+      content: responsiveDialogContent(
+        maxWidth: 460,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,

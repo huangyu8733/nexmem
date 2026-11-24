@@ -4,8 +4,11 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../l10n/l10n.dart';
 
+import '../../app/avatar.dart';
 import '../../app/pane_header.dart';
 import '../../app/theme.dart';
+import '../settings/settings_pane.dart';
+import '../social/social_hub_page.dart';
 import '../../app/core_session.dart';
 import '../../transport/transport.dart';
 import 'add_friend_dialog.dart';
@@ -30,6 +33,7 @@ class ContactsPage extends StatefulWidget {
     this.service,
     this.groups,
     this.onSendMessage,
+    this.onOpenContactChat,
     this.onOpenGroup,
     this.session,
     this.onOpenPane,
@@ -46,6 +50,9 @@ class ContactsPage extends StatefulWidget {
 
   /// 点击好友资料页「发消息」时回调，由壳层打开单聊会话。
   final ValueChanged<Contact>? onSendMessage;
+
+  /// 点击好友条目直接打开聊天（桌面在右栏内联，移动端进聊天页）。
+  final ValueChanged<Contact>? onOpenContactChat;
 
   /// 点击群聊列表中的群时回调，由壳层打开群会话。
   final void Function(String groupId, String title)? onOpenGroup;
@@ -66,6 +73,7 @@ class ContactsPage extends StatefulWidget {
 
 class ContactsPageState extends State<ContactsPage> {
   final Map<String, GlobalKey> _sectionKeys = <String, GlobalKey>{};
+  final TextEditingController _search = TextEditingController();
   late List<Contact> _friends = List<Contact>.of(widget.friends);
   bool _loading = false;
   String? _error;
@@ -76,6 +84,12 @@ class ContactsPageState extends State<ContactsPage> {
     if (widget.service != null) {
       unawaited(_reload());
     }
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
   }
 
   @override
@@ -153,6 +167,16 @@ class ContactsPageState extends State<ContactsPage> {
     widget.onContactsChanged?.call();
   }
 
+  /// 好友条目默认直接发起聊天；详情页仍可通过条目上的 info 按钮进入。
+  void _openChat(Contact contact) {
+    final ValueChanged<Contact>? onChat = widget.onOpenContactChat;
+    if (onChat != null) {
+      onChat(contact);
+      return;
+    }
+    widget.onSendMessage?.call(contact);
+  }
+
   void _openDetail(Contact contact) {
     final void Function(String, {Object? data})? onOpenPane = widget.onOpenPane;
     if (onOpenPane != null) {
@@ -165,6 +189,7 @@ class ContactsPageState extends State<ContactsPage> {
           contact: contact,
           service: widget.service,
           onChanged: _apply,
+          onDeleted: (_) => unawaited(reload()),
           onSendMessage: () {
             Navigator.of(context).pop();
             widget.onSendMessage?.call(contact);
@@ -224,7 +249,13 @@ class ContactsPageState extends State<ContactsPage> {
     if (service == null) {
       return;
     }
-    final bool? added = await showAddFriendDialog(context, service);
+    final bool? added = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AddFriendDialog(
+        service: service,
+        session: widget.session,
+      ),
+    );
     if (added == true) {
       await _reload();
     }
@@ -236,6 +267,17 @@ class ContactsPageState extends State<ContactsPage> {
       return;
     }
     await showMyQrDialog(context, session);
+  }
+
+  Future<void> _openSocialHub() async {
+    final CoreSession? session = widget.session;
+    if (session == null) {
+      return;
+    }
+    await showPaneDialog<void>(
+      context: context,
+      builder: (BuildContext context) => SocialHubPage(session: session),
+    );
   }
 
   Future<void> _importQr() async {
@@ -251,6 +293,13 @@ class ContactsPageState extends State<ContactsPage> {
   }
 
   List<Widget> get _actions => <Widget>[
+        if (widget.session != null)
+          IconButton(
+            key: const ValueKey<String>('contact-social-hub-button'),
+            tooltip: context.t('社交中心'),
+            icon: const Icon(Icons.notifications_none, size: 20),
+            onPressed: _openSocialHub,
+          ),
         if (widget.service != null)
           IconButton(
             key: const ValueKey<String>('contact-add-button'),
@@ -274,13 +323,52 @@ class ContactsPageState extends State<ContactsPage> {
           ),
       ];
 
+  /// 本地通讯录筛选：匹配备注名、分组与账号短串/完整账号。
+  List<(String, List<Contact>)> _filteredGroups() {
+    final String query = _search.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      return groupContacts(_friends);
+    }
+    final List<Contact> matches = _friends.where((Contact c) {
+      return c.name.toLowerCase().contains(query) ||
+          c.groupName.toLowerCase().contains(query) ||
+          c.id.toLowerCase().contains(query) ||
+          c.peer.toLowerCase().contains(query);
+    }).toList();
+    return groupContacts(matches);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final List<(String, List<Contact>)> groups = groupContacts(_friends);
+    final List<(String, List<Contact>)> groups = _filteredGroups();
     return Column(
       children: <Widget>[
         PaneHeader(title: context.t('联系人'), actions: _actions),
-        SearchBox(hint: context.t('搜索联系人')),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            NexmemMetrics.space12,
+            NexmemMetrics.space8,
+            NexmemMetrics.space12,
+            0,
+          ),
+          child: TextField(
+            key: const ValueKey<String>('contacts-search-field'),
+            controller: _search,
+            decoration: InputDecoration(
+              hintText: context.t('搜索联系人'),
+              prefixIcon: const Icon(Icons.search, size: 18),
+              suffixIcon: _search.text.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.close, size: 16),
+                      onPressed: () => setState(() => _search.clear()),
+                    ),
+              isDense: true,
+              border: const OutlineInputBorder(),
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+        ),
         const SizedBox(height: NexmemMetrics.space8),
         const Divider(height: 1),
         if (_error != null) _ErrorBar(message: _error!, onRetry: _reload),
@@ -322,7 +410,8 @@ class ContactsPageState extends State<ContactsPage> {
                         for (final Contact contact in members)
                           _ContactTile(
                             contact: contact,
-                            onTap: () => _openDetail(contact),
+                            onTap: () => _openChat(contact),
+                            onInfo: () => _openDetail(contact),
                           ),
                       ],
                       const SizedBox(height: NexmemMetrics.space16),
@@ -461,17 +550,15 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _ContactTile extends StatelessWidget {
-  const _ContactTile({required this.contact, this.onTap});
+  const _ContactTile({required this.contact, this.onTap, this.onInfo});
 
   final Contact contact;
   final VoidCallback? onTap;
+  final VoidCallback? onInfo;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final Color base = NexmemColors
-        .avatarPalette[contact.id.hashCode.abs() % NexmemColors.avatarPalette.length];
-    final String initial = contact.name.isEmpty ? '?' : contact.name.substring(0, 1);
     return SizedBox(
       height: NexmemMetrics.listItemHeight,
       child: InkWell(
@@ -480,17 +567,10 @@ class _ContactTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space12),
           child: Row(
             children: <Widget>[
-              CircleAvatar(
-                radius: 20,
-                backgroundColor: base.withValues(alpha: 0.16),
-                child: Text(
-                  initial,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: base,
-                  ),
-                ),
+              AppAvatar(
+                seed: contact.id,
+                label: contact.name,
+                size: 40,
               ),
               const SizedBox(width: NexmemMetrics.space12),
               Expanded(
@@ -502,14 +582,29 @@ class _ContactTile extends StatelessWidget {
                 ),
               ),
               if (contact.note.isNotEmpty && contact.note != contact.name)
-                Text(
-                  contact.note,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontSize: 12,
-                        color: scheme.onSurface.withValues(alpha: 0.5),
-                      ),
+                Flexible(
+                  child: Text(
+                    contact.note,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontSize: 12,
+                          color: scheme.onSurface.withValues(alpha: 0.5),
+                        ),
+                  ),
+                ),
+              if (onInfo != null)
+                SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: IconButton(
+                    key: ValueKey<String>('contact-info-${contact.id}'),
+                    tooltip: context.t('查看资料'),
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    icon: const Icon(Icons.info_outline, size: 16),
+                    onPressed: onInfo,
+                  ),
                 ),
             ],
           ),

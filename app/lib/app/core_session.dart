@@ -13,6 +13,7 @@ import '../features/settings/push.dart';
 import '../features/settings/report.dart';
 import '../features/settings/settings_service.dart';
 import '../features/settings/storage_config.dart';
+import '../features/social/social_service.dart';
 import '../transport/transport.dart';
 
 /// 本机账号信息，对应 `account.me` 回包。
@@ -376,6 +377,9 @@ class CoreSession {
 
   /// 通讯录（P2-06）：`contact.list/add/block/remark`。
   ContactService get contacts => TransportContactService(transport);
+
+  /// QQ 式社交服务：好友申请、入群审批、通知、在线状态、动态与投票。
+  SocialService get social => SocialService(transport);
 
   /// 群聊（P4-09）：`group.create` / `group.members`。
   GroupService get groups => TransportGroupService(transport);

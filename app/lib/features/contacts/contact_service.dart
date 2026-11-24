@@ -23,6 +23,9 @@ abstract class ContactService {
   /// 设置或取消拉黑。
   Future<void> setBlocked(String account, bool blocked);
 
+  /// 删除本机联系人（含备注与分组），不影响对端与聊天记录。
+  Future<void> remove(String account);
+
   /// 查询账号已发布到公开档案的设备列表；[peer] 为空表示本机账号。
   Future<DeviceListResult> devices({String? peer});
 }
@@ -182,6 +185,14 @@ class TransportContactService implements ContactService {
   }
 
   @override
+  Future<void> remove(String account) async {
+    await transport.call(
+      'contact.delete',
+      params: <String, dynamic>{'peer': account},
+    );
+  }
+
+  @override
   Future<DeviceListResult> devices({String? peer}) async {
     final Map<String, dynamic> data = await transport.call(
       'account.devices',
@@ -232,6 +243,11 @@ class UnavailableContactService implements ContactService {
 
   @override
   Future<void> setBlocked(String account, bool blocked) async {
+    throw const NexmemException('NOT_STARTED', '通讯录服务尚未接入内核');
+  }
+
+  @override
+  Future<void> remove(String account) async {
     throw const NexmemException('NOT_STARTED', '通讯录服务尚未接入内核');
   }
 

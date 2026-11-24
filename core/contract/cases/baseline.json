@@ -1591,6 +1591,524 @@
           "retryable": false
         }
       }
+    },
+    {
+      "id": "contact.delete.missing-peer",
+      "request": {
+        "id": 77,
+        "method": "contact.delete",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 peer",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "friend.request.count.baseline",
+      "request": {
+        "id": 78,
+        "method": "friend.request.count",
+        "params": {}
+      },
+      "expect": {
+        "error": "NOT_STARTED"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "NOT_STARTED",
+          "message": "尚未启动",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "friend.request.list.baseline",
+      "request": {
+        "id": 79,
+        "method": "friend.request.list",
+        "params": {}
+      },
+      "expect": {
+        "error": "NOT_STARTED"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "NOT_STARTED",
+          "message": "尚未启动",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "friend.request.respond.baseline",
+      "request": {
+        "id": 80,
+        "method": "friend.request.respond",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "friend.request.send.baseline",
+      "request": {
+        "id": 81,
+        "method": "friend.request.send",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 peer",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.join.list.baseline",
+      "request": {
+        "id": 82,
+        "method": "group.join.list",
+        "params": {}
+      },
+      "expect": {
+        "error": "NOT_STARTED"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "NOT_STARTED",
+          "message": "尚未启动",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.join.request.baseline",
+      "request": {
+        "id": 83,
+        "method": "group.join.request",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 group_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.join.respond.baseline",
+      "request": {
+        "id": 84,
+        "method": "group.join.respond",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.member.set.baseline",
+      "request": {
+        "id": 85,
+        "method": "group.member.set",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 group_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "moment.comment.baseline",
+      "request": {
+        "id": 86,
+        "method": "moment.comment",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "moment.like.baseline",
+      "request": {
+        "id": 87,
+        "method": "moment.like",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "moment.list.baseline",
+      "request": {
+        "id": 88,
+        "method": "moment.list",
+        "params": {}
+      },
+      "expect": {
+        "error": "NOT_STARTED"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "NOT_STARTED",
+          "message": "尚未启动",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "moment.post.baseline",
+      "request": {
+        "id": 89,
+        "method": "moment.post",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 text",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "notification.list.baseline",
+      "request": {
+        "id": 90,
+        "method": "notification.list",
+        "params": {}
+      },
+      "expect": {
+        "error": "NOT_STARTED"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "NOT_STARTED",
+          "message": "尚未启动",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "notification.read.baseline",
+      "request": {
+        "id": 91,
+        "method": "notification.read",
+        "params": {}
+      },
+      "expect": {
+        "error": "NOT_STARTED"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "NOT_STARTED",
+          "message": "尚未启动",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "poll.create.baseline",
+      "request": {
+        "id": 92,
+        "method": "poll.create",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 group_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "poll.list.baseline",
+      "request": {
+        "id": 93,
+        "method": "poll.list",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 group_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "poll.vote.baseline",
+      "request": {
+        "id": 94,
+        "method": "poll.vote",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "presence.list.baseline",
+      "request": {
+        "id": 95,
+        "method": "presence.list",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 accounts",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "friend.request.clear.baseline",
+      "request": {
+        "id": 96,
+        "method": "friend.request.clear",
+        "params": {}
+      },
+      "expect": {
+        "error": "NOT_STARTED"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "NOT_STARTED",
+          "message": "尚未启动",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "friend.request.delete.baseline",
+      "request": {
+        "id": 97,
+        "method": "friend.request.delete",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.join.clear.baseline",
+      "request": {
+        "id": 98,
+        "method": "group.join.clear",
+        "params": {}
+      },
+      "expect": {
+        "error": "NOT_STARTED"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "NOT_STARTED",
+          "message": "尚未启动",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.join.delete.baseline",
+      "request": {
+        "id": 99,
+        "method": "group.join.delete",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "notification.clear.baseline",
+      "request": {
+        "id": 100,
+        "method": "notification.clear",
+        "params": {}
+      },
+      "expect": {
+        "error": "NOT_STARTED"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "NOT_STARTED",
+          "message": "尚未启动",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "notification.delete.baseline",
+      "request": {
+        "id": 101,
+        "method": "notification.delete",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.setAllowFriendAdd.missing-enabled",
+      "request": {
+        "id": 102,
+        "method": "group.setAllowFriendAdd",
+        "params": {
+          "group_id": "aabbccddeeff00112233445566778899"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 enabled",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.setAllowFriendAdd.not-admin",
+      "request": {
+        "id": 103,
+        "method": "group.setAllowFriendAdd",
+        "params": {
+          "group_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+          "enabled": true
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "仅群管理员可设置加好友权限",
+          "retryable": false
+        }
+      }
     }
   ]
 }

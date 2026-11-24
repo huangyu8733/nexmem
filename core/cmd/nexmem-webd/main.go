@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -37,8 +38,8 @@ func main() {
 	bootstraps := flag.String("bootstraps", envOr("NEXMEM_BOOTSTRAPS", ""), "DHT bootstrap 节点地址，逗号分隔")
 	directoryURL := flag.String("directory", envOr("NEXMEM_DIRECTORY_URL", ""), "索引服务地址；配置后发布本机公开档案并支持按账号解析对端")
 	relayAddrs := flag.String("relay", envOr("NEXMEM_RELAY_ADDRS", ""), "中继节点多地址，逗号分隔（每条须含 /p2p/<PeerID>）；浏览器端共享此配置")
-	enableMDNS := flag.Bool("mdns", envOr("NEXMEM_MDNS", "") == "true", "开启局域网 mDNS 发现（三种发现源之一）")
-	publicDHT := flag.Bool("public-dht", envOr("NEXMEM_PUBLIC_DHT", "") == "true", "开启公共 IPFS DHT 兜底寻址")
+	enableMDNS := flag.Bool("mdns", envBool("NEXMEM_MDNS", true), "开启局域网 mDNS 发现（默认开启，可用 false 关闭）")
+	publicDHT := flag.Bool("public-dht", envBool("NEXMEM_PUBLIC_DHT", true), "开启公共 IPFS DHT 兜底寻址（默认开启，可用 false 关闭）")
 	manualAddrs := flag.String("manual-addrs", envOr("NEXMEM_MANUAL_ADDRS", ""), "手动导入的对端 multiaddr，逗号分隔")
 	displayName := flag.String("display-name", envOr("NEXMEM_DISPLAY_NAME", ""), "本机展示名（写入设备证书）")
 	timeout := flag.Duration("timeout", 30*time.Second, "单条请求处理上限")
@@ -99,8 +100,8 @@ func main() {
 			Bootstraps:   splitList(*bootstraps),
 			DirectoryURL: strings.TrimSpace(*directoryURL),
 			RelayAddrs:   splitList(*relayAddrs),
-			EnableMDNS:   *enableMDNS,
-			PublicDHT:    *publicDHT,
+			EnableMDNS:   boolPtr(*enableMDNS),
+			PublicDHT:    boolPtr(*publicDHT),
 			ManualAddrs:  splitList(*manualAddrs),
 		}); err != nil {
 			log.Fatalf("自动启动内核: %v", err)
@@ -187,6 +188,23 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envBool 解析布尔环境变量；未设置或非法时使用 defaultValue。
+func envBool(key string, defaultValue bool) bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return defaultValue
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return defaultValue
+	}
+	return v
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 func splitList(raw string) []string {

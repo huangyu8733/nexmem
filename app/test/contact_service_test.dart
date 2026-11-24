@@ -108,6 +108,11 @@ class _FakeContactService implements ContactService {
   }
 
   @override
+  Future<void> remove(String account) async {
+    calls.add('remove:$account');
+  }
+
+  @override
   Future<DeviceListResult> devices({String? peer}) async {
     calls.add('devices:${peer ?? ''}');
     final NexmemException? error = listError;
@@ -192,6 +197,15 @@ void main() {
     expect(transport.params[2], <String, dynamic>{'peer': _peerHex, 'remark': '同事'});
     expect(transport.params[3], <String, dynamic>{'peer': _peerHex, 'group': '家人'});
     expect(transport.params[4], <String, dynamic>{'peer': _peerHex, 'blocked': true});
+  });
+
+  test('删除好友按契约调用 contact.delete', () async {
+    final _FakeTransport transport = _FakeTransport(<String, _Handler>{
+      'contact.delete': (_) => <String, dynamic>{'peer': _peerHex},
+    });
+    await TransportContactService(transport).remove(_peerHex);
+    expect(transport.methods, <String>['contact.delete']);
+    expect(transport.params.single, <String, dynamic>{'peer': _peerHex});
   });
 
   test('账号编码互转与单聊会话 ID 与内核一致', () {

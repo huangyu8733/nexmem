@@ -9,13 +9,14 @@ import '../../app/pane_header.dart';
 import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
-import '../files/file_share_page.dart';
+import '../social/social_hub_page.dart';
 import '../updater/update_dialog.dart';
 import 'backup.dart';
 import 'diagnostics.dart';
 import 'discovery_settings.dart';
 import 'language_dialog.dart';
 import 'relay_settings.dart';
+import 'profile_avatar.dart';
 import 'profile_panel.dart';
 import 'profile_view.dart';
 import 'settings_pane.dart';
@@ -91,6 +92,7 @@ class SettingsPage extends StatelessWidget {
   final ValueChanged<String>? onOpenPane;
 
   static const List<(IconData, String)> _items = <(IconData, String)>[
+    (Icons.groups, '社交中心'),
     (Icons.badge_outlined, '个人资料'),
     (Icons.shield_outlined, '账号与安全'),
     (Icons.sync_outlined, '多设备同步'),
@@ -132,17 +134,7 @@ class SettingsPage extends StatelessWidget {
                   ),
                   child: Row(
                     children: <Widget>[
-                      CircleAvatar(
-                        radius: NexmemMetrics.avatarSize / 2,
-                        backgroundColor: scheme.onSurface.withValues(
-                          alpha: 0.08,
-                        ),
-                        child: Icon(
-                          Icons.person_outline,
-                          size: 24,
-                          color: scheme.onSurface.withValues(alpha: 0.45),
-                        ),
-                      ),
+                      const SelfAvatar(iconSize: 24),
                       const SizedBox(width: NexmemMetrics.space12),
                       Expanded(
                         child: Column(
@@ -248,8 +240,26 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
+  void _openSocialHub(BuildContext context) {
+    final CoreSession? session = this.session;
+    if (session == null) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(context.t('内核尚未启动，社交功能暂不可用'))),
+      );
+      return;
+    }
+    unawaited(
+      showPaneDialog<void>(
+        context: context,
+        builder: (BuildContext context) => SocialHubPage(session: session),
+      ),
+    );
+  }
+
   static String _itemKey(String label) {
     switch (label) {
+      case '社交中心':
+        return 'social-hub';
       case '个人资料':
         return 'profile';
       case '账号与安全':
@@ -303,6 +313,10 @@ class SettingsPage extends StatelessWidget {
     final ValueChanged<String>? callback = onOpenPane;
     if (callback != null) {
       callback(label);
+      return;
+    }
+    if (label == '社交中心') {
+      _openSocialHub(context);
       return;
     }
     if (label == '个人资料') {
@@ -390,6 +404,10 @@ WidgetBuilder settingsPaneBuilder({
   CoreSession? session,
 }) {
   switch (label) {
+    case '社交中心':
+      return (BuildContext context) => session == null
+          ? const SizedBox.shrink()
+          : SocialHubPage(session: session, showHeader: false);
     case '账号与安全':
       return (BuildContext context) => AccountSecurityDialog(backup: backup);
     case '多设备同步':
@@ -486,8 +504,8 @@ class AppearanceDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(context.t('外观')),
-      content: SizedBox(
-        width: 320,
+      content: responsiveDialogContent(
+        maxWidth: 320,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
@@ -619,8 +637,8 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(context.t('网络诊断')),
-      content: SizedBox(
-        width: 360,
+      content: responsiveDialogContent(
+        maxWidth: 360,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -719,32 +737,6 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
                 );
               },
             ),
-            ListTile(
-              key: const ValueKey<String>('settings-network-fileshare'),
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              leading: const Icon(Icons.folder_shared, size: 20),
-              title: Text(context.t('文件共享')),
-              subtitle: Text(
-                context.t('P2P 发布文件夹，多源加速下载，大小不限'),
-                style: const TextStyle(fontSize: 12),
-              ),
-              trailing: const Icon(Icons.chevron_right, size: 18),
-              onTap: () {
-                final CoreSession? session = widget.session;
-                if (session == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(context.t('内核尚未启动，无法使用文件共享'))),
-                  );
-                  return;
-                }
-                showPaneDialog<void>(
-                  context: context,
-                  builder: (BuildContext context) =>
-                      FileSharePage(session: session),
-                );
-              },
-            ),
             ],
           ),
         ),
@@ -827,8 +819,8 @@ class _AboutDialog extends StatelessWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return AlertDialog(
       title: Text(context.t('关于 Nexmem')),
-      content: SizedBox(
-        width: 360,
+      content: responsiveDialogContent(
+        maxWidth: 360,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,

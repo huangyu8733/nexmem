@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 import 'diagnostics.dart';
@@ -183,8 +184,8 @@ class _ReportDialogState extends State<ReportDialog> {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return AlertDialog(
       title: Text(context.t('举报')),
-      content: SizedBox(
-        width: 360,
+      content: responsiveDialogContent(
+        maxWidth: 360,
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

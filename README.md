@@ -139,11 +139,11 @@ P2P 的数据传输是端到端的，但"找到对方"需要一个发现机制�
 
 | 发现源 | 开关 | 是否需要服务器 | 适用场景 |
 | --- | --- | --- | --- |
-| **手动地址 / 本地地址簿** | 写入即生效 | ❌ 完全离线 | 扫码/复制对端 multiaddr，写入本机 KV；最高优先级 |
-| **局域网发现 (mDNS)** | `NEXMEM_MDNS=true` | ❌ 零基础设施 | 同一 WiFi 下的电脑/手机自动互联、自动通话 |
-| **公共 DHT 兜底** | `NEXMEM_PUBLIC_DHT=true` | ❌ 用公共节点 | 无自建 bootstrap 时，借公共 IPFS 网络解析地址 |
+| **手动地址 / 本地地址簿** | 始终生效 | ❌ 完全离线 | 扫码/复制对端 multiaddr，写入本机 KV；最高优先级 |
+| **局域网发现 (mDNS)** | 默认开启；`NEXMEM_MDNS=false` 可关闭 | ❌ 零基础设施 | 同一 WiFi 下的电脑/手机自动互联、自动通话 |
+| **公共 DHT 兜底** | 默认开启；`NEXMEM_PUBLIC_DHT=false` 可关闭 | ❌ 用公共节点 | 无自建 bootstrap 时，借公共 IPFS 网络解析地址 |
 
-- **零部署用法**：两端都开启 mDNS 并连同一 WiFi，无需 directory / bootstrap / relay 即可聊天与音视频通话（离线消息仍需 S3 存储）。
+- **零部署用法**：mDNS 与公共 DHT 默认已开启；两端连同一 WiFi 即可尝试局域网互联，无需 directory / bootstrap / relay（离线消息仍需 S3 存储）。若路由器开启 AP 隔离，需在路由器关闭该选项。
 - **设置入口**：设置 → 网络 → 发现源设置（桌面/Android）。Web 端由网关通过 `-mdns` / `-public-dht` / `-manual-addrs` 或同名环境变量配置。
 - **手动地址**：在「发现源设置」填入对端账号 ID（64 位 hex）、设备 PeerID 与 multiaddr（含 `/p2p/<PeerID>`），保存后写入本地地址簿并实时生效。
 - 三种源与下面的自建基础设施**可以叠加**：既配 directory+bootstrap 用于跨网，又开 mDNS 用于局域网，公共 DHT 作为最后兜底。

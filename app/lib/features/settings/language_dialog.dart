@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 
 /// 语言选择对话框：跟随系统 + 全部内置语种。
@@ -18,8 +19,8 @@ class LanguageDialog extends StatelessWidget {
     final Locale? current = controller.locale;
     return AlertDialog(
       title: Text(context.t('语言')),
-      content: SizedBox(
-        width: 320,
+      content: responsiveDialogContent(
+        maxWidth: 320,
         height: 420,
         child: ListView(
           children: <Widget>[

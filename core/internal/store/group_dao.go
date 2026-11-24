@@ -20,6 +20,8 @@ type Group struct {
 	Announcement string
 	// Alias 是本机群备注；空串表示未设置，仅本机可见、不上行。
 	Alias string
+	// AllowFriendAdd 是群设置：是否允许成员互相加好友（默认关闭）。
+	AllowFriendAdd bool
 }
 
 // GroupMember 是 group_members 表的一行。
@@ -114,6 +116,41 @@ func (d *DAO) SetGroupAnnouncement(ctx context.Context, groupID []byte, text str
 	return nil
 }
 
+// GetGroupAllowFriendAdd 读取群设置：是否允许成员互相添加好友；群不存在返回 ErrNotFound。
+func (d *DAO) GetGroupAllowFriendAdd(ctx context.Context, groupID []byte) (bool, error) {
+	var enabled int
+	err := d.db.QueryRowContext(ctx,
+		`SELECT allow_friend_add FROM groups WHERE group_id = ?`, groupID).Scan(&enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("读取群加好友设置 %x: %w", groupID, err)
+	}
+	return enabled != 0, nil
+}
+
+// SetGroupAllowFriendAdd 覆盖群加好友设置；群不存在返回 ErrNotFound。
+func (d *DAO) SetGroupAllowFriendAdd(ctx context.Context, groupID []byte, enabled bool) error {
+	value := 0
+	if enabled {
+		value = 1
+	}
+	res, err := d.db.ExecContext(ctx,
+		`UPDATE groups SET allow_friend_add = ? WHERE group_id = ?`, value, groupID)
+	if err != nil {
+		return fmt.Errorf("写入群加好友设置 %x: %w", groupID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ClearGroupStorage 清空本机群盘配置（C-05 移除群盘 / 收到移除控制帧）。
 // 同时关闭离线开关；群不存在返回 ErrNotFound。
 func (d *DAO) ClearGroupStorage(ctx context.Context, groupID []byte) error {
@@ -174,14 +211,15 @@ func (d *DAO) SetGroupAlias(ctx context.Context, groupID []byte, alias string) e
 // GetGroup 按 group_id 读取群，不存在返回 ErrNotFound。
 func (d *DAO) GetGroup(ctx context.Context, groupID []byte) (*Group, error) {
 	var g Group
-	var offline int
+	var offline, allowFriend int
 	err := d.db.QueryRowContext(ctx, `
 		SELECT group_id, IFNULL(title, ''), my_role, key_version,
 		       group_key_enc, storage_cfg_enc, offline_enabled, IFNULL(announcement, ''),
-		       IFNULL(alias, '')
+		       IFNULL(alias, ''), allow_friend_add
 		FROM groups WHERE group_id = ?`, groupID).
 		Scan(&g.GroupID, &g.Title, &g.MyRole, &g.KeyVersion,
-			&g.GroupKeyEnc, &g.StorageCfgEnc, &offline, &g.Announcement, &g.Alias)
+			&g.GroupKeyEnc, &g.StorageCfgEnc, &offline, &g.Announcement, &g.Alias,
+			&allowFriend)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -189,6 +227,7 @@ func (d *DAO) GetGroup(ctx context.Context, groupID []byte) (*Group, error) {
 		return nil, fmt.Errorf("读取群 %x: %w", groupID, err)
 	}
 	g.OfflineEnabled = offline != 0
+	g.AllowFriendAdd = allowFriend != 0
 	if err := d.decryptGroupFields(&g); err != nil {
 		return nil, err
 	}
@@ -218,7 +257,7 @@ func (d *DAO) ListGroups(ctx context.Context) ([]Group, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT group_id, IFNULL(title, ''), my_role, key_version,
 		       group_key_enc, storage_cfg_enc, offline_enabled, IFNULL(announcement, ''),
-		       IFNULL(alias, '')
+		       IFNULL(alias, ''), allow_friend_add
 		FROM groups ORDER BY title, group_id`)
 	if err != nil {
 		return nil, fmt.Errorf("查询群列表: %w", err)
@@ -228,12 +267,14 @@ func (d *DAO) ListGroups(ctx context.Context) ([]Group, error) {
 	var out []Group
 	for rows.Next() {
 		var g Group
-		var offline int
+		var offline, allowFriend int
 		if err := rows.Scan(&g.GroupID, &g.Title, &g.MyRole, &g.KeyVersion,
-			&g.GroupKeyEnc, &g.StorageCfgEnc, &offline, &g.Announcement, &g.Alias); err != nil {
+			&g.GroupKeyEnc, &g.StorageCfgEnc, &offline, &g.Announcement, &g.Alias,
+			&allowFriend); err != nil {
 			return nil, fmt.Errorf("扫描群: %w", err)
 		}
 		g.OfflineEnabled = offline != 0
+		g.AllowFriendAdd = allowFriend != 0
 		if err := d.decryptGroupFields(&g); err != nil {
 			return nil, err
 		}

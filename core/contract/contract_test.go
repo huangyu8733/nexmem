@@ -240,6 +240,27 @@ func registerContractDoubles(t *testing.T, g *gateway.Gateway) {
 	if err != nil {
 		t.Fatalf("注册契约处理器 group.setAnnouncement: %v", err)
 	}
+	err = g.SetHandler("group.setAllowFriendAdd",
+		func(_ context.Context, params json.RawMessage) (any, *gateway.Error) {
+			var req struct {
+				GroupID string `json:"group_id"`
+				Enabled *bool  `json:"enabled"`
+			}
+			if err := json.Unmarshal(params, &req); err != nil {
+				return nil, gateway.NewError(gateway.CodeInvalidArg,
+					"group.setAllowFriendAdd 参数不是合法 JSON: %v", err)
+			}
+			if req.Enabled == nil {
+				return nil, gateway.NewError(gateway.CodeInvalidArg, "缺少必填参数 enabled")
+			}
+			if req.GroupID == contractNonAdminGroupID {
+				return nil, gateway.NewError(gateway.CodeInvalidArg, "仅群管理员可设置加好友权限")
+			}
+			return map[string]any{"enabled": *req.Enabled}, nil
+		})
+	if err != nil {
+		t.Fatalf("注册契约处理器 group.setAllowFriendAdd: %v", err)
+	}
 	err = g.SetHandler("group.setAlias",
 		func(_ context.Context, params json.RawMessage) (any, *gateway.Error) {
 			var req struct {

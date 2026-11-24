@@ -22,6 +22,7 @@ class ContactDetailPage extends StatefulWidget {
     this.onChanged,
     this.onSendMessage,
     this.onOpenDevices,
+    this.onDeleted,
     this.embedded = false,
   });
 
@@ -38,6 +39,9 @@ class ContactDetailPage extends StatefulWidget {
 
   /// 点击「设备」行：传 `(peerId, title)` 由调用方展示设备列表。
   final void Function(String peer, String title)? onOpenDevices;
+
+  /// 删除好友成功后回调，参数为被删除的账号；由调用方刷新列表/关闭面板。
+  final ValueChanged<Contact>? onDeleted;
 
   /// 为 true 时以面板形式渲染（桌面右栏 / 手机全屏页复用），不套 Scaffold。
   final bool embedded;
@@ -221,6 +225,56 @@ class _ContactDetailPageState extends State<ContactDetailPage> {
     } on NexmemException catch (error) {
       _apply(previous);
       _fail(fallback, error);
+    }
+  }
+
+  /// 二次确认后删除本机联系人；对端与聊天记录不受影响。
+  Future<void> _delete() async {
+    final ContactService? service = widget.service;
+    if (service == null) {
+      return;
+    }
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: Text(context.t('删除好友')),
+        content: Text(
+          context.t('仅从本机通讯录移除 {0}，不会删除聊天记录，也不会通知对方。确定继续？', <String>[_contact.name]),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(context.t('取消')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(context.t('删除')),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) {
+      return;
+    }
+    try {
+      await service.remove(_contact.id);
+      if (!mounted) {
+        return;
+      }
+      widget.onDeleted?.call(_contact);
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(context.t('已删除好友 {0}', <String>[_contact.name]))),
+      );
+      if (!widget.embedded && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    } on NexmemException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(error.message.isEmpty ? error.code : error.message)),
+      );
     }
   }
 
@@ -425,6 +479,18 @@ class _ContactDetailPageState extends State<ContactDetailPage> {
             onPressed: _contact.blocked ? null : widget.onSendMessage,
             child: Text(context.t('发消息')),
           ),
+          if (widget.service != null) ...<Widget>[
+            const SizedBox(height: NexmemMetrics.space12),
+            Center(
+              child: TextButton.icon(
+                key: const ValueKey<String>('contact-delete-button'),
+                onPressed: _delete,
+                icon: const Icon(Icons.person_remove_outlined, size: 18),
+                label: Text(context.t('删除好友')),
+                style: TextButton.styleFrom(foregroundColor: NexmemColors.danger),
+              ),
+            ),
+          ],
         ],
     );
   }

@@ -144,5 +144,40 @@ func eventSpecs() []EventSpec {
 			Description: "管理员移除群盘，成员按 group_id 清本机群盘配置（不产生气泡）",
 			Data:        json.RawMessage(`{"type":"object","properties":{"group_id":{"type":"string"}},"required":["group_id"]}`),
 		},
+		{
+			Type:        "group.allowFriendAddChanged",
+			Description: "管理员开关群成员互加好友权限，成员按 group_id 刷新本机设置（不产生气泡）",
+			Data:        json.RawMessage(`{"type":"object","properties":{"group_id":{"type":"string"},"enabled":{"type":"boolean"}},"required":["group_id","enabled"]}`),
+		},
+		{
+			Type:        "friend.request.new",
+			Description: "收到新的好友申请，UI 刷新申请列表与角标",
+			Data:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"peer":{"type":"string"},"message":{"type":"string"}},"required":["id","peer"]}`),
+		},
+		{
+			Type:        "friend.request.resolved",
+			Description: "好友申请被同意或拒绝，UI 刷新申请状态",
+			Data:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"accepted":{"type":"boolean"}},"required":["id","accepted"]}`),
+		},
+		{
+			Type:        "group.joinRequested",
+			Description: "收到入群申请，管理员 UI 刷新审批列表",
+			Data:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"group_id":{"type":"string"},"peer":{"type":"string"}},"required":["id","group_id","peer"]}`),
+		},
+		{
+			Type:        "group.joinResolved",
+			Description: "入群申请被同意或拒绝",
+			Data:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"group_id":{"type":"string"},"accepted":{"type":"boolean"}},"required":["id","group_id","accepted"]}`),
+		},
+		{
+			Type:        "moment.new",
+			Description: "好友发布新动态",
+			Data:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"peer":{"type":"string"}},"required":["id"]}`),
+		},
+		{
+			Type:        "poll.updated",
+			Description: "群投票有新投票，UI 刷新结果",
+			Data:        json.RawMessage(`{"type":"object","properties":{"poll_id":{"type":"string"}},"required":["poll_id"]}`),
+		},
 	}
 }

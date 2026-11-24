@@ -45,6 +45,11 @@ class _RecordingContacts implements ContactService {
   Future<void> setBlocked(String account, bool blocked) async {}
 
   @override
+  Future<void> remove(String account) async {
+    calls.add('remove:$account');
+  }
+
+  @override
   Future<DeviceListResult> devices({String? peer}) async =>
       const DeviceListResult.empty();
 }
@@ -121,7 +126,9 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Alice'));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('contact-info-1')),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('好友资料'), findsOneWidget);
@@ -136,7 +143,9 @@ void main() {
 
     // 返回列表后仍保留备注；再次进入资料页应看到拉黑已生效。
     expect(find.text('老同学'), findsOneWidget);
-    await tester.tap(find.text('Alice'));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('contact-info-1')),
+    );
     await tester.pumpAndSettle();
     expect(
       tester

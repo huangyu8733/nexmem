@@ -122,3 +122,31 @@ func ParseAnnouncementNotice(body []byte) (string, bool) {
 	}
 	return out, true
 }
+
+// allowFriendAddNoticePrefix 是「允许成员互加好友」群设置控制帧前缀。
+// 帧正文只携带 0/1，控制帧不落库、不生成聊天气泡。
+const allowFriendAddNoticePrefix = controlFrameDomain + "allow-friend:"
+
+// EncodeAllowFriendAddNotice 生成加好友开关控制帧正文。
+func EncodeAllowFriendAddNotice(enabled bool) string {
+	if enabled {
+		return allowFriendAddNoticePrefix + "1"
+	}
+	return allowFriendAddNoticePrefix + "0"
+}
+
+// ParseAllowFriendAddNotice 解析加好友开关控制帧；非本类正文返回 ok=false。
+func ParseAllowFriendAddNotice(body []byte) (bool, bool) {
+	text := strings.TrimSpace(string(body))
+	if !strings.HasPrefix(text, allowFriendAddNoticePrefix) {
+		return false, false
+	}
+	switch text[len(allowFriendAddNoticePrefix):] {
+	case "1":
+		return true, true
+	case "0":
+		return false, true
+	default:
+		return false, false
+	}
+}

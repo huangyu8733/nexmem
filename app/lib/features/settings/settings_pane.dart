@@ -1,28 +1,63 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/pane_header.dart';
+import '../../app/theme.dart';
 
-/// 从嵌入式面板的对话框内部打开二级对话框时使用。
+/// 内容型面板的统一打开方式（社交中心、发现源、备份、举报、升级等）。
 ///
 /// [EmbeddedSettingsPane] 会用「去弹窗化」的透明 [DialogThemeData] 包裹顶层
-/// 对话框，使其看起来是右栏里的一整块内容。但 `showDialog` 会通过
-/// `InheritedTheme.capture` 捕获调用处主题并重放到新路由，导致二级对话框
-/// （中继设置、举报、备份流程等）也继承透明主题，渲染成与底层内容重叠、
-/// 无法阅读的浮层。这里在 builder 内层显式恢复根导航器的正常主题，
-/// 让二级对话框保有正常的背景卡片、圆角与阴影。
+/// 面板；如果二级内容继续用 `showDialog`，会继承透明主题并与底层页面重叠。
+/// 因此这里按屏幕宽度分流：窄屏直接 push 一页不透明的全屏页，桌面才用带
+/// 明确表面色的模态对话框；两种情况都显式恢复根导航器主题。
 Future<T?> showPaneDialog<T>({
   required BuildContext context,
   required WidgetBuilder builder,
   bool barrierDismissible = true,
 }) {
-  final ThemeData rootTheme = Theme.of(
-    Navigator.of(context, rootNavigator: true).context,
-  );
+  final NavigatorState navigator = Navigator.of(context, rootNavigator: true);
+  final ThemeData rootTheme = Theme.of(navigator.context);
+
+  // 与导航壳一致的移动断点：窄屏不再叠半透明浮层。
+  if (MediaQuery.sizeOf(context).width < 720) {
+    return navigator.push<T>(
+      MaterialPageRoute<T>(
+        fullscreenDialog: true,
+        builder: (BuildContext routeContext) => Theme(
+          data: rootTheme,
+          child: Scaffold(
+            backgroundColor: rootTheme.scaffoldBackgroundColor,
+            appBar: AppBar(
+              leading: CloseButton(
+                onPressed: () => navigator.pop(),
+              ),
+            ),
+            body: SafeArea(child: builder(routeContext)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  final DialogThemeData dialogTheme = rootTheme.dialogTheme;
   return showDialog<T>(
     context: context,
     barrierDismissible: barrierDismissible,
     builder: (BuildContext dialogContext) => Theme(
-      data: rootTheme,
+      data: rootTheme.copyWith(
+        dialogTheme: dialogTheme.copyWith(
+          backgroundColor: rootTheme.colorScheme.surface,
+          surfaceTintColor: rootTheme.colorScheme.surface,
+          elevation: 8,
+          shadowColor: rootTheme.colorScheme.shadow,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: NexmemMetrics.space24,
+            vertical: NexmemMetrics.space24,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(NexmemMetrics.radiusListItem),
+          ),
+        ),
+      ),
       child: builder(dialogContext),
     ),
   );
@@ -93,10 +128,12 @@ class _EmbeddedSettingsPaneState extends State<EmbeddedSettingsPane> {
           shadowColor: Colors.transparent,
           insetPadding: EdgeInsets.zero,
           shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
-          titleTextStyle: theme.textTheme.titleLarge?.copyWith(
+          titleTextStyle: theme.textTheme.titleMedium?.copyWith(
                 color: theme.colorScheme.onSurface,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
               ) ??
-              const TextStyle(fontSize: 20),
+              const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
         ),
       );
 

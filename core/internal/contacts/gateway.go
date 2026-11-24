@@ -42,11 +42,12 @@ func BindProvider(g *gateway.Gateway, provider func() *Service) error {
 		}
 	}
 	handlers := map[string]gateway.HandlerFunc{
-		"contact.list":    wrap(listHandler),
-		"contact.add":     wrap(addHandler),
-		"contact.block":   wrap(blockHandler),
-		"contact.remark":  wrap(remarkHandler),
+		"contact.list":     wrap(listHandler),
+		"contact.add":      wrap(addHandler),
+		"contact.block":    wrap(blockHandler),
+		"contact.remark":   wrap(remarkHandler),
 		"contact.setGroup": wrap(setGroupHandler),
+		"contact.delete":   wrap(deleteHandler),
 	}
 	for method, h := range handlers {
 		if err := g.SetHandler(method, h); err != nil {
@@ -181,6 +182,27 @@ func setGroupHandler(svc *Service) gateway.HandlerFunc {
 			return nil, gateway.NewError(gateway.CodeDBError, "更新好友分组失败: %v", err)
 		}
 		return map[string]any{"group": group}, nil
+	}
+}
+
+// deleteHandler 处理 contact.delete：仅删除本机联系人记录与备注，
+// 不影响对端，也不删除已有聊天记录。
+func deleteHandler(svc *Service) gateway.HandlerFunc {
+	return func(ctx context.Context, params json.RawMessage) (any, *gateway.Error) {
+		var req struct {
+			Peer string `json:"peer"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "contact.delete 参数不是合法 JSON: %v", err)
+		}
+		peer, err := ParseAccountID(req.Peer)
+		if err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "contact.delete 的 peer 非法: %v", err)
+		}
+		if err := svc.Remove(ctx, peer); err != nil {
+			return nil, gateway.NewError(gateway.CodeDBError, "删除联系人失败: %v", err)
+		}
+		return map[string]any{"peer": req.Peer}, nil
 	}
 }
 

@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/avatar.dart';
 import '../../app/pane_header.dart';
 import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
@@ -14,11 +15,17 @@ class FriendsPane extends StatelessWidget {
     super.key,
     required this.friends,
     this.onOpenContact,
+    this.onOpenProfile,
     this.onAdd,
   });
 
   final List<Contact> friends;
+
+  /// 点击条目直接打开聊天。
   final ValueChanged<Contact>? onOpenContact;
+
+  /// 点击条目右侧 info 按钮查看资料。
+  final ValueChanged<Contact>? onOpenProfile;
   final VoidCallback? onAdd;
 
   @override
@@ -69,6 +76,9 @@ class FriendsPane extends StatelessWidget {
                           onTap: onOpenContact == null
                               ? null
                               : () => onOpenContact!(contact),
+                          onInfo: onOpenProfile == null
+                              ? null
+                              : () => onOpenProfile!(contact),
                         ),
                     ],
                   ],
@@ -105,18 +115,15 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _FriendTile extends StatelessWidget {
-  const _FriendTile({required this.contact, this.onTap});
+  const _FriendTile({required this.contact, this.onTap, this.onInfo});
 
   final Contact contact;
   final VoidCallback? onTap;
+  final VoidCallback? onInfo;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final Color base = NexmemColors
-        .avatarPalette[contact.id.hashCode.abs() % NexmemColors.avatarPalette.length];
-    final String initial =
-        contact.name.isEmpty ? '?' : contact.name.substring(0, 1);
     return SizedBox(
       height: NexmemMetrics.listItemHeight,
       child: InkWell(
@@ -126,17 +133,10 @@ class _FriendTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space12),
           child: Row(
             children: <Widget>[
-              CircleAvatar(
-                radius: 20,
-                backgroundColor: base.withValues(alpha: 0.16),
-                child: Text(
-                  initial,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: base,
-                  ),
-                ),
+              AppAvatar(
+                seed: contact.id,
+                label: contact.name,
+                size: 40,
               ),
               const SizedBox(width: NexmemMetrics.space12),
               Expanded(
@@ -151,14 +151,29 @@ class _FriendTile extends StatelessWidget {
                 ),
               ),
               if (contact.note.isNotEmpty && contact.note != contact.name)
-                Text(
-                  contact.note,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontSize: 12,
-                        color: scheme.onSurface.withValues(alpha: 0.5),
-                      ),
+                Flexible(
+                  child: Text(
+                    contact.note,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontSize: 12,
+                          color: scheme.onSurface.withValues(alpha: 0.5),
+                        ),
+                  ),
+                ),
+              if (onInfo != null)
+                SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: IconButton(
+                    key: ValueKey<String>('pane-friend-info-${contact.id}'),
+                    tooltip: context.t('查看资料'),
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    icon: const Icon(Icons.info_outline, size: 16),
+                    onPressed: onInfo,
+                  ),
                 ),
               const SizedBox(width: NexmemMetrics.space4),
               const Icon(Icons.chevron_right, size: 18),

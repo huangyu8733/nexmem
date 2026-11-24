@@ -6,7 +6,8 @@ library;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
-import '../../app/theme.dart' show NexmemColors, NexmemMetrics;
+import '../../app/theme.dart'
+    show NexmemColors, NexmemMetrics, responsiveDialogContent;
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart' show NexmemException;
 import 'settings_service.dart';
@@ -112,8 +113,8 @@ class _SettingsSyncDialogState extends State<SettingsSyncDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(context.t('多设备设置同步')),
-      content: SizedBox(
-        width: 380,
+      content: responsiveDialogContent(
+        maxWidth: 380,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,

@@ -39,6 +39,7 @@ import (
 	"github.com/nexmem/core/internal/identity"
 	"github.com/nexmem/core/internal/msg"
 	"github.com/nexmem/core/internal/netnode"
+	"github.com/nexmem/core/internal/social"
 	"github.com/nexmem/core/internal/store"
 )
 
@@ -83,13 +84,18 @@ type Config struct {
 	// OfflineEnabled 控制是否对外声明「可接收离线消息」；留空时随 Storage 是否存在。
 	OfflineEnabled *bool `json:"offline_enabled"`
 
-	// ---- 三种并存的发现源（均默认关闭，显式入参优先于设置页 KV）----
+	// ---- 三种并存的发现源（mDNS / 公共 DHT 默认开启，显式入参优先于设置页 KV）----
 	// EnableMDNS 开启局域网 mDNS 发现：同网段节点自动互联，无需任何服务器。
-	EnableMDNS bool `json:"enable_mdns"`
+	// 指针类型用于区分「未配置」（走默认值）与「显式关闭」。
+	EnableMDNS *bool `json:"enable_mdns"`
 	// PublicDHT 开启公共 IPFS DHT 兜底：无自建 bootstrap 时也能解析地址。
-	PublicDHT bool `json:"public_dht"`
+	PublicDHT *bool `json:"public_dht"`
 	// ManualAddrs 手动导入的对端地址（multiaddr 列表，含 /p2p/<PeerID>）。
 	ManualAddrs []string `json:"manual_addrs"`
+
+	// applyDiscoveryDefaults 仅由 core.start 契约入口设置：客户端未显式配置时
+	// 套用 mDNS / 公共 DHT 默认开启策略。直接调用 Start 的 Go 代码不受影响。
+	applyDiscoveryDefaults bool
 }
 
 // StorageConfig 是接收方离线存储的 S3 兼容配置（与 storage.test 表单一致）。
@@ -133,27 +139,28 @@ type App struct {
 	// startMu 串行化 Start / Stop，避免重复装配。
 	startMu sync.Mutex
 
-	mu       sync.RWMutex
-	cfg      Config
-	started  bool
-	state    string
-	account  *identity.Account
-	keys     identity.KeyStore
-	devKey   lpcrypto.PrivKey
-	db       *sql.DB
-	dao      *store.DAO
-	host     host.Host
-	dht      *dht.IpfsDHT
-	dmSvc    *dm.Service
-	fsSvc    *fspkg.Service
-	groupSvc *group.Service
-	contacts *contacts.Service
-	sm       *netnode.StateMachine
-	lookup   dm.PeerResolver
+	mu        sync.RWMutex
+	cfg       Config
+	started   bool
+	state     string
+	account   *identity.Account
+	keys      identity.KeyStore
+	devKey    lpcrypto.PrivKey
+	db        *sql.DB
+	dao       *store.DAO
+	host      host.Host
+	dht       *dht.IpfsDHT
+	dmSvc     *dm.Service
+	fsSvc     *fspkg.Service
+	groupSvc  *group.Service
+	contacts  *contacts.Service
+	socialSvc *social.Service
+	sm        *netnode.StateMachine
+	lookup    dm.PeerResolver
 	// discovery 持有三种发现源的运行时句柄，Stop 时统一关闭。
-	book       *discovery.Peerbook
-	mdns       *discovery.MDNS
-	publicDHT  *dht.IpfsDHT
+	book      *discovery.Peerbook
+	mdns      *discovery.MDNS
+	publicDHT *dht.IpfsDHT
 	// groupTargets / groupXPub 是群密钥信封投递的目标解析器；
 	// groupTargets 可由平台层注入，未注入时基于索引服务档案 + DHT 默认实现。
 	groupTargets group.TargetResolver
@@ -206,6 +213,7 @@ func New(g *gateway.Gateway, sink EventSink) (*App, error) {
 		{"group", func() error {
 			return group.Bind(g, &group.Gateway{Service: a.groupService, Resolve: a.resolveGroupTarget})
 		}},
+		{"social", func() error { return social.BindProvider(g, a.socialService) }},
 	}
 	for _, b := range binds {
 		if err := b.fn(); err != nil {
@@ -213,25 +221,25 @@ func New(g *gateway.Gateway, sink EventSink) (*App, error) {
 		}
 	}
 	coreHandlers := map[string]gateway.HandlerFunc{
-		"core.start":        a.startHandler(),
-		"core.stop":         a.stopHandler(),
-		"account.devices":   a.accountDevicesHandler(),
-		"account.me":        a.accountHandler(),
-		"account.qrPayload": a.qrPayloadHandler(),
-		"account.qrParse":   a.qrParseHandler(),
-		"report.submit":     a.reportHandler(),
-		"push.register":     a.pushRegisterHandler(),
-		"push.unregister":   a.pushUnregisterHandler(),
-		"storage.get":       a.storageGetHandler(),
-		"storage.configure": a.storageConfigureHandler(),
-		"settings.get":      a.settingsGetHandler(),
-		"settings.set":      a.settingsSetHandler(),
+		"core.start":              a.startHandler(),
+		"core.stop":               a.stopHandler(),
+		"account.devices":         a.accountDevicesHandler(),
+		"account.me":              a.accountHandler(),
+		"account.qrPayload":       a.qrPayloadHandler(),
+		"account.qrParse":         a.qrParseHandler(),
+		"report.submit":           a.reportHandler(),
+		"push.register":           a.pushRegisterHandler(),
+		"push.unregister":         a.pushUnregisterHandler(),
+		"storage.get":             a.storageGetHandler(),
+		"storage.configure":       a.storageConfigureHandler(),
+		"settings.get":            a.settingsGetHandler(),
+		"settings.set":            a.settingsSetHandler(),
 		"settings.exportSnapshot": a.settingsExportHandler(),
 		"settings.importSnapshot": a.settingsImportHandler(),
-		"net.addPeer":      a.peerbookAddHandler(),
-		"net.removePeer":   a.peerbookRemoveHandler(),
-		"net.listPeers":    a.peerbookListHandler(),
-		"net.connectAddr":  a.connectAddrHandler(),
+		"net.addPeer":             a.peerbookAddHandler(),
+		"net.removePeer":          a.peerbookRemoveHandler(),
+		"net.listPeers":           a.peerbookListHandler(),
+		"net.connectAddr":         a.connectAddrHandler(),
 	}
 	for method, h := range coreHandlers {
 		if err := g.SetHandler(method, h); err != nil {
@@ -389,8 +397,10 @@ func (a *App) Start(ctx context.Context, cfg Config) (string, error) {
 		cleanups = append(cleanups, func() { _ = kad.Close() })
 	}
 
-	// 应用三种发现源的本机设置（显式入参优先），并初始化本地地址簿。
-	a.applyStoredDiscovery(ctx, dao, &cfg)
+	// 仅 core.start 契约入口套用默认开启策略；直接 Go API 调用由调用方显式决定。
+	if cfg.applyDiscoveryDefaults {
+		a.applyStoredDiscovery(ctx, dao, &cfg)
+	}
 
 	book := discovery.NewPeerbook(dao)
 	if err := book.Load(ctx); err != nil && a.log != nil {
@@ -407,7 +417,7 @@ func (a *App) Start(ctx context.Context, cfg Config) (string, error) {
 
 	// mDNS 局域网发现（可选）。
 	var md *discovery.MDNS
-	if cfg.EnableMDNS {
+	if cfg.EnableMDNS != nil && *cfg.EnableMDNS {
 		md, err = discovery.StartMDNS(h)
 		if err != nil && a.log != nil {
 			a.log.Warn("network", "mDNS 启动失败，降级为其他发现源", map[string]any{"err": err.Error()})
@@ -421,7 +431,7 @@ func (a *App) Start(ctx context.Context, cfg Config) (string, error) {
 
 	// 公共 DHT 兜底（可选）：使用标准 /ipfs 前缀与公共 bootstrap。
 	var publicKad *dht.IpfsDHT
-	if cfg.PublicDHT {
+	if cfg.PublicDHT != nil && *cfg.PublicDHT {
 		pubBoot := discovery.ParsePublicBootstraps(discovery.PublicBootstraps)
 		publicKad, err = netnode.NewPublicDHT(ctx, h, pubBoot)
 		if err != nil && a.log != nil {
@@ -458,18 +468,32 @@ func (a *App) Start(ctx context.Context, cfg Config) (string, error) {
 	}
 
 	dmOpts := dm.Options{
-		Host:        h,
-		DeviceKey:   devKey,
-		DAO:         dao,
-		Account:     acc,
-		InboxDir:    cfg.InboxDir,
-		Blocklist:   contactSvc,
-		Diag:        a.log,
-		Resolver:    lookup,
-		OnDelivery:  a.onDelivery,
-		OnProgress:  a.onProgress,
-		OnMessage:   a.onInbound,
-		OnRead:      a.onReadReceipt,
+		Host:       h,
+		DeviceKey:  devKey,
+		DAO:        dao,
+		Account:    acc,
+		InboxDir:   cfg.InboxDir,
+		Blocklist:  contactSvc,
+		Diag:       a.log,
+		Resolver:   lookup,
+		OnDelivery: a.onDelivery,
+		OnProgress: a.onProgress,
+		OnControlText: func(ctx context.Context, sender []byte, text string) bool {
+			svc := a.socialService()
+			if svc == nil || !social.IsControlFrame(text) {
+				return false
+			}
+			f, ok := social.Decode(text)
+			if !ok {
+				return false
+			}
+			if err := svc.HandleFrame(ctx, f); err != nil {
+				a.log.Warn("core", "处理社交控制帧失败", map[string]any{"error": err.Error()})
+			}
+			return true // 控制帧已被消费，不落聊天气泡
+		},
+		OnMessage: a.onInbound,
+		OnRead:    a.onReadReceipt,
 		OnReadSync: func(conversationIDs []string) {
 			if len(conversationIDs) > 0 {
 				a.emit("conversation.changed", map[string]any{
@@ -592,6 +616,7 @@ func (a *App) Start(ctx context.Context, cfg Config) (string, error) {
 	a.dmSvc = dmSvc
 	a.groupSvc = groupSvc
 	a.contacts = contactSvc
+	a.socialSvc = a.newSocialService(dao, contactSvc)
 	a.sm = sm
 	a.offline = offline
 	a.dir = dirClient
@@ -647,6 +672,7 @@ func (a *App) Stop() error {
 	a.fsSvc = nil
 	a.groupSvc = nil
 	a.contacts = nil
+	a.socialSvc = nil
 	a.sm = nil
 	a.offline = nil
 	a.dir = nil
@@ -736,6 +762,52 @@ func (a *App) fsService() *fspkg.Service {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.fsSvc
+}
+
+func (a *App) socialService() *social.Service {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.socialSvc
+}
+
+// newSocialService 装配社交服务：复用单聊文本通道投递控制帧，
+// 好友申请通过后自动写入通讯录；入群通过后由群服务实际投递密钥。
+func (a *App) newSocialService(dao *store.DAO, contactSvc *contacts.Service) *social.Service {
+	svc, err := social.New(social.Options{
+		DAO:  dao,
+		Self: a.accountPub,
+		Send: func(ctx context.Context, accountPub []byte, text string) (string, error) {
+			dmSvc := a.dmService()
+			if dmSvc == nil {
+				return "", errors.New("单聊服务尚未接入")
+			}
+			target, err := a.resolvePeer(ctx, accountPub)
+			if err != nil {
+				return "", err
+			}
+			return dmSvc.SendText(ctx, target, text, "")
+		},
+		Online: func(ctx context.Context, accountPub []byte) (bool, error) {
+			_, err := a.resolvePeer(ctx, accountPub)
+			return err == nil, nil
+		},
+		Emit: func(name string, data any) { a.emit(name, data) },
+		OnFriendAccepted: func(ctx context.Context, peer []byte) error {
+			if contactSvc == nil {
+				return nil
+			}
+			_, err := contactSvc.Add(ctx, peer)
+			return err
+		},
+		OnGroupInvite: func(ctx context.Context, groupID string, applicant []byte) error {
+			return a.inviteGroupApplicant(ctx, groupID, applicant)
+		},
+	})
+	if err != nil {
+		a.log.Warn("core", "社交服务初始化失败", map[string]any{"error": err.Error()})
+		return nil
+	}
+	return svc
 }
 
 // onFSEvent 把共享下载进度转成 fs.progress 事件。
@@ -962,6 +1034,25 @@ func (a *App) resolveGroupTarget(ctx context.Context, accountPub []byte) (group.
 	return t, nil
 }
 
+// inviteGroupApplicant 在管理员同意入群申请后，实际把申请人加入群并投递群密钥。
+// groupID 支持 hex 编码与原始字符串两种形式（与 group.parseGroupID 对齐）。
+func (a *App) inviteGroupApplicant(ctx context.Context, groupID string, applicant []byte) error {
+	svc := a.groupService()
+	if svc == nil {
+		return errors.New("群聊服务尚未接入")
+	}
+	gid, err := hex.DecodeString(groupID)
+	if err != nil || len(gid) == 0 {
+		return fmt.Errorf("非法群 ID: %s", groupID)
+	}
+	target, err := a.resolveGroupTarget(ctx, applicant)
+	if err != nil {
+		return fmt.Errorf("解析申请人失败: %w", err)
+	}
+	_, _, err = svc.InviteMember(ctx, gid, applicant, []group.KeyTarget{target})
+	return err
+}
+
 // acceptGroupMeta 受理经单聊通道到达的群密钥信封（P4-08）。
 func (a *App) acceptGroupMeta(env *nexmemv1.GroupKeyEnvelope) error {
 	svc := a.groupService()
@@ -975,7 +1066,8 @@ func (a *App) acceptGroupMeta(env *nexmemv1.GroupKeyEnvelope) error {
 // onGroupMessage 把入站群消息写入本地库并转发为 message.new 事件。
 // 群撤回控制帧不落库，只删除本机命中的原消息并发出 message.recalled（P6-14）；
 // 群解散控制帧校验发送方为管理员后清理本地群并发出 group.dissolved（P4-12）；
-// 群公告控制帧校验发送方为管理员后更新本机公告并发出 group.announcement（P6-26）。
+// 群公告控制帧校验发送方为管理员后更新本机公告并发出 group.announcement（P6-26）；
+// 加好友开关控制帧校验管理员后更新本机设置并发出 group.allowFriendAddChanged。
 func (a *App) onGroupMessage(ev group.Received) {
 	if group.IsDissolveNotice(ev.Plaintext) {
 		a.handleGroupDissolved(ev)
@@ -987,6 +1079,10 @@ func (a *App) onGroupMessage(ev group.Received) {
 	}
 	if text, ok := group.ParseAnnouncementNotice(ev.Plaintext); ok {
 		a.handleGroupAnnouncement(ev, text)
+		return
+	}
+	if enabled, ok := group.ParseAllowFriendAddNotice(ev.Plaintext); ok {
+		a.handleGroupAllowFriendAdd(ev, enabled)
 		return
 	}
 	if target, ok := group.ParseRecallNotice(ev.Plaintext); ok {
@@ -1116,6 +1212,36 @@ func (a *App) handleGroupAnnouncement(ev group.Received, text string) {
 	a.emit("group.announcement", map[string]any{
 		"group_id":     base64.RawURLEncoding.EncodeToString(ev.GroupID),
 		"announcement": text,
+	})
+}
+
+// handleGroupAllowFriendAdd 处理入站加好友开关控制帧：仅接受本地成员表里登记的
+// 管理员发来的设置，更新本机 group 记录后发事件供 UI 刷新成员操作入口。
+func (a *App) handleGroupAllowFriendAdd(ev group.Received, enabled bool) {
+	svc := a.groupService()
+	if svc == nil {
+		return
+	}
+	ctx := context.Background()
+	applied, err := svc.ApplyAllowFriendAdd(ctx, ev.GroupID, ev.SenderAccount, enabled)
+	if err != nil {
+		a.log.Warn("group", "群加好友设置本地处理失败", map[string]any{
+			"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+			"sender":   base64.RawURLEncoding.EncodeToString(ev.SenderAccount),
+			"error":    err.Error(),
+		})
+		return
+	}
+	if !applied {
+		a.log.Warn("group", "忽略非管理员群加好友设置", map[string]any{
+			"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+			"sender":   base64.RawURLEncoding.EncodeToString(ev.SenderAccount),
+		})
+		return
+	}
+	a.emit("group.allowFriendAddChanged", map[string]any{
+		"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+		"enabled":  enabled,
 	})
 }
 

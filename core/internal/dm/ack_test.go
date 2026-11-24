@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/nexmem/core/internal/identity"
 	"github.com/nexmem/core/internal/netnode"
@@ -94,13 +95,25 @@ func TestAckRetryThenOfflineQueue(t *testing.T) {
 		h.Close()
 	})
 
-	msgID, err := svc.SendText(ctx, Target{
+	target := Target{
 		PeerID:     silent.ID(),
 		Addrs:      silent.Addrs(),
 		AccountPub: peerAccount.Pub(),
-	}, "hi", "")
+	}
+	// 先建立稳定的 libp2p 连接，避免首次建链耗时被 ACK 超时吞掉，
+	// 导致重试帧尚未到达对端就进入下一轮，使断言偶发少一帧。
+	if err := h.Connect(ctx, peer.AddrInfo{ID: target.PeerID, Addrs: target.Addrs}); err != nil {
+		t.Fatalf("预先连接对端: %v", err)
+	}
+
+	msgID, err := svc.SendText(ctx, target, "hi", "")
 	if err == nil {
 		t.Fatalf("对端不回 ACK 时发送应失败")
+	}
+	// 最后一次入站流处理器可能与 SendText 返回并发，短暂等待其计数完成。
+	deadline := time.Now().Add(time.Second)
+	for frames.Load() < DefaultMaxAttempts && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
 	}
 	if n := frames.Load(); n != DefaultMaxAttempts {
 		t.Fatalf("对端应收到 %d 帧，实际 %d", DefaultMaxAttempts, n)

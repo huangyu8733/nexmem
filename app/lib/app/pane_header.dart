@@ -12,8 +12,17 @@ class PaneHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 52,
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Container(
+      height: 56,
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        border: Border(
+          bottom: BorderSide(
+            color: scheme.onSurface.withValues(alpha: 0.06),
+          ),
+        ),
+      ),
       child: Row(
         children: <Widget>[
           const SizedBox(width: NexmemMetrics.space16),
@@ -23,8 +32,8 @@ class PaneHeader extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
                   ),
             ),
           ),
@@ -47,21 +56,31 @@ class SearchBox extends StatelessWidget {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final Widget box = Container(
-      height: 32,
-      margin: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space12),
-      padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space8),
+      height: 36,
+      margin: const EdgeInsets.symmetric(
+        horizontal: NexmemMetrics.space12,
+        vertical: NexmemMetrics.space8,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space12),
       decoration: BoxDecoration(
-        color: scheme.onSurface.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(NexmemMetrics.radiusListItem),
+        color: scheme.onSurface.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: scheme.onSurface.withValues(alpha: 0.04),
+        ),
       ),
       child: Row(
         children: <Widget>[
-          Icon(Icons.search, size: 16, color: scheme.onSurface.withValues(alpha: 0.4)),
-          const SizedBox(width: NexmemMetrics.space4),
+          Icon(
+            Icons.search,
+            size: 18,
+            color: scheme.onSurface.withValues(alpha: 0.45),
+          ),
+          const SizedBox(width: NexmemMetrics.space8),
           Text(
             context.t(hint),
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurface.withValues(alpha: 0.4),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurface.withValues(alpha: 0.45),
                 ),
           ),
         ],

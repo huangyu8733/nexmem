@@ -12,6 +12,7 @@ package group
 //   - group.dissolve  管理员解散群聊，通知成员并清理本地群（P4-12）
 //   - group.setStorage 由管理员配置群盘
 //   - group.setAnnouncement 由管理员设置群公告（P6-26）
+//   - group.setAllowFriendAdd 由管理员开关「允许成员互加好友」（默认关闭）
 //   - group.setAlias  任意成员设置本机群备注（P6-27）
 //   - dm.sendGroupText 加密广播群文本并尽力写群盘（P4-05/P4-06）
 
@@ -59,7 +60,8 @@ type Gateway struct {
 
 // Bind 注册 group.create / group.list / group.members / group.invite /
 // group.remove / group.leave / group.dissolve / group.setStorage /
-// group.setAnnouncement / group.setAlias / dm.sendGroupText。
+// group.setAnnouncement / group.setAllowFriendAdd / group.setAlias /
+// dm.sendGroupText。
 func Bind(g *gateway.Gateway, gw *Gateway) error {
 	if g == nil {
 		return errors.New("缺少网关")
@@ -68,20 +70,21 @@ func Bind(g *gateway.Gateway, gw *Gateway) error {
 		return errors.New("缺少群聊服务")
 	}
 	handlers := map[string]gateway.HandlerFunc{
-		"group.create":          gw.createHandler(),
-		"group.list":            gw.listHandler(),
-		"group.members":         gw.membersHandler(),
-		"group.invite":          gw.inviteHandler(),
-		"group.remove":          gw.removeHandler(),
-		"group.leave":           gw.leaveHandler(),
-		"group.dissolve":        gw.dissolveHandler(),
-		"group.setStorage":      gw.setStorageHandler(),
-		"group.removeStorage":   gw.removeStorageHandler(),
-		"group.setAnnouncement": gw.setAnnouncementHandler(),
-		"group.setAlias":        gw.setAliasHandler(),
-		"dm.sendGroupText":      gw.sendTextHandler(),
-		"dm.sendGroupFile":      gw.sendFileHandler(),
-		"file.downloadGroup":    gw.downloadFileHandler(),
+		"group.create":            gw.createHandler(),
+		"group.list":              gw.listHandler(),
+		"group.members":           gw.membersHandler(),
+		"group.invite":            gw.inviteHandler(),
+		"group.remove":            gw.removeHandler(),
+		"group.leave":             gw.leaveHandler(),
+		"group.dissolve":          gw.dissolveHandler(),
+		"group.setStorage":        gw.setStorageHandler(),
+		"group.removeStorage":     gw.removeStorageHandler(),
+		"group.setAnnouncement":   gw.setAnnouncementHandler(),
+		"group.setAllowFriendAdd": gw.setAllowFriendAddHandler(),
+		"group.setAlias":          gw.setAliasHandler(),
+		"dm.sendGroupText":        gw.sendTextHandler(),
+		"dm.sendGroupFile":        gw.sendFileHandler(),
+		"file.downloadGroup":      gw.downloadFileHandler(),
 	}
 	for method, h := range handlers {
 		if err := g.SetHandler(method, h); err != nil {
@@ -182,6 +185,7 @@ func (gw *Gateway) membersHandler() gateway.HandlerFunc {
 			"key_version":        info.KeyVersion,
 			"storage_configured": info.StorageConfigured,
 			"announcement":       info.Announcement,
+			"allow_friend_add":   info.AllowFriendAdd,
 			"members":            members,
 		}, nil
 	}
@@ -224,6 +228,7 @@ func (gw *Gateway) listHandler() gateway.HandlerFunc {
 				"key_version":        int(info.KeyVersion),
 				"storage_configured": info.StorageConfigured,
 				"announcement":       info.Announcement,
+				"allow_friend_add":   info.AllowFriendAdd,
 			})
 		}
 		return map[string]any{"items": items}, nil
@@ -506,6 +511,36 @@ func (gw *Gateway) setAnnouncementHandler() gateway.HandlerFunc {
 	}
 }
 
+// setAllowFriendAddHandler 处理 group.setAllowFriendAdd：管理员开关群内互加好友，
+// 本机落库后广播控制帧给成员；默认关闭，成员侧收到帧后校验管理员身份再应用。
+func (gw *Gateway) setAllowFriendAddHandler() gateway.HandlerFunc {
+	return func(ctx context.Context, params json.RawMessage) (any, *gateway.Error) {
+		var req struct {
+			GroupID string `json:"group_id"`
+			Enabled *bool  `json:"enabled"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "group.setAllowFriendAdd 参数不是合法 JSON: %v", err)
+		}
+		groupID, err := parseGroupID(req.GroupID)
+		if err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "群 ID 非法: %v", err)
+		}
+		if req.Enabled == nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "缺少必填参数 enabled")
+		}
+		svc, gerr := gw.service()
+		if gerr != nil {
+			return nil, gerr
+		}
+		enabled, err := svc.SetAllowFriendAdd(ctx, groupID, *req.Enabled)
+		if err != nil {
+			return nil, mapGroupError("设置群加好友权限失败", err)
+		}
+		return map[string]any{"enabled": enabled}, nil
+	}
+}
+
 // setAliasHandler 处理 group.setAlias：任意成员设置或清除本机群备注（P6-27）。
 // 备注不上行、不广播，仅影响本机群名展示。
 func (gw *Gateway) setAliasHandler() gateway.HandlerFunc {
@@ -649,9 +684,9 @@ func (gw *Gateway) downloadFileHandler() gateway.HandlerFunc {
 			return nil, gateway.NewError(gateway.CodeS3IO, "写入群文件失败: %v", err)
 		}
 		return map[string]any{
-			"path":    req.Path,
-			"size":    int64(len(plain)),
-			"sha256":  base64.StdEncoding.EncodeToString(sum[:]),
+			"path":   req.Path,
+			"size":   int64(len(plain)),
+			"sha256": base64.StdEncoding.EncodeToString(sum[:]),
 		}, nil
 	}
 }
