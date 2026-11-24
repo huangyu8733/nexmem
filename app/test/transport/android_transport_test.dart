@@ -351,4 +351,72 @@ void main() {
     dataDir = null;
     expect(await openAndroidSession(), isNull);
   });
+
+  group('androidStartConfig', () {
+    test('未注入网络配置时仅包含数据目录', () {
+      final Map<String, dynamic> config = androidStartConfig('/data/user/0/x/files');
+      expect(config['data_dir'], '/data/user/0/x/files');
+      expect(config.containsKey('bootstraps'), isFalse);
+      expect(config.containsKey('directory_url'), isFalse);
+      expect(config.containsKey('relay_addrs'), isFalse);
+    });
+
+    test('引导节点、索引服务与中继地址按逗号拆分并去除空白', () {
+      final Map<String, dynamic> config = androidCoreStartConfig(
+        dataDir: '/data/user/0/x/files',
+        bootstraps: ' /ip4/1.2.3.4/tcp/14001/p2p/12D3KooA , , /ip4/5.6.7.8/tcp/14001/p2p/12D3KooB ',
+        directoryUrl: ' http://1.2.3.4:8081 ',
+        relayAddrs: '/ip4/1.2.3.4/tcp/14002/p2p/12D3KooR1, /ip4/2.2.2.2/tcp/14002/p2p/12D3KooR2',
+      );
+      expect(config['bootstraps'], <String>[
+        '/ip4/1.2.3.4/tcp/14001/p2p/12D3KooA',
+        '/ip4/5.6.7.8/tcp/14001/p2p/12D3KooB',
+      ]);
+      expect(config['directory_url'], 'http://1.2.3.4:8081');
+      expect(config['relay_addrs'], <String>[
+        '/ip4/1.2.3.4/tcp/14002/p2p/12D3KooR1',
+        '/ip4/2.2.2.2/tcp/14002/p2p/12D3KooR2',
+      ]);
+    });
+
+    test('中继地址为空时不会写入 relay_addrs', () {
+      final Map<String, dynamic> config = androidCoreStartConfig(
+        dataDir: '/data/user/0/x/files',
+        bootstraps: '',
+        directoryUrl: '',
+        relayAddrs: '  , ,  ',
+      );
+      expect(config, <String, dynamic>{'data_dir': '/data/user/0/x/files'});
+    });
+
+    test('三种发现源配置按开关与列表正确注入', () {
+      final Map<String, dynamic> config = androidCoreStartConfig(
+        dataDir: '/data/user/0/x/files',
+        bootstraps: '',
+        directoryUrl: '',
+        relayAddrs: '',
+        mdns: 'true',
+        publicDht: 'true',
+        manualAddrs: '/ip4/192.168.1.10/tcp/4001/p2p/12D3KooW1, /ip4/1.2.3.4/udp/4001/quic-v1/p2p/12D3KooW2',
+      );
+      expect(config['enable_mdns'], isTrue);
+      expect(config['public_dht'], isTrue);
+      expect(config['manual_addrs'], <String>[
+        '/ip4/192.168.1.10/tcp/4001/p2p/12D3KooW1',
+        '/ip4/1.2.3.4/udp/4001/quic-v1/p2p/12D3KooW2',
+      ]);
+    });
+
+    test('发现源未注入时不写入任何相关键', () {
+      final Map<String, dynamic> config = androidCoreStartConfig(
+        dataDir: '/data/user/0/x/files',
+        bootstraps: '',
+        directoryUrl: '',
+        relayAddrs: '',
+      );
+      expect(config.containsKey('enable_mdns'), isFalse);
+      expect(config.containsKey('public_dht'), isFalse);
+      expect(config.containsKey('manual_addrs'), isFalse);
+    });
+  });
 }

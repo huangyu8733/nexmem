@@ -1,0 +1,25 @@
+[Unit]
+Description=Nexmem Circuit Relay v2 Node
+Documentation=https://github.com/huangyu8733/nexmem
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexmem
+Group=nexmem
+EnvironmentFile=/etc/nexmem/server.env
+ExecStart=/opt/nexmem/bin/nexmem-relay \
+  -listen /ip4/0.0.0.0/tcp/14002,/ip4/0.0.0.0/udp/14002/quic-v1 \
+  -announce /ip4/${NEXMEM_PUBLIC_IP}/tcp/14002,/ip4/${NEXMEM_PUBLIC_IP}/udp/14002/quic-v1 \
+  -id /var/lib/nexmem/relay.key \
+  -bandwidth 1073741824 -window 1h
+Restart=unless-stopped
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nexmem
+
+[Install]
+WantedBy=multi-user.target

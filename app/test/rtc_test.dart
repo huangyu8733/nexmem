@@ -85,6 +85,25 @@ class _FakeMedia implements RtcMediaEngine {
   }
 
   @override
+  Future<void> setVideoEnabled(bool enabled) async {
+    calls.add('video:$enabled');
+  }
+
+  @override
+  Future<void> switchCamera() async {
+    calls.add('switch-camera');
+  }
+
+  @override
+  bool get hasVideo => false;
+
+  @override
+  Object? get remoteVideoRenderer => null;
+
+  @override
+  Object? get localVideoRenderer => null;
+
+  @override
   Future<void> dispose() async {
     disposed = true;
     await _cand.close();
@@ -141,6 +160,36 @@ void main() {
         sdp: 'x' * (kMaxRtcSignalBytes + 1),
       );
       expect(() => huge.encode(), throwsFormatException);
+    });
+
+    test('v2 保留会话标识、视频标记与成员列表', () {
+      const RtcSignal signal = RtcSignal(
+        type: RtcSignalType.offer,
+        sdp: 'v=0 offer',
+        callId: 'g-123',
+        to: 'peer-1',
+        video: true,
+        members: <String>['peer-1', 'peer-2', 'peer-3'],
+      );
+      final RtcSignal decoded = RtcSignal.fromPayloadB64(signal.toPayloadB64());
+      expect(decoded.callId, 'g-123');
+      expect(decoded.to, 'peer-1');
+      expect(decoded.video, isTrue);
+      expect(decoded.members, <String>['peer-1', 'peer-2', 'peer-3']);
+      final Map<String, dynamic> json = jsonDecode(utf8.decode(signal.encode()))
+          as Map<String, dynamic>;
+      expect(json['v'], 2);
+    });
+
+    test('纯 1v1 语音仍编码为 v1，保持旧端兼容', () {
+      const RtcSignal signal = RtcSignal(
+        type: RtcSignalType.offer,
+        sdp: 'v=0 offer',
+      );
+      final Map<String, dynamic> json = jsonDecode(utf8.decode(signal.encode()))
+          as Map<String, dynamic>;
+      expect(json['v'], 1);
+      expect(json.containsKey('call_id'), isFalse);
     });
   });
 
@@ -265,6 +314,118 @@ void main() {
       expect(transport.calls, isEmpty);
       await service.dispose();
     });
+
+    test('视频邀请在来电中可见，接听时采集视频', () async {
+      final transport = _FakeTransport();
+      late _FakeMedia media;
+      final service = CallService(
+        transport: transport,
+        mediaFactory: () {
+          media = _FakeMedia();
+          return media;
+        },
+      );
+      await service.handleSignal(
+        'peer-v',
+        RtcSignal(
+          type: RtcSignalType.offer,
+          sdp: 'v=0 offer',
+          callId: 'd-v1',
+          video: true,
+        ).toPayloadB64(),
+      );
+      expect(service.current!.state, CallState.incoming);
+      expect(service.current!.video, isTrue);
+
+      await service.answer();
+      expect(media.calls, contains('start:video'));
+      final RtcSignal answer = RtcSignal.fromPayloadB64(
+        transport.calls.single.$2!['payload_b64'] as String,
+      );
+      expect(answer.callId, 'd-v1');
+      expect(answer.video, isTrue);
+      await service.dispose();
+    });
+
+    test('群聊呼叫为每个成员各发一路 offer，并共享成员列表', () async {
+      final transport = _FakeTransport();
+      final List<_FakeMedia> medias = <_FakeMedia>[];
+      final service = CallService(
+        transport: transport,
+        selfAccount: 'self',
+        mediaFactory: () {
+          final _FakeMedia media = _FakeMedia();
+          medias.add(media);
+          return media;
+        },
+      );
+      await service.startGroupOutgoing(<String>['p1', 'p2', 'p3']);
+      expect(transport.calls.length, 3);
+      final List<RtcSignal> offers = transport.calls
+          .map(
+            ((String, Map<String, dynamic>?) entry) => RtcSignal.fromPayloadB64(
+              entry.$2!['payload_b64'] as String,
+            ),
+          )
+          .toList(growable: false);
+      expect(offers.every((RtcSignal o) => o.type == RtcSignalType.offer), isTrue);
+      expect(offers.map((RtcSignal o) => o.to).toSet(), <String>{'p1', 'p2', 'p3'});
+      expect(offers.map((RtcSignal o) => o.callId).toSet().length, 1);
+      expect(offers.every((RtcSignal o) => o.members.length == 3), isTrue);
+      expect(service.current!.isGroup, isTrue);
+      expect(service.current!.participants.length, 3);
+      expect(medias.length, 3);
+      await service.dispose();
+    });
+
+    test('通话中新成员加入时自动接通，不弹新的来电页', () async {
+      final transport = _FakeTransport();
+      final service = CallService(
+        transport: transport,
+        selfAccount: 'self',
+        mediaFactory: () => _FakeMedia(),
+      );
+      await service.startGroupOutgoing(<String>['p1']);
+      final String callId = service.current!.callId;
+
+      await service.handleSignal(
+        'p2',
+        RtcSignal(
+          type: RtcSignalType.offer,
+          sdp: 'v=0 offer from p2',
+          callId: callId,
+          members: <String>['p1', 'p2'],
+        ).toPayloadB64(),
+      );
+      expect(service.current!.state, isNot(CallState.incoming));
+      expect(service.current!.participants.length, 2);
+      final RtcSignal answer = RtcSignal.fromPayloadB64(
+        transport.calls.last.$2!['payload_b64'] as String,
+      );
+      expect(answer.type, RtcSignalType.answer);
+      await service.dispose();
+    });
+
+    test('摄像头开关与切换作用于所有会话', () async {
+      final List<_FakeMedia> medias = <_FakeMedia>[];
+      final service = CallService(
+        transport: _FakeTransport(),
+        selfAccount: 'self',
+        mediaFactory: () {
+          final _FakeMedia media = _FakeMedia();
+          medias.add(media);
+          return media;
+        },
+      );
+      await service.startGroupOutgoing(<String>['p1', 'p2'], video: true);
+      await service.setVideoEnabled(false);
+      await service.switchCamera();
+      for (final _FakeMedia media in medias) {
+        expect(media.calls, contains('video:false'));
+      }
+      expect(medias.first.calls, contains('switch-camera'));
+      await service.dispose();
+    });
   });
 
   group('CallPage 通话 UI', () {
@@ -313,6 +474,41 @@ void main() {
       await tester.tap(find.byKey(const ValueKey<String>('call-hangup')));
       expect(muted, 1);
       expect(hung, 1);
+    });
+
+    testWidgets('群聊视频通话显示成员网格与摄像头按钮', (WidgetTester tester) async {
+      int camera = 0;
+      int switched = 0;
+      await tester.pumpWidget(MaterialApp(
+        theme: NexmemTheme.light(),
+        home: CallPage(
+          info: const CallInfo(
+            state: CallState.connected,
+            peer: 'p1',
+            video: true,
+            isGroup: true,
+            callId: 'g-1',
+            participants: <CallParticipant>[
+              CallParticipant(peer: 'p1', video: true, connected: true),
+              CallParticipant(peer: 'p2', video: true, connected: true),
+              CallParticipant(peer: 'p3', video: true),
+            ],
+          ),
+          peerName: '项目组',
+          onAccept: () {},
+          onReject: () {},
+          onHangup: () {},
+          onToggleMute: () {},
+          onToggleCamera: () => camera++,
+          onSwitchCamera: () => switched++,
+        ),
+      ));
+      expect(find.text('3 人'), findsOneWidget);
+      expect(find.byType(GridView), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey<String>('call-camera')));
+      await tester.tap(find.byKey(const ValueKey<String>('call-switch-camera')));
+      expect(camera, 1);
+      expect(switched, 1);
     });
   });
 }

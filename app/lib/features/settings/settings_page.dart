@@ -9,12 +9,16 @@ import '../../app/pane_header.dart';
 import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
+import '../files/file_share_page.dart';
+import '../updater/update_dialog.dart';
 import 'backup.dart';
 import 'diagnostics.dart';
+import 'discovery_settings.dart';
 import 'language_dialog.dart';
 import 'relay_settings.dart';
 import 'profile_panel.dart';
 import 'profile_view.dart';
+import 'settings_pane.dart';
 import 'report.dart';
 import 'scrolling_id_text.dart';
 import 'settings_service.dart';
@@ -22,7 +26,7 @@ import 'settings_sync.dart';
 import 'storage_config.dart';
 
 /// 客户端版本号，与 pubspec.yaml 的 `version` 保持一致。
-const String appVersion = '1.0.0';
+const String appVersion = '1.1.0';
 
 /// 我的 / 设置（ui-spec.md §5）。
 ///
@@ -43,6 +47,7 @@ class SettingsPage extends StatelessWidget {
     this.backup = const UnavailableBackupService(),
     this.storage = const UnavailableStorageTestService(),
     this.settings = const UnavailableSettingsService(),
+    this.session,
     this.webOnlineOnly = false,
     this.coreInfo,
     this.onOpenProfileView,
@@ -68,6 +73,9 @@ class SettingsPage extends StatelessWidget {
 
   /// 本机键值设置（P6-15 / P6-20），用于中继开关等需要重启生效的配置。
   final SettingsService settings;
+
+  /// 内核会话：用于发现源设置中读写本地地址簿；为空时隐藏手动地址区块。
+  final CoreSession? session;
 
   /// Web 端常驻「仅在线接收」说明（ui-spec.md §5 / §7）。
   final bool webOnlineOnly;
@@ -379,6 +387,7 @@ WidgetBuilder settingsPaneBuilder({
   ValueChanged<ThemeMode>? onThemeModeChanged,
   required ReportSink reportSink,
   CoreInfo? coreInfo,
+  CoreSession? session,
 }) {
   switch (label) {
     case '账号与安全':
@@ -390,6 +399,7 @@ WidgetBuilder settingsPaneBuilder({
             diagnostics: diagnostics,
             ping: ping,
             settings: settings,
+            session: session,
           );
     case '离线存储':
       return (BuildContext context) => StorageConfigDialog(service: storage);
@@ -526,11 +536,13 @@ class _NetworkDiagnosticsDialog extends StatefulWidget {
     required this.diagnostics,
     required this.ping,
     required this.settings,
+    this.session,
   });
 
   final DiagnosticsService diagnostics;
   final PingService ping;
   final SettingsService settings;
+  final CoreSession? session;
 
   @override
   State<_NetworkDiagnosticsDialog> createState() =>
@@ -596,7 +608,7 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
 
   /// 打开中继设置（P6-20）；保存后由对话框自身提示「重启后生效」。
   void _openRelay() {
-    showDialog<void>(
+    showPaneDialog<void>(
       context: context,
       builder: (BuildContext context) =>
           RelaySettingsDialog(service: widget.settings),
@@ -609,10 +621,11 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
       title: Text(context.t('网络诊断')),
       content: SizedBox(
         width: 360,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            FutureBuilder<DiagnosticsSnapshot>(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              FutureBuilder<DiagnosticsSnapshot>(
               future: _future,
               builder:
                   (
@@ -685,7 +698,55 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
               trailing: const Icon(Icons.chevron_right, size: 18),
               onTap: _openRelay,
             ),
-          ],
+            ListTile(
+              key: const ValueKey<String>('settings-network-discovery'),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              leading: const Icon(Icons.travel_explore, size: 20),
+              title: Text(context.t('发现源设置')),
+              subtitle: Text(
+                context.t('局域网发现、公共 DHT 与手动地址，三者可并存'),
+                style: const TextStyle(fontSize: 12),
+              ),
+              trailing: const Icon(Icons.chevron_right, size: 18),
+              onTap: () {
+                showPaneDialog<void>(
+                  context: context,
+                  builder: (BuildContext context) => DiscoverySettingsDialog(
+                    service: widget.settings,
+                    session: widget.session,
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              key: const ValueKey<String>('settings-network-fileshare'),
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              leading: const Icon(Icons.folder_shared, size: 20),
+              title: Text(context.t('文件共享')),
+              subtitle: Text(
+                context.t('P2P 发布文件夹，多源加速下载，大小不限'),
+                style: const TextStyle(fontSize: 12),
+              ),
+              trailing: const Icon(Icons.chevron_right, size: 18),
+              onTap: () {
+                final CoreSession? session = widget.session;
+                if (session == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(context.t('内核尚未启动，无法使用文件共享'))),
+                  );
+                  return;
+                }
+                showPaneDialog<void>(
+                  context: context,
+                  builder: (BuildContext context) =>
+                      FileSharePage(session: session),
+                );
+              },
+            ),
+            ],
+          ),
         ),
       ),
       actions: <Widget>[
@@ -746,7 +807,7 @@ class _AboutDialog extends StatelessWidget {
 
   Future<void> _report(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    final bool? submitted = await showDialog<bool>(
+    final bool? submitted = await showPaneDialog<bool>(
       context: context,
       builder: (BuildContext context) =>
           ReportDialog(reportSink: reportSink, diagnostics: diagnostics),
@@ -818,6 +879,14 @@ class _AboutDialog extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: NexmemMetrics.space12),
+              ListTile(
+                key: const ValueKey<String>('about-update'),
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.system_update, size: 22),
+                title: Text(context.t('检查更新')),
+                subtitle: Text(context.t('从 GitHub 检查并下载新版安装包')),
+                onTap: () => showUpdateDialog(context, appVersion),
+              ),
               ListTile(
                 key: const ValueKey<String>('about-export'),
                 contentPadding: EdgeInsets.zero,

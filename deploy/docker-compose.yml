@@ -1,42 +1,97 @@
+# Nexmem 服务端一键编排：directory + bootstrap + relay
+#
+# 1) 复制 .env.example 为 .env，至少填写 NEXMEM_PUBLIC_IP 为服务器真实公网 IP。
+# 2) docker compose -f deploy/docker-compose.yml up -d --build
+# 3) 查看 bootstrap / relay 的 PeerID：docker compose -f deploy/docker-compose.yml logs bootstrap
+#
+# 防火墙需放行：8081/tcp（directory）、14001/tcp+udp（bootstrap）、14002/tcp+udp（relay）。
+
 name: nexmem-p0
 
 services:
-  # 私有 DHT 入口：所有客户端的第一跳
+  # 索引服务：账号 -> 设备公钥映射、离线上传票据池。
+  # 客户端必须指向同一个 directory，否则无法按账号解析对端。
+  directory:
+    build:
+      context: ..
+      dockerfile: deploy/directory.Dockerfile
+    image: nexmem-directory:local
+    command:
+      - "-addr"
+      - ":8081"
+      - "-db"
+      - "/data/directory.db"
+    ports:
+      - "${NEXMEM_DIRECTORY_PORT:-8081}:8081"
+    volumes:
+      - directory-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "nc -w 2 127.0.0.1 8081 </dev/null >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # 私有 DHT 入口：所有客户端的第一跳。
+  # -announce 必须写服务器公网 IP 与宿主机映射端口，否则其他节点拿到无法拨号的地址。
   bootstrap:
     build:
       context: ..
       dockerfile: deploy/bootstrap.Dockerfile
+    image: nexmem-bootstrap:local
     command:
       - "-listen"
       - "/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/udp/4001/quic-v1"
+      - "-announce"
+      - "/ip4/${NEXMEM_PUBLIC_IP:-127.0.0.1}/tcp/${NEXMEM_BOOTSTRAP_PORT:-14001},/ip4/${NEXMEM_PUBLIC_IP:-127.0.0.1}/udp/${NEXMEM_BOOTSTRAP_PORT:-14001}/quic-v1"
       - "-id"
       - "/data/bootstrap.key"
     ports:
-      - "14001:4001/tcp"
-      - "14001:4001/udp"
+      - "${NEXMEM_BOOTSTRAP_PORT:-14001}:4001/tcp"
+      - "${NEXMEM_BOOTSTRAP_PORT:-14001}:4001/udp"
     volumes:
       - bootstrap-data:/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "nc -w 2 127.0.0.1 4001 </dev/null >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
-  # Circuit Relay v2 兜底节点，用于验证打洞失败后的回退链路
+  # Circuit Relay v2 兜底节点：使用独立二进制，带宽限额真正生效。
   relay:
     build:
       context: ..
       dockerfile: deploy/bootstrap.Dockerfile
+    image: nexmem-bootstrap:local
+    entrypoint: ["nexmem-relay"]
     command:
       - "-listen"
       - "/ip4/0.0.0.0/tcp/4002,/ip4/0.0.0.0/udp/4002/quic-v1"
+      - "-announce"
+      - "/ip4/${NEXMEM_PUBLIC_IP:-127.0.0.1}/tcp/${NEXMEM_RELAY_PORT:-14002},/ip4/${NEXMEM_PUBLIC_IP:-127.0.0.1}/udp/${NEXMEM_RELAY_PORT:-14002}/quic-v1"
       - "-id"
       - "/data/relay.key"
-      - "-relay"
-      - "-dht=false"
+      - "-bandwidth"
+      - "${NEXMEM_RELAY_BANDWIDTH:-1073741824}"
+      - "-window"
+      - "${NEXMEM_RELAY_WINDOW:-1h}"
     ports:
-      - "14002:4002/tcp"
-      - "14002:4002/udp"
+      - "${NEXMEM_RELAY_PORT:-14002}:4002/tcp"
+      - "${NEXMEM_RELAY_PORT:-14002}:4002/udp"
     volumes:
       - relay-data:/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "nc -w 2 127.0.0.1 4002 </dev/null >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
 volumes:
+  directory-data:
   bootstrap-data:
   relay-data:

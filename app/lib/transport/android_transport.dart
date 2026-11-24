@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -188,6 +189,22 @@ class AndroidTransport implements CoreTransport {
     }
   }
 
+  /// 拉起系统目录选择器并把 SAF 目录树复制到应用缓存，回传可读绝对路径。
+  /// 用户取消或插件缺失时返回 null。
+  Future<String?> pickDirectory() async {
+    try {
+      return await _channel.invokeMethod<String>('pickDirectory');
+    } on PlatformException catch (error) {
+      throw NexmemException(
+        'NOT_ONLINE',
+        '选择目录失败: ${error.message ?? error.code}',
+        retryable: true,
+      );
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
   /// 拉起 Android 前台服务以尽量提升进程存活率（P6-01）。
   ///
   /// 这是尽力而为的降级设计：原生侧 startService 成功返回 true；插件缺失、权限
@@ -345,7 +362,75 @@ Future<CoreSession?> openAndroidSession() async {
   unawaited(transport.startForegroundService());
   return CoreSession(
     transport,
-    startConfig: <String, dynamic>{'data_dir': dataDir},
+    startConfig: androidStartConfig(dataDir),
     pickFile: transport.pickFile,
+    pickDirectory: transport.pickDirectory,
   );
+}
+
+/// 构造 Android 端 `core.start` 配置。
+///
+/// 数据目录由原生侧提供；引导节点、索引服务与中继地址来自 `--dart-define`
+/// 注入（也可用同名环境变量），便于本机/局域网联调或统一公网部署时把移动端
+/// 指向自建的基础设施。未注入时保持空配置，行为与发布版一致（离线空态）。
+Map<String, dynamic> androidStartConfig(String dataDir) {
+  const String bootstrapsDefine = String.fromEnvironment('NEXMEM_BOOTSTRAPS');
+  const String directoryDefine = String.fromEnvironment('NEXMEM_DIRECTORY_URL');
+  const String relayAddrsDefine = String.fromEnvironment('NEXMEM_RELAY_ADDRS');
+  const String mdnsDefine = String.fromEnvironment('NEXMEM_MDNS');
+  const String publicDhtDefine = String.fromEnvironment('NEXMEM_PUBLIC_DHT');
+  const String manualAddrsDefine = String.fromEnvironment('NEXMEM_MANUAL_ADDRS');
+  final Map<String, String> env = Platform.environment;
+  return androidCoreStartConfig(
+    dataDir: dataDir,
+    bootstraps: bootstrapsDefine.isNotEmpty
+        ? bootstrapsDefine
+        : (env['NEXMEM_BOOTSTRAPS'] ?? ''),
+    directoryUrl: directoryDefine.isNotEmpty
+        ? directoryDefine
+        : (env['NEXMEM_DIRECTORY_URL'] ?? ''),
+    relayAddrs: relayAddrsDefine.isNotEmpty
+        ? relayAddrsDefine
+        : (env['NEXMEM_RELAY_ADDRS'] ?? ''),
+    mdns: mdnsDefine.isNotEmpty ? mdnsDefine : (env['NEXMEM_MDNS'] ?? ''),
+    publicDht: publicDhtDefine.isNotEmpty
+        ? publicDhtDefine
+        : (env['NEXMEM_PUBLIC_DHT'] ?? ''),
+    manualAddrs: manualAddrsDefine.isNotEmpty
+        ? manualAddrsDefine
+        : (env['NEXMEM_MANUAL_ADDRS'] ?? ''),
+  );
+}
+
+/// 把注入的原始字符串规范化为 `core.start` 配置；抽成纯函数便于单测。
+Map<String, dynamic> androidCoreStartConfig({
+  required String dataDir,
+  required String bootstraps,
+  required String directoryUrl,
+  required String relayAddrs,
+  String mdns = '',
+  String publicDht = '',
+  String manualAddrs = '',
+}) {
+  final List<String> bootstrapsList = _splitCommaList(bootstraps);
+  final List<String> relayList = _splitCommaList(relayAddrs);
+  final List<String> manualList = _splitCommaList(manualAddrs);
+  final String directory = directoryUrl.trim();
+  return <String, dynamic>{
+    'data_dir': dataDir,
+    if (bootstrapsList.isNotEmpty) 'bootstraps': bootstrapsList,
+    if (directory.isNotEmpty) 'directory_url': directory,
+    if (relayList.isNotEmpty) 'relay_addrs': relayList,
+    if (mdns.trim().isNotEmpty) 'enable_mdns': mdns.trim() == 'true',
+    if (publicDht.trim().isNotEmpty) 'public_dht': publicDht.trim() == 'true',
+    if (manualList.isNotEmpty) 'manual_addrs': manualList,
+  };
+}
+
+List<String> _splitCommaList(String raw) {
+  return raw
+      .split(',')
+      .map((String item) => item.trim())
+      .where((String item) => item.isNotEmpty)
+      .toList(growable: false);
 }

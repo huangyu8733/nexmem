@@ -142,6 +142,39 @@ class QrCard {
   final String displayName;
 }
 
+/// 本地地址簿条目（三种发现源之一：手动/二维码导入的对端地址）。
+class PeerEntry {
+  const PeerEntry({
+    required this.accountId,
+    required this.peerId,
+    required this.addrs,
+    this.label = '',
+    this.updatedAt = 0,
+  });
+
+  factory PeerEntry.fromJson(Map<String, dynamic> json) {
+    final Object? account = json['account_id'];
+    final Object? peer = json['peer_id'];
+    final Object? rawAddrs = json['addrs'];
+    final List<String> addrs = rawAddrs is List
+        ? rawAddrs.whereType<String>().toList(growable: false)
+        : <String>[];
+    return PeerEntry(
+      accountId: account is String ? account : '',
+      peerId: peer is String ? peer : '',
+      addrs: addrs,
+      label: json['label'] is String ? json['label'] as String : '',
+      updatedAt: json['updated_at'] is int ? json['updated_at'] as int : 0,
+    );
+  }
+
+  final String accountId;
+  final String peerId;
+  final List<String> addrs;
+  final String label;
+  final int updatedAt;
+}
+
 /// 一页会话历史：本页消息（按内核倒序回包顺序）与是否还有更早的消息。
 class HistoryPage {
   const HistoryPage({required this.messages, required this.hasMore});
@@ -175,6 +208,7 @@ class CoreSession {
     this.requestTimeout = const Duration(seconds: 20),
     this.startConfig,
     this.pickFile,
+    this.pickDirectory,
   });
 
   final CoreTransport transport;
@@ -187,6 +221,9 @@ class CoreSession {
   ///
   /// 移动端由原生通道把选中的 `content://` 复制到应用目录后回传绝对路径。
   final Future<ChatAttachment?> Function()? pickFile;
+
+  /// 平台目录选择器（P2P 文件夹共享）；为空时分享页退回本机路径输入框。
+  final Future<String?> Function()? pickDirectory;
 
   CoreAccount? _account;
 
@@ -281,6 +318,60 @@ class CoreSession {
       timeout: requestTimeout,
     );
     return QrCard.fromJson(data);
+  }
+
+  /// 列出本地地址簿（手动发现源）的全部记录。
+  Future<List<PeerEntry>> listPeers() async {
+    final Map<String, dynamic> data = await transport.call(
+      'net.listPeers',
+      timeout: requestTimeout,
+    );
+    final Object? items = data['items'];
+    if (items is! List) {
+      return <PeerEntry>[];
+    }
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map(PeerEntry.fromJson)
+        .toList(growable: false);
+  }
+
+  /// 写入本地地址簿：把账号 ID 与对端 multiaddr 关联。
+  Future<void> addPeer({
+    required String accountId,
+    required String peerId,
+    required List<String> addrs,
+    String label = '',
+  }) async {
+    await transport.call(
+      'net.addPeer',
+      params: <String, dynamic>{
+        'account_id': accountId,
+        'peer_id': peerId,
+        'addrs': addrs,
+        'label': label,
+      },
+      timeout: requestTimeout,
+    );
+  }
+
+  /// 从本地地址簿删除一条记录。
+  Future<void> removePeer(String accountId) async {
+    await transport.call(
+      'net.removePeer',
+      params: <String, dynamic>{'account_id': accountId},
+      timeout: requestTimeout,
+    );
+  }
+
+  /// 立即连接一个手动输入的 multiaddr，返回对端 PeerID。
+  Future<String> connectAddr(String addr) async {
+    final Map<String, dynamic> data = await transport.call(
+      'net.connectAddr',
+      params: <String, dynamic>{'addr': addr},
+      timeout: requestTimeout,
+    );
+    return data['peer_id'] is String ? data['peer_id'] as String : '';
   }
 
   /// 通讯录（P2-06）：`contact.list/add/block/remark`。
@@ -483,6 +574,102 @@ class CoreSession {
         : GroupStorageStatus.unconfigured;
   }
 
+  // ── P2P 文件共享（fs.*）──────────────────────────────────────────────
+
+  /// 发布本机目录或文件为 P2P 共享，返回分享码。
+  Future<FileShare> publishShare(String path, {String name = ''}) async {
+    final Map<String, dynamic> data = await transport.call(
+      'fs.publish',
+      params: <String, dynamic>{'path': path, if (name.isNotEmpty) 'name': name},
+      timeout: requestTimeout,
+    );
+    return FileShare.fromJson(data);
+  }
+
+  /// 列出本机全部共享（已发布、已下载做种、已导入）。
+  Future<List<FileShare>> listShares() async {
+    final Map<String, dynamic> data = await transport.call(
+      'fs.list',
+      timeout: requestTimeout,
+    );
+    final Object? items = data['items'];
+    if (items is! List) {
+      return <FileShare>[];
+    }
+    return items
+        .whereType<Map>()
+        .map((Map e) => FileShare.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  /// 查看共享详情（含文件清单与分享码）。
+  Future<FileShareDetail> getShare(String shareId) async {
+    final Map<String, dynamic> data = await transport.call(
+      'fs.get',
+      params: <String, dynamic>{'share_id': shareId},
+      timeout: requestTimeout,
+    );
+    return FileShareDetail.fromJson(data);
+  }
+
+  /// 导入他人发来的分享码，登记远端共享但不立即下载。
+  Future<FileShare> importShare(String code) async {
+    final Map<String, dynamic> data = await transport.call(
+      'fs.import',
+      params: <String, dynamic>{'code': code.trim()},
+      timeout: requestTimeout,
+    );
+    return FileShare.fromJson(data);
+  }
+
+  /// 把共享的分享码作为聊天消息发给指定账号，对方导入后即可下载。
+  Future<String> sendShare(String shareId, String peer) async {
+    final Map<String, dynamic> data = await transport.call(
+      'fs.send',
+      params: <String, dynamic>{'share_id': shareId, 'peer': peer},
+      timeout: requestTimeout,
+    );
+    return '${data['msg_uuid'] ?? ''}';
+  }
+
+  /// 删除本机共享记录（不删除实际文件）。
+  Future<void> removeShare(String shareId) async {
+    await transport.call(
+      'fs.remove',
+      params: <String, dynamic>{'share_id': shareId},
+      timeout: requestTimeout,
+    );
+  }
+
+  /// 从种子并行下载共享到本地目录；完成后本机自动做种。
+  ///
+  /// 大文件下载可能远超普通 RPC 超时，这里使用 10 分钟上限。
+  Future<FileShare> downloadShare(
+    String shareId,
+    String dest, {
+    int parallel = 4,
+  }) async {
+    final Map<String, dynamic> data = await transport.call(
+      'fs.download',
+      params: <String, dynamic>{
+        'share_id': shareId,
+        'dest': dest,
+        'parallel': parallel,
+      },
+      timeout: const Duration(minutes: 10),
+    );
+    return FileShare(
+      shareId: '${data['share_id'] ?? shareId}',
+      name: '',
+      code: '',
+      kind: '${data['kind'] ?? 'downloaded'}',
+      fileCount: 0,
+      totalSize: 0,
+      local: true,
+      localRoot: data['dest'] is String ? data['dest'] as String : dest,
+    );
+  }
+
   Future<void> close() => transport.close();
 }
 
@@ -555,6 +742,100 @@ List<ChatMessage> messagesFromItems(
     );
   }
   return out;
+}
+
+/// 一条 P2P 文件共享的客户端模型（对应内核 `fs.list`/`fs.publish` 返回）。
+class FileShare {
+  const FileShare({
+    required this.shareId,
+    required this.name,
+    required this.code,
+    required this.kind,
+    required this.fileCount,
+    required this.totalSize,
+    this.local = false,
+    this.localRoot = '',
+    this.createdAt = 0,
+  });
+
+  factory FileShare.fromJson(Map<String, dynamic> json) {
+    return FileShare(
+      shareId: '${json['share_id'] ?? ''}',
+      name: '${json['name'] ?? ''}',
+      code: '${json['code'] ?? ''}',
+      kind: '${json['kind'] ?? ''}',
+      fileCount: (json['file_count'] as num?)?.toInt() ?? 0,
+      totalSize: (json['total_size'] as num?)?.toInt() ?? 0,
+      local: json['local'] == true,
+      localRoot: '${json['local_root'] ?? ''}',
+      createdAt: (json['created_at'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  final String shareId;
+  final String name;
+  final String code;
+  final String kind;
+  final int fileCount;
+  final int totalSize;
+  final bool local;
+  final String localRoot;
+  final int createdAt;
+
+  bool get isPublished => kind == 'published';
+  bool get isDownloaded => kind == 'downloaded';
+}
+
+/// 共享详情中的单个文件。
+class FileShareEntry {
+  const FileShareEntry({
+    required this.path,
+    required this.size,
+    required this.sha256,
+    required this.mime,
+  });
+
+  factory FileShareEntry.fromJson(Map<String, dynamic> json) {
+    return FileShareEntry(
+      path: '${json['path'] ?? ''}',
+      size: (json['size'] as num?)?.toInt() ?? 0,
+      sha256: '${json['sha256'] ?? ''}',
+      mime: '${json['mime'] ?? ''}',
+    );
+  }
+
+  final String path;
+  final int size;
+  final String sha256;
+  final String mime;
+}
+
+/// 共享详情（含文件清单）。
+class FileShareDetail {
+  const FileShareDetail({
+    required this.share,
+    required this.files,
+    required this.owner,
+  });
+
+  factory FileShareDetail.fromJson(Map<String, dynamic> json) {
+    final Object? rawFiles = json['files'];
+    final List<FileShareEntry> files = rawFiles is List
+        ? rawFiles
+            .whereType<Map>()
+            .map((Map e) => FileShareEntry.fromJson(Map<String, dynamic>.from(e)))
+            .toList()
+        : <FileShareEntry>[];
+    return FileShareDetail(
+      share: FileShare.fromJson(json),
+      files: files,
+      owner: '${json['owner'] ?? ''}',
+    );
+  }
+
+  final FileShare share;
+  final List<FileShareEntry> files;
+  final String owner;
 }
 
 /// 解析 `msg.list` 条目的 `attachments`（取首个附件）；无附件时返回 null。

@@ -26,8 +26,9 @@ const (
 	DefaultChunkSize = 256 << 10
 	// DefaultProgressInterval 是 transfer.progress 的最小上报间隔。
 	DefaultProgressInterval = 200 * time.Millisecond
-	// maxFileChunks 防止异常元数据导致过量分片。
-	maxFileChunks = 1 << 20
+	// maxFileChunks 只受线协议 FileChunk.index(uint32) 约束：以 256KiB/片计算上限约 1PiB，
+	// 对使用者等同于「不限制文件大小」。不要再额外压低，否则大文件会被误判为过大。
+	maxFileChunks = int64(^uint32(0))
 	// fileMaxAttempts 是断点续传的最大尝试次数，含首次发送。
 	fileMaxAttempts = 3
 	// fileRetryDelay 是两次续传尝试之间的等待。
@@ -99,9 +100,9 @@ func (s *Service) SendFile(ctx context.Context, t Target, path, mime string) (st
 		return "", err
 	}
 	chunkSize := s.chunkSize
-	totalChunks := int((info.Size() + int64(chunkSize) - 1) / int64(chunkSize))
-	if totalChunks > maxFileChunks {
-		return "", ErrFileTooLarge
+	totalChunks, err := fileChunkCount(info.Size(), chunkSize)
+	if err != nil {
+		return "", err
 	}
 	if mime == "" {
 		mime = "application/octet-stream"
@@ -573,8 +574,9 @@ func (s *Service) prepareInboundFile(ctx context.Context, meta *nexmemv1.FileMet
 	if meta.GetMsgUuid() == "" || meta.GetSize() == 0 || meta.GetChunkSize() == 0 || meta.GetTotalChunks() == 0 {
 		return nil, "", ErrFileNotOffered
 	}
-	if meta.GetTotalChunks() > maxFileChunks ||
-		int64(meta.GetChunkSize())*int64(meta.GetTotalChunks()) < int64(meta.GetSize()) {
+	// uint32 分片序号本身就是上限，无需再与 maxFileChunks 比较；这里只校验
+	// 分片总数能覆盖声明的文件大小（乘以 int64 防止 32 位溢出）。
+	if int64(meta.GetChunkSize())*int64(meta.GetTotalChunks()) < int64(meta.GetSize()) {
 		return nil, "", ErrFileNotOffered
 	}
 	if !validAccountPub(meta.GetSenderAccount()) || bytes.Equal(meta.GetSenderAccount(), s.account.Pub()) {
@@ -646,6 +648,19 @@ func (s *Service) writeFileState(st network.Stream, msgID string, next uint32) e
 }
 
 // hashFile 计算整文件 SHA-256。
+// fileChunkCount 计算分片数，并只在真正超出线协议 uint32 分片序号上限时拒绝。
+// 用 int64 做中间运算，避免大文件在 32 位平台上溢出。
+func fileChunkCount(size int64, chunkSize int) (int, error) {
+	if size <= 0 || chunkSize <= 0 {
+		return 0, ErrInvalidFile
+	}
+	chunks := (size + int64(chunkSize) - 1) / int64(chunkSize)
+	if chunks > maxFileChunks {
+		return 0, ErrFileTooLarge
+	}
+	return int(chunks), nil
+}
+
 func hashFile(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {

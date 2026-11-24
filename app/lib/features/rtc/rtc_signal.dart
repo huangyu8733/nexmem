@@ -3,12 +3,15 @@
 // 内核 `rtc.sendSignal` / `rtc.signal` 只透传不透明字节（std base64），
 // SDP / ICE 的结构由客户端约定。这里定义一份跨端一致的 JSON 线格式：
 //
-//   {"v":1,"type":"offer","sdp":"...","mid":"0","index":0}
+//   {"v":2,"type":"offer","sdp":"...","mid":"0","index":0,
+//    "call_id":"...","to":"...","video":true}
 //
 // - `type` ∈ offer / answer / candidate，分别对应 SDP 提议、应答与 ICE 候选；
 // - `sdp` 在 offer/answer 为完整 SDP 文本，在 candidate 为单条 candidate 值；
 // - `mid` 为 candidate 所属的媒体标识，`index` 为候选序号（用于排序去重）；
-// - `v` 为格式版本，收到未知版本时丢弃，避免新旧端误协商。
+// - `call_id` 标识一次通话（群聊多会话必需），`to` 为目标成员账号；
+// - `video` 让被叫在接听前识别这是视频邀请；
+// - `v` 为格式版本。v2 引入多会话字段；纯 1v1 语音仍编码为 v1 以保持向下兼容。
 //
 // 该模型不依赖任何平台插件，便于单元测试；载荷大小上限与内核 64 KiB 对齐。
 
@@ -18,7 +21,7 @@ import 'dart:convert';
 const int kMaxRtcSignalBytes = 64 * 1024;
 
 /// 载荷格式版本；收到更高版本时按不兼容丢弃。
-const int kRtcSignalVersion = 1;
+const int kRtcSignalVersion = 2;
 
 /// 信令类型，与工程方案 §3.6 的 `{type: offer|answer|candidate}` 对应。
 enum RtcSignalType {
@@ -47,6 +50,10 @@ class RtcSignal {
     required this.sdp,
     this.mid,
     this.index = 0,
+    this.callId = '',
+    this.to = '',
+    this.video = false,
+    this.members = const <String>[],
   });
 
   final RtcSignalType type;
@@ -54,16 +61,39 @@ class RtcSignal {
   final String? mid;
   final int index;
 
+  /// 会话标识；群聊中区分同一时刻的不同对端会话。
+  final String callId;
+
+  /// 目标成员账号（base64url），群聊中明确这条信令发给谁。
+  final String to;
+
+  /// 是否为视频邀请（仅 offer 有意义）。
+  final bool video;
+
+  /// 群聊通话的全体成员账号（base64url）；收到后与其余成员两两建连形成 Mesh。
+  final List<String> members;
+
+  /// 是否需要 v2 线格式。纯 1v1 语音沿用 v1，保持与旧端互通。
+  bool get _usesV2 =>
+      callId.isNotEmpty || to.isNotEmpty || video || members.isNotEmpty;
+
   /// 编码为内核透传的字节（std base64 由调用方处理）。
   ///
   /// 超过 [kMaxRtcSignalBytes] 抛出 [FormatException]，与内核拒绝超大载荷对齐。
   List<int> encode() {
+    final bool v2 = _usesV2;
     final Map<String, dynamic> json = <String, dynamic>{
-      'v': kRtcSignalVersion,
+      'v': v2 ? 2 : 1,
       'type': type.wireValue,
       'sdp': sdp,
       if (mid != null) 'mid': mid,
       'index': index,
+      if (v2) ...<String, dynamic>{
+        'call_id': callId,
+        'to': to,
+        'video': video,
+        'members': members.join(','),
+      },
     };
     final List<int> bytes = utf8.encode(jsonEncode(json));
     if (bytes.isEmpty || bytes.length > kMaxRtcSignalBytes) {
@@ -104,11 +134,25 @@ class RtcSignal {
     }
     final Object? mid = decoded['mid'];
     final Object? index = decoded['index'];
+    final Object? callId = decoded['call_id'];
+    final Object? to = decoded['to'];
+    final Object? rawMembers = decoded['members'];
+    final List<String> members = rawMembers is String && rawMembers.isNotEmpty
+        ? rawMembers
+            .split(',')
+            .map((String item) => item.trim())
+            .where((String item) => item.isNotEmpty)
+            .toList(growable: false)
+        : const <String>[];
     return RtcSignal(
       type: type,
       sdp: sdp,
       mid: mid is String ? mid : null,
       index: index is int ? index : 0,
+      callId: callId is String ? callId : '',
+      to: to is String ? to : '',
+      video: decoded['video'] == true,
+      members: members,
     );
   }
 
@@ -121,5 +165,5 @@ class RtcSignal {
 
   @override
   String toString() =>
-      'RtcSignal(type: ${type.wireValue}, mid: $mid, index: $index)';
+      'RtcSignal(type: ${type.wireValue}, callId: $callId, video: $video, mid: $mid, index: $index)';
 }

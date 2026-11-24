@@ -30,6 +30,8 @@ const (
 	PIDFile protocol.ID = "/nexmem/dm-file/1.0.0"
 	PIDMeta protocol.ID = "/nexmem/group-meta/1.0.0"
 	PIDRTC  protocol.ID = "/nexmem/rtc/1.0.0"
+	// PIDFs 是 P2P 文件夹共享协议（清单 + 加密分片请求）。
+	PIDFs protocol.ID = "/nexmem/fs/1.0.0"
 )
 
 // frameDomain 做域隔离，避免签名在其他协议中被复用。

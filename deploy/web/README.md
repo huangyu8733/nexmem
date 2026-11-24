@@ -59,6 +59,36 @@ powershell -ExecutionPolicy Bypass -File deploy/web/start.ps1
 ```
 
 脚本自动生成令牌文件、编译 `bin/nexmem-webd`、按需执行 `flutter build web`，然后前台启动。
+内核网络配置可用环境变量注入：`NEXMEM_BOOTSTRAPS`、`NEXMEM_DIRECTORY_URL`、
+`NEXMEM_RELAY_ADDRS`、`NEXMEM_MDNS`、`NEXMEM_PUBLIC_DHT`、`NEXMEM_MANUAL_ADDRS`、
+`NEXMEM_DATA_DIR`、`NEXMEM_DISPLAY_NAME`；Windows 也支持同名参数
+（如 `-RelayAddrs`、`-DirectoryUrl`）。
+
+## 网络配置（三种发现源 + bootstrap / directory / relay）
+
+浏览器端没有本地内核，设置页里的「中继设置 / 发现源设置」只写入浏览器本地 KV，**不会生效**。
+要让 Web 客户端入网，必须在网关启动时注入配置。三种发现源与自建基础设施可同时启用：
+
+```bash
+./bin/nexmem-webd -addr :8082 -token-file ./deploy/web/data/token \
+    -static ./app/build/web \
+    -data-dir /srv/nexmem/data \
+    -bootstraps '/ip4/1.2.3.4/tcp/14001/p2p/12D3Koo...' \
+    -directory 'http://1.2.3.4:8081' \
+    -relay '/ip4/1.2.3.4/tcp/14002/p2p/12D3Koo...' \
+    -mdns -public-dht \
+    -manual-addrs '/ip4/192.168.1.10/tcp/4001/p2p/12D3Koo...'
+```
+
+- **零部署**：只给 webd 加 `-mdns`（或 `NEXMEM_MDNS=true`），同一局域网内的 Web 客户端即可互相同发现、直连通话，无需任何服务器。
+- **公共 DHT 兜底**：`-public-dht`（`NEXMEM_PUBLIC_DHT=true`）借公共 IPFS 网络解析地址，无自建 bootstrap 时也能跨网寻址。
+- **手动地址**：`-manual-addrs` 逗号分隔多条对端 multiaddr（须含 `/p2p/<PeerID>`）。
+
+Docker 场景将这些值写入 `deploy/web/.env` 即可；各环境变量与 `-relay` 等 flag 等价。
+多个中继用逗号分隔。服务端三组件的搭建见 [deploy/server/README.md](../server/README.md)。
+
+> `-data-dir` 会在 webd 启动时直接拉起内核。内核 `Start()` 是幂等的，进程启动后再通过
+> `core.start` RPC 传入不同配置不会生效，所以务必在启动参数里一次配齐。
 
 ## 内置 TLS
 
@@ -97,6 +127,7 @@ powershell -ExecutionPolicy Bypass -File deploy/web/rotate-token.ps1
 ## 注意事项
 
 - 单实例单账号：一个 `nexmem-webd` 只服务一个账号，不要多账号共用。
+- Web 端中继必须在服务端通过 `-relay` / `NEXMEM_RELAY_ADDRS` 配置，设置页中的配置无效。
 - 必须启用 TLS（内置或反代）；纯 HTTP 会把访问令牌暴露在链路上。
 - 浏览器关闭后没有实时通道，消息依赖 P3 离线闭环在下次打开时补齐。
 - 网关只暴露 `/ws`、`/healthz` 与静态资源，内核端口不要对外映射。

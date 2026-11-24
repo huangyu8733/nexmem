@@ -3,6 +3,9 @@
 // Go 内核只透传 SDP/ICE 信令，采集/编码/渲染完全由客户端媒体层负责。
 // 这里把媒体层抽象成接口，使通话状态机可在无平台插件的单元测试里运行，
 // 真实实现 [FlutterRtcMediaEngine] 基于 flutter_webrtc，工厂注入到 CallService。
+//
+// 一个引擎实例持有一个 PeerConnection；多人通话由 CallService 为每个成员
+// 创建一个独立实例，避免单 _pc 覆盖导致第二路会话挤掉第一路。
 
 import 'dart:async';
 
@@ -47,7 +50,23 @@ abstract class RtcMediaEngine {
   /// 静音/取消静音本地麦克风。
   Future<void> setMuted(bool muted);
 
-  /// 释放 PeerConnection 与本地媒体轨道。
+  /// 开关本地摄像头（仅视频通话有效）。
+  Future<void> setVideoEnabled(bool enabled);
+
+  /// 切换前后摄像头（仅移动端有效）。
+  Future<void> switchCamera();
+
+  /// 是否采集了视频轨道。
+  bool get hasVideo;
+
+  /// 远端视频渲染对象（flutter_webrtc 的 RTCVideoRenderer），语音通话为 null。
+  /// 用 Object 表态，让状态机与单测无需依赖平台插件类型。
+  Object? get remoteVideoRenderer;
+
+  /// 本地视频渲染对象，语音通话为 null。
+  Object? get localVideoRenderer;
+
+  /// 释放 PeerConnection、渲染器与本地媒体轨道。
   Future<void> dispose();
 }
 
@@ -55,7 +74,11 @@ abstract class RtcMediaEngine {
 class FlutterRtcMediaEngine implements RtcMediaEngine {
   RTCPeerConnection? _pc;
   MediaStream? _localStream;
+  RTCVideoRenderer? _localRenderer;
+  RTCVideoRenderer? _remoteRenderer;
   bool _muted = false;
+  bool _video = false;
+  bool _videoEnabled = true;
 
   final StreamController<RtcLocalCandidate> _candidates =
       StreamController<RtcLocalCandidate>.broadcast();
@@ -68,6 +91,15 @@ class FlutterRtcMediaEngine implements RtcMediaEngine {
   @override
   Stream<String> get onConnectionState => _states.stream;
 
+  @override
+  bool get hasVideo => _video;
+
+  @override
+  Object? get remoteVideoRenderer => _remoteRenderer;
+
+  @override
+  Object? get localVideoRenderer => _localRenderer;
+
   /// STUN 服务器；TURN 可选（自建 coturn），默认不配置（工程方案 §3.6）。
   static const Map<String, dynamic> _configuration = <String, dynamic>{
     'iceServers': <Map<String, dynamic>>[
@@ -79,6 +111,7 @@ class FlutterRtcMediaEngine implements RtcMediaEngine {
 
   @override
   Future<void> start({required bool video}) async {
+    _video = video;
     _pc = await createPeerConnection(_configuration);
     _pc!.onIceCandidate = (RTCIceCandidate c) {
       _candidates.add(RtcLocalCandidate(
@@ -90,6 +123,22 @@ class FlutterRtcMediaEngine implements RtcMediaEngine {
     _pc!.onIceConnectionState = (RTCIceConnectionState state) {
       _states.add(state.toString().split('.').last);
     };
+    // 远端轨道到达时绑定渲染器。onTrack 比 getRemoteStreams 更早拿到流，
+    // 是视频小窗能正常出画面最关键的一步。
+    _pc!.onTrack = (RTCTrackEvent event) {
+      if (!video || _remoteRenderer == null) {
+        return;
+      }
+      final bool isVideo = event.track.kind == 'video';
+      if (!isVideo || event.streams.isEmpty) {
+        return;
+      }
+      try {
+        _remoteRenderer!.srcObject = event.streams.first;
+      } on Object {
+        // 渲染器未初始化或已释放时忽略，等待下一次轨道事件兜底。
+      }
+    };
 
     _localStream = await navigator.mediaDevices.getUserMedia(<String, dynamic>{
       'audio': true,
@@ -99,6 +148,14 @@ class FlutterRtcMediaEngine implements RtcMediaEngine {
     });
     for (final MediaStreamTrack track in _localStream!.getTracks()) {
       await _pc!.addTrack(track, _localStream!);
+    }
+
+    if (video) {
+      _localRenderer = RTCVideoRenderer();
+      _remoteRenderer = RTCVideoRenderer();
+      await _localRenderer!.initialize();
+      await _remoteRenderer!.initialize();
+      _localRenderer!.srcObject = _localStream;
     }
   }
 
@@ -119,6 +176,7 @@ class FlutterRtcMediaEngine implements RtcMediaEngine {
   @override
   Future<void> setRemoteDescription(String sdp, String type) async {
     await _pc!.setRemoteDescription(RTCSessionDescription(sdp, type));
+    _bindRemoteStreamIfNeeded();
   }
 
   @override
@@ -128,6 +186,29 @@ class FlutterRtcMediaEngine implements RtcMediaEngine {
       candidate.sdpMid,
       candidate.sdpMLineIndex,
     ));
+    _bindRemoteStreamIfNeeded();
+  }
+
+  /// onTrack 未带流时的兜底：直接从 PeerConnection 取远端流绑定。
+  void _bindRemoteStreamIfNeeded() {
+    final RTCVideoRenderer? renderer = _remoteRenderer;
+    if (renderer == null || renderer.srcObject != null) {
+      return;
+    }
+    final List<MediaStream?> streams =
+        _pc?.getRemoteStreams() ?? <MediaStream?>[];
+    final MediaStream? stream = streams.cast<MediaStream?>().firstWhere(
+          (MediaStream? s) => s != null,
+          orElse: () => null,
+        );
+    if (stream == null) {
+      return;
+    }
+    try {
+      renderer.srcObject = stream;
+    } on Object {
+      // 渲染器可能正在初始化，下一次事件会再试。
+    }
   }
 
   @override
@@ -140,14 +221,48 @@ class FlutterRtcMediaEngine implements RtcMediaEngine {
   }
 
   @override
+  Future<void> setVideoEnabled(bool enabled) async {
+    _videoEnabled = enabled;
+    for (final MediaStreamTrack track in _localStream?.getVideoTracks() ??
+        <MediaStreamTrack>[]) {
+      track.enabled = enabled;
+    }
+  }
+
+  @override
+  Future<void> switchCamera() async {
+    final List<MediaStreamTrack> tracks =
+        _localStream?.getVideoTracks() ?? <MediaStreamTrack>[];
+    if (tracks.isEmpty) {
+      return;
+    }
+    try {
+      await Helper.switchCamera(tracks.first);
+    } on Object {
+      // 桌面端无前后摄；保持当前画面即可。
+    }
+  }
+
+  /// 本地摄像头是否处于开启状态。
+  bool get videoEnabled => _videoEnabled;
+
+  @override
   Future<void> dispose() async {
     await _candidates.close();
     await _states.close();
+    _localRenderer?.srcObject = null;
+    _remoteRenderer?.srcObject = null;
+    await _localRenderer?.dispose();
+    await _remoteRenderer?.dispose();
     await _localStream?.dispose();
     await _pc?.close();
+    _localRenderer = null;
+    _remoteRenderer = null;
     _localStream = null;
     _pc = null;
     _muted = false;
+    _video = false;
+    _videoEnabled = true;
   }
 
   /// 本地媒体流，供通话页渲染小窗；未启动时为 null。

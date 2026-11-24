@@ -1,0 +1,21 @@
+[Unit]
+Description=Nexmem Directory Service
+Documentation=https://github.com/huangyu8733/nexmem
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexmem
+Group=nexmem
+EnvironmentFile=/etc/nexmem/server.env
+ExecStart=/opt/nexmem/bin/nexmem-directory -addr :8081 -db /var/lib/nexmem/directory.db
+Restart=unless-stopped
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nexmem
+
+[Install]
+WantedBy=multi-user.target

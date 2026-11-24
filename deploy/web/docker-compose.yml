@@ -19,8 +19,18 @@ services:
       NEXMEM_WEB_STATIC: /srv/nexmem/static
       NEXMEM_WEB_TOKEN_FILE: /run/secrets/web_token
       NEXMEM_WEB_ORIGINS: "${NEXMEM_WEB_ORIGINS:-}"
+      # 浏览器内核运行在 webd 进程内，网络配置在服务端统一注入
+      NEXMEM_DATA_DIR: /srv/nexmem/data/core
+      NEXMEM_BOOTSTRAPS: "${NEXMEM_BOOTSTRAPS:-}"
+      NEXMEM_DIRECTORY_URL: "${NEXMEM_DIRECTORY_URL:-}"
+      NEXMEM_RELAY_ADDRS: "${NEXMEM_RELAY_ADDRS:-}"
+      NEXMEM_MDNS: "${NEXMEM_MDNS:-false}"
+      NEXMEM_PUBLIC_DHT: "${NEXMEM_PUBLIC_DHT:-false}"
+      NEXMEM_MANUAL_ADDRS: "${NEXMEM_MANUAL_ADDRS:-}"
+      NEXMEM_DISPLAY_NAME: "${NEXMEM_DISPLAY_NAME:-}"
     volumes:
       - ./data/token:/run/secrets/web_token:ro
+      - webd-data:/srv/nexmem/data
     expose:
       - "8082"
     restart: unless-stopped
@@ -50,5 +60,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  webd-data:
   caddy-data:
   caddy-config:

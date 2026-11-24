@@ -31,8 +31,10 @@ import (
 	"github.com/nexmem/core/internal/contacts"
 	"github.com/nexmem/core/internal/diag"
 	"github.com/nexmem/core/internal/directory"
+	"github.com/nexmem/core/internal/discovery"
 	"github.com/nexmem/core/internal/dm"
 	"github.com/nexmem/core/internal/expiry"
+	fspkg "github.com/nexmem/core/internal/fs"
 	"github.com/nexmem/core/internal/group"
 	"github.com/nexmem/core/internal/identity"
 	"github.com/nexmem/core/internal/msg"
@@ -80,6 +82,14 @@ type Config struct {
 	Storage *StorageConfig `json:"storage"`
 	// OfflineEnabled 控制是否对外声明「可接收离线消息」；留空时随 Storage 是否存在。
 	OfflineEnabled *bool `json:"offline_enabled"`
+
+	// ---- 三种并存的发现源（均默认关闭，显式入参优先于设置页 KV）----
+	// EnableMDNS 开启局域网 mDNS 发现：同网段节点自动互联，无需任何服务器。
+	EnableMDNS bool `json:"enable_mdns"`
+	// PublicDHT 开启公共 IPFS DHT 兜底：无自建 bootstrap 时也能解析地址。
+	PublicDHT bool `json:"public_dht"`
+	// ManualAddrs 手动导入的对端地址（multiaddr 列表，含 /p2p/<PeerID>）。
+	ManualAddrs []string `json:"manual_addrs"`
 }
 
 // StorageConfig 是接收方离线存储的 S3 兼容配置（与 storage.test 表单一致）。
@@ -135,10 +145,15 @@ type App struct {
 	host     host.Host
 	dht      *dht.IpfsDHT
 	dmSvc    *dm.Service
+	fsSvc    *fspkg.Service
 	groupSvc *group.Service
 	contacts *contacts.Service
 	sm       *netnode.StateMachine
 	lookup   dm.PeerResolver
+	// discovery 持有三种发现源的运行时句柄，Stop 时统一关闭。
+	book       *discovery.Peerbook
+	mdns       *discovery.MDNS
+	publicDHT  *dht.IpfsDHT
 	// groupTargets / groupXPub 是群密钥信封投递的目标解析器；
 	// groupTargets 可由平台层注入，未注入时基于索引服务档案 + DHT 默认实现。
 	groupTargets group.TargetResolver
@@ -187,6 +202,7 @@ func New(g *gateway.Gateway, sink EventSink) (*App, error) {
 		{"backup", func() error { return backup.Bind(g, a.backupService()) }},
 		{"contacts", func() error { return contacts.BindProvider(g, a.contactsService) }},
 		{"dm", func() error { return dm.Bind(g, &dm.Gateway{Service: a.dmService, Resolve: a.resolvePeer}) }},
+		{"fs", func() error { return fspkg.BindProvider(g, a.fsService) }},
 		{"group", func() error {
 			return group.Bind(g, &group.Gateway{Service: a.groupService, Resolve: a.resolveGroupTarget})
 		}},
@@ -212,6 +228,10 @@ func New(g *gateway.Gateway, sink EventSink) (*App, error) {
 		"settings.set":      a.settingsSetHandler(),
 		"settings.exportSnapshot": a.settingsExportHandler(),
 		"settings.importSnapshot": a.settingsImportHandler(),
+		"net.addPeer":      a.peerbookAddHandler(),
+		"net.removePeer":   a.peerbookRemoveHandler(),
+		"net.listPeers":    a.peerbookListHandler(),
+		"net.connectAddr":  a.connectAddrHandler(),
 	}
 	for method, h := range coreHandlers {
 		if err := g.SetHandler(method, h); err != nil {
@@ -369,10 +389,66 @@ func (a *App) Start(ctx context.Context, cfg Config) (string, error) {
 		cleanups = append(cleanups, func() { _ = kad.Close() })
 	}
 
+	// 应用三种发现源的本机设置（显式入参优先），并初始化本地地址簿。
+	a.applyStoredDiscovery(ctx, dao, &cfg)
+
+	book := discovery.NewPeerbook(dao)
+	if err := book.Load(ctx); err != nil && a.log != nil {
+		a.log.Warn("network", "加载本地地址簿失败，从空簿开始", map[string]any{"err": err.Error()})
+	}
+	a.book = book
+	// 显式注入的手动地址与二维码名片保持一致：accountID 由对端公钥提供，
+	// 这里把形如 <peerID>@<multiaddr> 或直接 multiaddr 的地址并入连接候选。
+	for _, raw := range cfg.ManualAddrs {
+		if _, err := discovery.ConnectManual(ctx, h, raw); err != nil && a.log != nil {
+			a.log.Warn("network", "手动地址连接失败", map[string]any{"addr": raw, "err": err.Error()})
+		}
+	}
+
+	// mDNS 局域网发现（可选）。
+	var md *discovery.MDNS
+	if cfg.EnableMDNS {
+		md, err = discovery.StartMDNS(h)
+		if err != nil && a.log != nil {
+			a.log.Warn("network", "mDNS 启动失败，降级为其他发现源", map[string]any{"err": err.Error()})
+			md = nil
+		}
+		if md != nil {
+			a.mdns = md
+			cleanups = append(cleanups, func() { _ = md.Close() })
+		}
+	}
+
+	// 公共 DHT 兜底（可选）：使用标准 /ipfs 前缀与公共 bootstrap。
+	var publicKad *dht.IpfsDHT
+	if cfg.PublicDHT {
+		pubBoot := discovery.ParsePublicBootstraps(discovery.PublicBootstraps)
+		publicKad, err = netnode.NewPublicDHT(ctx, h, pubBoot)
+		if err != nil && a.log != nil {
+			a.log.Warn("network", "公共 DHT 启动失败，降级为其他发现源", map[string]any{"err": err.Error()})
+			publicKad = nil
+		}
+		if publicKad != nil {
+			a.publicDHT = publicKad
+			cleanups = append(cleanups, func() { _ = publicKad.Close() })
+		}
+	}
+
+	// 记录是否由平台注入了解析器：注入场景（如移动端/测试）保持其原样，
+	// 避免改变宿主自定义的解析语义；只有默认链路才套用级联解析器。
+	a.mu.RLock()
+	hadInjected := a.lookup != nil
+	a.mu.RUnlock()
+
 	lookup, xpubResolver, dirClient, err := a.buildResolvers(cfg, acc, kad)
 	if err != nil {
 		cleanup()
 		return "", err
+	}
+	if !hadInjected {
+		// 用级联解析器包装：本地簿 -> 原链路(directory+DHT) -> mDNS/已连接 -> 公共 DHT。
+		lookup = discovery.NewCascadingResolver(h, book, md, kad, publicKad, lookup)
+		a.lookup = lookup
 	}
 
 	bucket, err := buildBucket(cfg.Storage, a.rec)
@@ -430,6 +506,24 @@ func (a *App) Start(ctx context.Context, cfg Config) (string, error) {
 		return "", fmt.Errorf("初始化单聊服务: %w", err)
 	}
 	cleanups = append(cleanups, dmSvc.Close)
+
+	fsSvc, err := fspkg.New(fspkg.Options{
+		Host:        h,
+		DeviceKey:   devKey,
+		DAO:         dao,
+		Account:     acc,
+		OnProgress:  a.onFSEvent,
+		ResolveSeed: a.resolveFSSeed,
+		SendShare:   a.sendFSShare,
+	})
+	if err != nil {
+		cleanup()
+		return "", fmt.Errorf("初始化文件共享服务: %w", err)
+	}
+	cleanups = append(cleanups, fsSvc.Close)
+	a.mu.Lock()
+	a.fsSvc = fsSvc
+	a.mu.Unlock()
 
 	groupSvc, err := group.New(group.Options{
 		Host:          h,
@@ -537,7 +631,7 @@ func (a *App) Stop() error {
 		a.mu.Unlock()
 		return nil
 	}
-	dmSvc, groupSvc, sm, kad, h, db := a.dmSvc, a.groupSvc, a.sm, a.dht, a.host, a.db
+	dmSvc, fsSvc, groupSvc, sm, kad, h, db := a.dmSvc, a.fsSvc, a.groupSvc, a.sm, a.dht, a.host, a.db
 	offline := a.offline
 	expiryCancel, expiryDone := a.expiryCancel, a.expiryDone
 	a.expiryCancel, a.expiryDone = nil, nil
@@ -550,11 +644,15 @@ func (a *App) Stop() error {
 	a.host = nil
 	a.dht = nil
 	a.dmSvc = nil
+	a.fsSvc = nil
 	a.groupSvc = nil
 	a.contacts = nil
 	a.sm = nil
 	a.offline = nil
 	a.dir = nil
+	a.book = nil
+	a.mdns = nil
+	a.publicDHT = nil
 	a.started = false
 	a.state = string(netnode.StateStopped)
 	a.mu.Unlock()
@@ -571,6 +669,9 @@ func (a *App) Stop() error {
 	}
 	if groupSvc != nil {
 		groupSvc.Close()
+	}
+	if fsSvc != nil {
+		fsSvc.Close()
 	}
 	if dmSvc != nil {
 		dmSvc.Close()
@@ -629,6 +730,57 @@ func (a *App) dmService() *dm.Service {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.dmSvc
+}
+
+func (a *App) fsService() *fspkg.Service {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.fsSvc
+}
+
+// onFSEvent 把共享下载进度转成 fs.progress 事件。
+func (a *App) onFSEvent(p fspkg.Progress) {
+	a.emit("fs.progress", map[string]any{
+		"share_id": p.ShareID,
+		"path":     p.Path,
+		"done":     p.Done,
+		"total":    p.Total,
+	})
+}
+
+// sendFSShare 把分享码作为单聊文本发给对端账号，复用现有 dm 投递与离线队列。
+func (a *App) sendFSShare(ctx context.Context, accountID, code string) (string, error) {
+	pub, err := hex.DecodeString(accountID)
+	if err != nil || len(pub) != 32 {
+		return "", fmt.Errorf("非法对端账号 ID: %s", accountID)
+	}
+	svc := a.dmService()
+	if svc == nil {
+		return "", fmt.Errorf("单聊服务尚未接入")
+	}
+	target, err := a.resolvePeer(ctx, pub)
+	if err != nil {
+		target = dm.Target{AccountPub: pub}
+	}
+	target.AccountPub = pub
+	return svc.SendText(ctx, target, code, "")
+}
+
+// resolveFSSeed 用现有发现链把发布者账号解析为可直连的种子地址。
+func (a *App) resolveFSSeed(ctx context.Context, accountID string) (fspkg.Seed, error) {
+	pub, err := hex.DecodeString(accountID)
+	if err != nil || len(pub) != 32 {
+		return fspkg.Seed{}, fmt.Errorf("非法发布者账号 ID: %s", accountID)
+	}
+	t, err := a.resolvePeer(ctx, pub)
+	if err != nil {
+		return fspkg.Seed{}, err
+	}
+	seed := fspkg.Seed{PeerID: t.PeerID.String()}
+	for _, addr := range t.Addrs {
+		seed.Addrs = append(seed.Addrs, addr.String())
+	}
+	return seed, nil
 }
 
 func (a *App) dbHandle() *sql.DB {

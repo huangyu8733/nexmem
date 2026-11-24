@@ -23,6 +23,7 @@ import '../features/group/group_list_page.dart';
 import '../features/group/group_service.dart';
 import '../features/rtc/call_page.dart';
 import '../features/rtc/call_service.dart';
+import '../features/rtc/call_video_view.dart';
 import '../features/rtc/rtc_media.dart';
 import '../features/search/message_search.dart';
 import '../features/settings/backup.dart';
@@ -216,10 +217,14 @@ class _AppShellState extends State<AppShell> {
   /// 对端显示名（来电/去电时从会话列表解析）。
   String _callPeerName = '';
 
+  /// 本地摄像头开关状态（多人通话全局生效）。
+  bool _callCameraEnabled = true;
+
   void _initCall(CoreSession session) {
     _call = CallService(
       transport: session.transport,
       mediaFactory: () => FlutterRtcMediaEngine(),
+      selfAccount: session.accountId,
     );
     _callChanges = _call!.changes.listen((CallInfo info) {
       if (!mounted) {
@@ -229,14 +234,46 @@ class _AppShellState extends State<AppShell> {
     });
   }
 
-  /// 发起通话（P6-28）：从单聊会话取对端账号公钥。
+  /// 发起通话：单聊直呼对端；群聊拉取成员后对每人各建一路 Mesh 会话。
   void _startCall(ConversationItem item, bool video) {
     final CallService? call = _call;
-    if (call == null || item.peer.isEmpty) {
+    if (call == null) {
       return;
     }
-    setState(() => _callPeerName = item.title);
+    setState(() {
+      _callPeerName = item.title;
+      _callCameraEnabled = true;
+    });
+    if (item.isGroup) {
+      unawaited(_startGroupCall(call, item.id, video));
+      return;
+    }
+    if (item.peer.isEmpty) {
+      return;
+    }
     unawaited(call.startOutgoing(item.peer, video: video));
+  }
+
+  /// 群聊通话：从 `group.members` 取成员账号，排除自己后交给 CallService。
+  Future<void> _startGroupCall(
+    CallService call,
+    String groupId,
+    bool video,
+  ) async {
+    try {
+      final GroupInfo info = await _groups.members(groupId);
+      final String self = widget.session?.accountId ?? '';
+      final List<String> peers = info.members
+          .where((GroupMember m) => m.account != self)
+          .map((GroupMember m) => m.account)
+          .toList(growable: false);
+      if (peers.isEmpty) {
+        return;
+      }
+      await call.startGroupOutgoing(peers, video: video);
+    } on Object catch (error) {
+      debugPrint('Nexmem 群聊通话发起失败：$error');
+    }
   }
 
   @override
@@ -712,8 +749,7 @@ class _AppShellState extends State<AppShell> {
               onBack: () => Navigator.of(context).pop(),
               onSent: (String text) => _conversations.touch(item.id, text),
               onOpenGroupInfo: item.isGroup ? () => _openGroupInfo(item) : null,
-              onStartCall:
-                  item.isGroup ? null : (bool video) => _startCall(item, video),
+              onStartCall: (bool video) => _startCall(item, video),
               onPickFile: widget.session?.pickFile,
               onDeleteMessage: widget.session == null
                   ? null
@@ -1084,6 +1120,7 @@ class _AppShellState extends State<AppShell> {
       storage: _storage,
       reportSink: _reportSink,
       settings: widget.session?.settings ?? const UnavailableSettingsService(),
+      session: widget.session,
       coreInfo: _coreInfo,
       onOpenProfileView: () => _openProfileView(desktop),
       onOpenPane: (String label) => _openSettingsPane(label, desktop),
@@ -1194,6 +1231,20 @@ class _AppShellState extends State<AppShell> {
       onReject: () => unawaited(call.reject()),
       onHangup: () => unawaited(call.endCall()),
       onToggleMute: () => unawaited(call.setMuted(!info.muted)),
+      videoViewBuilder: (String peer, {bool local = false}) => CallVideoView(
+        renderer: local
+            ? call.localRendererFor(peer)
+            : call.remoteRendererFor(peer),
+        mirror: local,
+      ),
+      cameraEnabled: _callCameraEnabled,
+      onToggleCamera: info.video
+          ? () {
+              setState(() => _callCameraEnabled = !_callCameraEnabled);
+              unawaited(call.setVideoEnabled(_callCameraEnabled));
+            }
+          : null,
+      onSwitchCamera: info.video ? () => unawaited(call.switchCamera()) : null,
     );
   }
 
@@ -1260,9 +1311,7 @@ class _AppShellState extends State<AppShell> {
           onOpenGroupInfo: current.isGroup
               ? () => _openGroupInfo(current)
               : null,
-          onStartCall: current.isGroup
-              ? null
-              : (bool video) => _startCall(current, video),
+          onStartCall: (bool video) => _startCall(current, video),
           onToggleProfile: allowProfile
               ? () => setState(() => _profileOpen = !_profileOpen)
               : null,
@@ -1472,6 +1521,7 @@ class _AppShellState extends State<AppShell> {
         onThemeModeChanged: widget.onThemeModeChanged,
         reportSink: _reportSink,
         coreInfo: _coreInfo,
+        session: widget.session,
       );
 
   /// 「我的」右栏内容：null 只读资料、个人资料编辑、其它设置面板。

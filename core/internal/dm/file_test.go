@@ -202,6 +202,23 @@ func TestSendFileValidation(t *testing.T) {
 	}
 }
 
+func TestFileChunkCountNoSizeLimit(t *testing.T) {
+	// 单文件大小不再人为设限：1TiB、100TiB 都应通过，只有超出 uint32 分片
+	// 序号上限（约 1PiB）才拒绝。
+	for _, size := range []int64{1 << 40, 100 << 40, int64(maxFileChunks-1) * DefaultChunkSize} {
+		got, err := fileChunkCount(size, DefaultChunkSize)
+		if err != nil {
+			t.Fatalf("大小 %d 不应被拒绝: %v", size, err)
+		}
+		if int64(got) != (size+DefaultChunkSize-1)/DefaultChunkSize {
+			t.Fatalf("大小 %d 分片数不符: %d", size, got)
+		}
+	}
+	if _, err := fileChunkCount(int64(maxFileChunks+1)*DefaultChunkSize, DefaultChunkSize); !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("超出 uint32 分片上限应返回 ErrFileTooLarge，实际 %v", err)
+	}
+}
+
 func TestValidFileAttachment(t *testing.T) {
 	good := &nexmemv1.InnerMessage{Attachments: []*nexmemv1.Attachment{{
 		Name:   "a.bin",

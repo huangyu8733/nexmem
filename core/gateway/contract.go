@@ -110,6 +110,11 @@ func eventSpecs() []EventSpec {
 			Data:        json.RawMessage(`{"type":"object","properties":{"msg_uuid":{"type":"string"},"done":{"type":"integer"},"total":{"type":"integer"}},"required":["msg_uuid","done","total"]}`),
 		},
 		{
+			Type:        "fs.progress",
+			Description: "P2P 文件共享下载进度，200ms 节流，done==total 表示完成",
+			Data:        json.RawMessage(`{"type":"object","properties":{"share_id":{"type":"string"},"path":{"type":"string"},"done":{"type":"integer"},"total":{"type":"integer"}},"required":["share_id","done","total"]}`),
+		},
+		{
 			Type:        "rtc.signal",
 			Description: "对端 RTC 信令",
 			Data:        json.RawMessage(`{"type":"object","properties":{"peer":{"type":"string"},"payload_b64":{"type":"string"}},"required":["peer","payload_b64"]}`),

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 在线升级：下载到应用缓存目录的 APK，通过 FileProvider 授权安装。 -->
+    <cache-path name="updates" path="." />
+    <external-cache-path name="external_updates" path="." />
+    <external-path name="external_files" path="." />
+</paths>

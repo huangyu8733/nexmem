@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
+import 'settings_pane.dart';
 
 /// 备份导出的方向，用于区分文案与确认项。
 enum BackupMode { export, import }
@@ -82,7 +83,7 @@ class AccountSecurityDialog extends StatelessWidget {
 
   Future<void> _open(BuildContext context, BackupMode mode) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    final bool? done = await showDialog<bool>(
+    final bool? done = await showPaneDialog<bool>(
       context: context,
       builder: (BuildContext context) =>
           _BackupFlowDialog(mode: mode, backup: backup),

@@ -18,6 +18,13 @@ ORIGINS=${ORIGINS:-}
 TLS_CERT=${NEXMEM_TLS_CERT:-}
 TLS_KEY=${NEXMEM_TLS_KEY:-}
 
+# 内核网络配置：浏览器端内核跑在网关进程里，通过这里注入 bootstrap/directory/relay
+DATA_DIR=${NEXMEM_DATA_DIR:-$SCRIPT_DIR/data/core}
+BOOTSTRAPS=${NEXMEM_BOOTSTRAPS:-}
+DIRECTORY_URL=${NEXMEM_DIRECTORY_URL:-}
+RELAY_ADDRS=${NEXMEM_RELAY_ADDRS:-}
+DISPLAY_NAME=${NEXMEM_DISPLAY_NAME:-}
+
 GO=${GO:-$REPO_ROOT/.toolchain/go/bin/go}
 [ -x "$GO" ] || GO=go
 
@@ -53,10 +60,14 @@ if [ ! -f "$STATIC_DIR/index.html" ]; then
 fi
 
 # 4. 前台启动
-set -- -addr "$ADDR" -token-file "$TOKEN_FILE" -static "$STATIC_DIR"
+set -- -addr "$ADDR" -token-file "$TOKEN_FILE" -static "$STATIC_DIR" -data-dir "$DATA_DIR"
 [ -n "$ORIGINS" ] && set -- "$@" -origins "$ORIGINS"
 [ -n "$TLS_CERT" ] && set -- "$@" -tls-cert "$TLS_CERT"
 [ -n "$TLS_KEY" ] && set -- "$@" -tls-key "$TLS_KEY"
+[ -n "$BOOTSTRAPS" ] && set -- "$@" -bootstraps "$BOOTSTRAPS"
+[ -n "$DIRECTORY_URL" ] && set -- "$@" -directory "$DIRECTORY_URL"
+[ -n "$RELAY_ADDRS" ] && set -- "$@" -relay "$RELAY_ADDRS"
+[ -n "$DISPLAY_NAME" ] && set -- "$@" -display-name "$DISPLAY_NAME"
 
 echo "启动: $BIN $*"
 exec "$BIN" "$@"

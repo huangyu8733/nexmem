@@ -936,6 +936,256 @@
       "implemented": false
     },
     {
+      "name": "fs.download",
+      "summary": "从种子并行下载共享到本地目录：多分片多连接加速、SHA-256 校验、完成后本机自动做种",
+      "params": {
+        "type": "object",
+        "properties": {
+          "share_id": {
+            "type": "string"
+          },
+          "dest": {
+            "type": "string",
+            "description": "本地目标目录绝对路径"
+          },
+          "parallel": {
+            "type": "integer",
+            "description": "并发连接数，默认 4"
+          }
+        },
+        "required": [
+          "share_id",
+          "dest"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "share_id": {
+            "type": "string"
+          },
+          "dest": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "share_id",
+          "dest"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "fs.get",
+      "summary": "查看单个共享的详情、文件清单与分享码",
+      "params": {
+        "type": "object",
+        "properties": {
+          "share_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "share_id"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "share_id": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "owner": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "share_id",
+          "code"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "fs.import",
+      "summary": "导入他人发来的 nexmem://fs/ 分享码，登记远端共享（不立即下载）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "share_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "file_count": {
+            "type": "integer"
+          },
+          "total_size": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "share_id",
+          "code"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "fs.list",
+      "summary": "列出本机全部共享（已发布、已下载做种、已导入）",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "fs.publish",
+      "summary": "发布本地文件夹/文件为 P2P 共享：生成内容寻址清单与可转发分享码，无大小限制",
+      "params": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "本地目录或文件的绝对路径"
+          },
+          "name": {
+            "type": "string",
+            "description": "可选，共享显示名"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "share_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "file_count": {
+            "type": "integer"
+          },
+          "total_size": {
+            "type": "integer"
+          },
+          "local": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "share_id",
+          "code",
+          "file_count",
+          "total_size"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "fs.remove",
+      "summary": "删除本机共享记录（不删除实际文件）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "share_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "share_id"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "fs.send",
+      "summary": "把共享的分享码作为聊天消息发给指定账号，对方导入后即可下载",
+      "params": {
+        "type": "object",
+        "properties": {
+          "share_id": {
+            "type": "string"
+          },
+          "peer": {
+            "type": "string",
+            "description": "对端账号 ID"
+          }
+        },
+        "required": [
+          "share_id",
+          "peer"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "msg_uuid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "msg_uuid"
+        ]
+      },
+      "implemented": false
+    },
+    {
       "name": "group.create",
       "summary": "创建群聊并邀请成员",
       "params": {
@@ -1512,6 +1762,113 @@
         "required": [
           "items"
         ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "net.addPeer",
+      "summary": "写入本地地址簿：把账号 ID 与对端 multiaddr 关联，供离线直连解析（三种发现源之一）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "description": "64 位十六进制账号公钥"
+          },
+          "peer_id": {
+            "type": "string",
+            "description": "设备 PeerID"
+          },
+          "addrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "multiaddr 列表"
+          },
+          "label": {
+            "type": "string",
+            "description": "可选备注"
+          }
+        },
+        "required": [
+          "account_id",
+          "peer_id",
+          "addrs"
+        ]
+      },
+      "result": {
+        "type": "object"
+      },
+      "implemented": false
+    },
+    {
+      "name": "net.connectAddr",
+      "summary": "立即连接一个手动输入的 multiaddr（含 /p2p/PeerID）",
+      "params": {
+        "type": "object",
+        "properties": {
+          "addr": {
+            "type": "string",
+            "description": "完整 multiaddr"
+          }
+        },
+        "required": [
+          "addr"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "peer_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer_id"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "net.listPeers",
+      "summary": "列出本地地址簿全部记录",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "net.removePeer",
+      "summary": "从本地地址簿删除一条账号地址记录",
+      "params": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id"
+        ]
+      },
+      "result": {
+        "type": "object"
       },
       "implemented": false
     },
@@ -2191,6 +2548,32 @@
         },
         "required": [
           "msg_uuid",
+          "done",
+          "total"
+        ]
+      }
+    },
+    {
+      "type": "fs.progress",
+      "description": "P2P 文件共享下载进度，200ms 节流，done==total 表示完成",
+      "data": {
+        "type": "object",
+        "properties": {
+          "share_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "done": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "share_id",
           "done",
           "total"
         ]

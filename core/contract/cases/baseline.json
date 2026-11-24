@@ -1375,6 +1375,222 @@
           "retryable": false
         }
       }
+    },
+    {
+      "id": "net.addPeer.missing-account",
+      "request": {
+        "id": 66,
+        "method": "net.addPeer",
+        "params": {
+          "peer_id": "12D3KooW",
+          "addrs": []
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 account_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "net.removePeer.missing-account",
+      "request": {
+        "id": 67,
+        "method": "net.removePeer",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 account_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "net.listPeers.params-not-object",
+      "request": {
+        "id": 68,
+        "method": "net.listPeers",
+        "params": "oops"
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "params 必须是 JSON 对象",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "net.connectAddr.missing-addr",
+      "request": {
+        "id": 69,
+        "method": "net.connectAddr",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 addr",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "fs.publish.missing-path",
+      "request": {
+        "id": 70,
+        "method": "fs.publish",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 path",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "fs.get.missing-id",
+      "request": {
+        "id": 71,
+        "method": "fs.get",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 share_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "fs.import.missing-code",
+      "request": {
+        "id": 72,
+        "method": "fs.import",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 code",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "fs.remove.missing-id",
+      "request": {
+        "id": 73,
+        "method": "fs.remove",
+        "params": {}
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 share_id",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "fs.download.missing-dest",
+      "request": {
+        "id": 74,
+        "method": "fs.download",
+        "params": {
+          "share_id": "abc"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 dest",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "fs.list.params-not-object",
+      "request": {
+        "id": 75,
+        "method": "fs.list",
+        "params": "oops"
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "fs.list 参数不合法: params 必须是 JSON 对象",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "fs.send.missing-peer",
+      "request": {
+        "id": 76,
+        "method": "fs.send",
+        "params": {
+          "share_id": "abc"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 peer",
+          "retryable": false
+        }
+      }
     }
   ]
 }

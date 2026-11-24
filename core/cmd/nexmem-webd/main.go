@@ -36,6 +36,10 @@ func main() {
 	dataDir := flag.String("data-dir", envOr("NEXMEM_DATA_DIR", ""), "内核数据目录；非空时随进程自动启动内核")
 	bootstraps := flag.String("bootstraps", envOr("NEXMEM_BOOTSTRAPS", ""), "DHT bootstrap 节点地址，逗号分隔")
 	directoryURL := flag.String("directory", envOr("NEXMEM_DIRECTORY_URL", ""), "索引服务地址；配置后发布本机公开档案并支持按账号解析对端")
+	relayAddrs := flag.String("relay", envOr("NEXMEM_RELAY_ADDRS", ""), "中继节点多地址，逗号分隔（每条须含 /p2p/<PeerID>）；浏览器端共享此配置")
+	enableMDNS := flag.Bool("mdns", envOr("NEXMEM_MDNS", "") == "true", "开启局域网 mDNS 发现（三种发现源之一）")
+	publicDHT := flag.Bool("public-dht", envOr("NEXMEM_PUBLIC_DHT", "") == "true", "开启公共 IPFS DHT 兜底寻址")
+	manualAddrs := flag.String("manual-addrs", envOr("NEXMEM_MANUAL_ADDRS", ""), "手动导入的对端 multiaddr，逗号分隔")
 	displayName := flag.String("display-name", envOr("NEXMEM_DISPLAY_NAME", ""), "本机展示名（写入设备证书）")
 	timeout := flag.Duration("timeout", 30*time.Second, "单条请求处理上限")
 	flag.Parse()
@@ -94,6 +98,10 @@ func main() {
 			DisplayName:  strings.TrimSpace(*displayName),
 			Bootstraps:   splitList(*bootstraps),
 			DirectoryURL: strings.TrimSpace(*directoryURL),
+			RelayAddrs:   splitList(*relayAddrs),
+			EnableMDNS:   *enableMDNS,
+			PublicDHT:    *publicDHT,
+			ManualAddrs:  splitList(*manualAddrs),
 		}); err != nil {
 			log.Fatalf("自动启动内核: %v", err)
 		}

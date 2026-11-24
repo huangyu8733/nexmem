@@ -375,7 +375,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey<String>('settings-about')));
     await tester.pumpAndSettle();
-    expect(find.text('版本 1.0.0'), findsOneWidget);
+    expect(find.text('版本 1.1.0'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey<String>('about-export')));
     await tester.pumpAndSettle();
@@ -668,7 +668,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey<String>('settings-about')));
     await tester.pumpAndSettle();
 
-    expect(find.text('版本 1.0.0'), findsOneWidget);
+    expect(find.text('版本 1.1.0'), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('about-core-version')),
       findsOneWidget,

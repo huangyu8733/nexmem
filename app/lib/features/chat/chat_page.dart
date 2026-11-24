@@ -601,7 +601,7 @@ class _ChatHeader extends StatelessWidget {
               ],
             ),
           ),
-          if (!conversation.isGroup && onStartCall != null) ...<Widget>[
+          if (onStartCall != null) ...<Widget>[
             IconButton(
               key: const ValueKey<String>('chat-call-audio'),
               tooltip: context.t('语音通话'),

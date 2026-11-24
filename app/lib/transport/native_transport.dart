@@ -8,6 +8,7 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 
 import '../app/core_session.dart';
+import '../features/files/directory_picker.dart';
 import 'event_buffer.dart';
 import 'event_sequencer.dart';
 import 'transport.dart';
@@ -426,13 +427,17 @@ String defaultDataDir() {
   return '${Directory.current.path}${sep}nexmem-data';
 }
 
-/// 构造桌面端 `core.start` 配置：数据目录与中继/引导节点来自
-/// `--dart-define=NEXMEM_*` 或同名环境变量。
+/// 构造桌面端 `core.start` 配置：数据目录、引导节点、索引服务与中继地址
+/// 来自 `--dart-define=NEXMEM_*` 或同名环境变量。
 Map<String, dynamic> nativeStartConfig() {
   const String dataDirDefine = String.fromEnvironment('NEXMEM_DATA_DIR');
   const String displayDefine = String.fromEnvironment('NEXMEM_DISPLAY_NAME');
   const String bootstrapsDefine = String.fromEnvironment('NEXMEM_BOOTSTRAPS');
   const String directoryDefine = String.fromEnvironment('NEXMEM_DIRECTORY_URL');
+  const String relayAddrsDefine = String.fromEnvironment('NEXMEM_RELAY_ADDRS');
+  const String mdnsDefine = String.fromEnvironment('NEXMEM_MDNS');
+  const String publicDhtDefine = String.fromEnvironment('NEXMEM_PUBLIC_DHT');
+  const String manualAddrsDefine = String.fromEnvironment('NEXMEM_MANUAL_ADDRS');
   final Map<String, String> env = Platform.environment;
   final String dataDir = _firstNotEmpty(<String?>[
     dataDirDefine,
@@ -451,12 +456,29 @@ Map<String, dynamic> nativeStartConfig() {
     directoryDefine,
     env['NEXMEM_DIRECTORY_URL'],
   ]);
-  final List<String> relays = _splitList(bootstraps);
+  final String relayAddrs = _firstNotEmpty(<String?>[
+    relayAddrsDefine,
+    env['NEXMEM_RELAY_ADDRS'],
+  ]);
+  final String mdns = _firstNotEmpty(<String?>[mdnsDefine, env['NEXMEM_MDNS']]);
+  final String publicDht =
+      _firstNotEmpty(<String?>[publicDhtDefine, env['NEXMEM_PUBLIC_DHT']]);
+  final String manualAddrs = _firstNotEmpty(<String?>[
+    manualAddrsDefine,
+    env['NEXMEM_MANUAL_ADDRS'],
+  ]);
+  final List<String> bootstrapsList = _splitList(bootstraps);
+  final List<String> relayList = _splitList(relayAddrs);
+  final List<String> manualList = _splitList(manualAddrs);
   return <String, dynamic>{
     'data_dir': dataDir,
     if (displayName.isNotEmpty) 'display_name': displayName,
-    if (relays.isNotEmpty) 'bootstraps': relays,
+    if (bootstrapsList.isNotEmpty) 'bootstraps': bootstrapsList,
     if (directoryUrl.isNotEmpty) 'directory_url': directoryUrl,
+    if (relayList.isNotEmpty) 'relay_addrs': relayList,
+    if (mdns.isNotEmpty) 'enable_mdns': mdns == 'true',
+    if (publicDht.isNotEmpty) 'public_dht': publicDht == 'true',
+    if (manualList.isNotEmpty) 'manual_addrs': manualList,
   };
 }
 
@@ -480,7 +502,11 @@ CoreSession? openNativeSession() {
       debugPrint('Nexmem 内核事件通道连接失败：$error');
     }),
   );
-  return CoreSession(transport, startConfig: config);
+  return CoreSession(
+    transport,
+    startConfig: config,
+    pickDirectory: pickShareDirectory,
+  );
 }
 
 String _firstNotEmpty(List<String?> values) {

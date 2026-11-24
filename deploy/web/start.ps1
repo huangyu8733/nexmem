@@ -13,6 +13,11 @@ param(
     [string]$TlsCert = "",
     [string]$TlsKey = "",
     [string]$Origins = "",
+    [string]$DataDir = "",
+    [string]$Bootstraps = "",
+    [string]$DirectoryUrl = "",
+    [string]$RelayAddrs = "",
+    [string]$DisplayName = "",
     [switch]$RebuildWeb,
     [switch]$NoBuild
 )
@@ -22,6 +27,11 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if (-not $TokenFile) { $TokenFile = Join-Path $PSScriptRoot "data\token" }
 if (-not $StaticDir) { $StaticDir = Join-Path $repoRoot "app\build\web" }
+if (-not $DataDir) { $DataDir = if ($env:NEXMEM_DATA_DIR) { $env:NEXMEM_DATA_DIR } else { Join-Path $PSScriptRoot "data\core" } }
+if (-not $Bootstraps) { $Bootstraps = $env:NEXMEM_BOOTSTRAPS }
+if (-not $DirectoryUrl) { $DirectoryUrl = $env:NEXMEM_DIRECTORY_URL }
+if (-not $RelayAddrs) { $RelayAddrs = $env:NEXMEM_RELAY_ADDRS }
+if (-not $DisplayName) { $DisplayName = $env:NEXMEM_DISPLAY_NAME }
 
 $goExe = Join-Path $repoRoot ".toolchain\go\bin\go.exe"
 if (-not (Test-Path $goExe)) { $goExe = "go" }
@@ -61,10 +71,14 @@ if ($RebuildWeb -or -not (Test-Path (Join-Path $StaticDir "index.html"))) {
 }
 
 # 4. 前台启动
-$runArgs = @("-addr", $Addr, "-token-file", $TokenFile, "-static", $StaticDir)
+$runArgs = @("-addr", $Addr, "-token-file", $TokenFile, "-static", $StaticDir, "-data-dir", $DataDir)
 if ($Origins) { $runArgs += @("-origins", $Origins) }
 if ($TlsCert) { $runArgs += @("-tls-cert", $TlsCert) }
 if ($TlsKey) { $runArgs += @("-tls-key", $TlsKey) }
+if ($Bootstraps) { $runArgs += @("-bootstraps", $Bootstraps) }
+if ($DirectoryUrl) { $runArgs += @("-directory", $DirectoryUrl) }
+if ($RelayAddrs) { $runArgs += @("-relay", $RelayAddrs) }
+if ($DisplayName) { $runArgs += @("-display-name", $DisplayName) }
 
 Write-Host "启动: $exe $($runArgs -join ' ')"
 & $exe @runArgs

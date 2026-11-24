@@ -2,6 +2,32 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../app/pane_header.dart';
 
+/// 从嵌入式面板的对话框内部打开二级对话框时使用。
+///
+/// [EmbeddedSettingsPane] 会用「去弹窗化」的透明 [DialogThemeData] 包裹顶层
+/// 对话框，使其看起来是右栏里的一整块内容。但 `showDialog` 会通过
+/// `InheritedTheme.capture` 捕获调用处主题并重放到新路由，导致二级对话框
+/// （中继设置、举报、备份流程等）也继承透明主题，渲染成与底层内容重叠、
+/// 无法阅读的浮层。这里在 builder 内层显式恢复根导航器的正常主题，
+/// 让二级对话框保有正常的背景卡片、圆角与阴影。
+Future<T?> showPaneDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  bool barrierDismissible = true,
+}) {
+  final ThemeData rootTheme = Theme.of(
+    Navigator.of(context, rootNavigator: true).context,
+  );
+  return showDialog<T>(
+    context: context,
+    barrierDismissible: barrierDismissible,
+    builder: (BuildContext dialogContext) => Theme(
+      data: rootTheme,
+      child: builder(dialogContext),
+    ),
+  );
+}
+
 /// 把一个以 `Navigator.pop()` 关闭的对话框 widget 变成可内嵌的面板。
 ///
 /// 内部用一个独立的 [Navigator]：栈底为关闭监听页，栈顶为传入的对话框。
@@ -54,28 +80,12 @@ class _EmbeddedSettingsPaneState extends State<EmbeddedSettingsPane> {
     });
   }
 
-  Route<void> _route(RouteSettings settings) {
-    final String? name = settings.name;
-    if (name == _dialogRoute) {
-      return MaterialPageRoute<void>(
-        builder: (BuildContext context) => widget.builder(context),
-      );
-    }
-    return MaterialPageRoute<void>(
-      builder: (BuildContext context) => _PaneBase(
-        dialogShown: () => _dialogShown,
-        onDismiss: widget.onDismiss,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // 覆盖 Dialog 主题：内嵌的 AlertDialog 铺满面板、无浮层卡片与阴影，
-    // 视觉上就是右栏的一整块内容，而非一个弹窗。
-    final ThemeData theme = Theme.of(context);
-    final Widget navigator = Theme(
-      data: theme.copyWith(
+  /// 仅用于顶层内嵌对话框的「去弹窗化」主题：铺满面板、无浮层卡片与阴影。
+  ///
+  /// 关键：该主题只包裹栈顶那一个 dialog widget，**不能**包裹整个 Navigator。
+  /// 否则从 dialog 内部再 `showDialog` 打开的二级弹框（中继设置、反馈、
+  /// 备份流程等）也会继承透明主题，变成与底层内容重叠、无法阅读的怪异浮层。
+  ThemeData _embeddedDialogTheme(ThemeData theme) => theme.copyWith(
         dialogTheme: DialogThemeData(
           backgroundColor: Colors.transparent,
           surfaceTintColor: Colors.transparent,
@@ -88,12 +98,32 @@ class _EmbeddedSettingsPaneState extends State<EmbeddedSettingsPane> {
               ) ??
               const TextStyle(fontSize: 20),
         ),
+      );
+
+  Route<void> _route(RouteSettings settings) {
+    final String? name = settings.name;
+    if (name == _dialogRoute) {
+      return MaterialPageRoute<void>(
+        builder: (BuildContext context) => Theme(
+          data: _embeddedDialogTheme(Theme.of(context)),
+          child: widget.builder(context),
+        ),
+      );
+    }
+    return MaterialPageRoute<void>(
+      builder: (BuildContext context) => _PaneBase(
+        dialogShown: () => _dialogShown,
+        onDismiss: widget.onDismiss,
       ),
-      child: Navigator(
-        key: _navigatorKey,
-        initialRoute: _baseRoute,
-        onGenerateRoute: _route,
-      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget navigator = Navigator(
+      key: _navigatorKey,
+      initialRoute: _baseRoute,
+      onGenerateRoute: _route,
     );
     final String? title = widget.title;
     if (title == null) {

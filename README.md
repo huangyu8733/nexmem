@@ -60,6 +60,7 @@
 - **群云盘**：群密钥保护下的离线附件与生命周期清理，管理员可移除群盘配置，解散群组时同步清理云端密文。
 - **联系人与设备**：好友分组、二维码交换名片、设备管理、跨设备已读水位同步与设置快照迁移。
 - **可靠性**：断线重连、离线消息补发、群聊离线补齐、链路中断 30 秒不丢不重。
+- **语音/视频通话**：单聊语音与视频（含摄像头开关、前后摄切换）；群聊支持最多 4 人全互联（Mesh）语音/视频，成员网格布局。Go 内核只做信令透传，媒体面端到端直连，不解密、不录制。
 - **个人资料**：昵称、个人介绍、推广图与头像（支持裁剪，头像固定 1:1），账号与设备 ID 完整显示并可一键复制。
 - **隐私与备份**：加密备份导出/导入、受限子密钥校验、账号与安全设置、网络诊断与连接自检。
 
@@ -95,6 +96,16 @@
 | Android | `Nexmem-*-android.apk` | 允许“安装未知来源应用”后安装 |
 | Web | `Nexmem-*-web.zip` | 静态站点，解压后用任意 Web 服务器托管 |
 
+### 应用内在线升级
+
+桌面端与 Android 可在 **设置 → 关于 → 检查更新**：应用会调用 GitHub Releases API
+查询最新版，展示 Release 说明，并下载当前平台对应的安装包到临时目录。下载完成后
+打开所在目录，Windows 用户运行 `install.ps1` 完成升级，Android 用户点击 APK 安装。
+浏览器版（Web）不支持就地升级，请在发布页手动下载。
+
+> 升级不会自动替换正在运行的程序，避免文件占用导致数据损坏；也不会删除本地账号与
+> 聊天数据（数据目录保持独立）。
+
 📖 各平台详细步骤、首次配置、FAQ 见 **[安装与使用教程](docs/安装与使用教程.md)**。
 
 > 桌面安装包已内置 Go 内核动态库（`nexmem.dll` / `libnexmem.so` / `libnexmem.dylib`）。请保持压缩包内的目录结构，不要只复制主程序。
@@ -122,6 +133,121 @@ cd app && flutter build web --release
 
 测试：`cd app && flutter test`，Go 侧：`make test`。
 
+## 三种发现源（可并存，无需自建服务器也能用）
+
+P2P 的数据传输是端到端的，但"找到对方"需要一个发现机制。Nexmem 内置**三种可同时启用、互不冲突**的发现源，按优先级串联（`本地地址簿 → 原目录/DHT → mDNS/已连接 → 公共 DHT`），任一命中即可直连：
+
+| 发现源 | 开关 | 是否需要服务器 | 适用场景 |
+| --- | --- | --- | --- |
+| **手动地址 / 本地地址簿** | 写入即生效 | ❌ 完全离线 | 扫码/复制对端 multiaddr，写入本机 KV；最高优先级 |
+| **局域网发现 (mDNS)** | `NEXMEM_MDNS=true` | ❌ 零基础设施 | 同一 WiFi 下的电脑/手机自动互联、自动通话 |
+| **公共 DHT 兜底** | `NEXMEM_PUBLIC_DHT=true` | ❌ 用公共节点 | 无自建 bootstrap 时，借公共 IPFS 网络解析地址 |
+
+- **零部署用法**：两端都开启 mDNS 并连同一 WiFi，无需 directory / bootstrap / relay 即可聊天与音视频通话（离线消息仍需 S3 存储）。
+- **设置入口**：设置 → 网络 → 发现源设置（桌面/Android）。Web 端由网关通过 `-mdns` / `-public-dht` / `-manual-addrs` 或同名环境变量配置。
+- **手动地址**：在「发现源设置」填入对端账号 ID（64 位 hex）、设备 PeerID 与 multiaddr（含 `/p2p/<PeerID>`），保存后写入本地地址簿并实时生效。
+- 三种源与下面的自建基础设施**可以叠加**：既配 directory+bootstrap 用于跨网，又开 mDNS 用于局域网，公共 DHT 作为最后兜底。
+
+## 公网部署（服务端）
+
+> Nexmem 的 P2P **不是零服务器**：消息内容不经中心服务器，但若要跨网寻址与离线消息，就需要 directory 与 bootstrap。
+> 若只想在同一局域网内使用，开启 mDNS 即可，无需部署下面任何组件。只配中继器并不能让任意两人连通。
+
+### 需要部署什么
+
+| 组件 | 默认端口 | 作用 | 必需性 |
+| --- | --- | --- | --- |
+| `nexmem-directory` | `8081/tcp` | 账号 → 设备公钥映射、离线上传票据池 | ✅ 必需 |
+| `nexmem-bootstrap` | `14001/tcp` + `14001/udp` | 私有 DHT 第一跳，节点发现入口 | ✅ 必需 |
+| `nexmem-relay` | `14002/tcp` + `14002/udp` | 直连/打洞失败时的 Circuit Relay v2 兜底 | 直连失败时需要 |
+
+relay 只转发加密字节并做带宽计数，**看不到明文、不持久化任何消息**，所以多个中继器之间
+没有连接、没有状态、也没有同步接口。真正让不同网络的用户互通的是共享的 DHT / directory
+与共同的中继地址列表，而不是中继之间的数据同步。
+
+### 方式一：Docker Compose（推荐，Linux / Windows / macOS 通用）
+
+```bash
+cp deploy/.env.example deploy/.env
+# 编辑 deploy/.env：把 NEXMEM_PUBLIC_IP 改成服务器真实公网 IP
+
+docker compose -f deploy/docker-compose.yml up -d --build
+docker compose -f deploy/docker-compose.yml ps
+docker compose -f deploy/docker-compose.yml logs bootstrap
+```
+
+`bootstrap` / `relay` 的启动日志会输出一行 JSON，其中的 `peer_id` 用于拼客户端要填的多地址。
+
+### 方式二：原生脚本部署（Linux / macOS / Windows）
+
+```bash
+# Linux / macOS
+export NEXMEM_PUBLIC_IP=1.2.3.4
+./deploy/server/start.sh build     # 只编译三个二进制到 bin/
+./deploy/server/start.sh all       # directory/relay 后台，bootstrap 前台
+```
+
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -File deploy/server/start.ps1 -PublicIp 1.2.3.4
+```
+
+Linux 服务器可用仓库自带的 systemd 单元配置开机自启（详见 `deploy/server/README.md`）。
+防火墙/安全组需**同时放行 TCP 与 UDP** 的 14001、14002，以及 TCP 8081。
+`-announce` 必须写真实公网 IP 与对外端口，写 `127.0.0.1` 会导致其他节点无法拨号。
+
+### 客户端接入
+
+拼出引导地址（用 bootstrap 日志里的 PeerID）：
+
+```
+/ip4/1.2.3.4/tcp/14001/p2p/12D3KooW...
+```
+
+relay 地址同理，把端口换成 14002 并使用 relay 自己的 PeerID。
+
+| 平台 | 配置方式 |
+| --- | --- |
+| 桌面端 | 设置页「网络 → 中继设置 / 发现源设置」写入后重启；或设置 `NEXMEM_BOOTSTRAPS`、`NEXMEM_DIRECTORY_URL`、`NEXMEM_RELAY_ADDRS`、`NEXMEM_MDNS`、`NEXMEM_PUBLIC_DHT`、`NEXMEM_MANUAL_ADDRS` 后启动 |
+| Android | 需带 `--dart-define` 重新构建 APK（见下方命令），移动端没有设置页中继入口 |
+| Web | 浏览器内核运行在 `nexmem-webd` 进程内，必须在**网关**配置，设置页配置对 Web 无效 |
+
+```powershell
+# Android APK 注入公网基础设施（用 PowerShell，Git Bash 会把 /ip4/... 误转成本地路径）
+flutter build apk --release `
+  --dart-define=NEXMEM_BOOTSTRAPS=/ip4/1.2.3.4/tcp/14001/p2p/12D3Koo... `
+  --dart-define=NEXMEM_DIRECTORY_URL=http://1.2.3.4:8081 `
+  --dart-define=NEXMEM_RELAY_ADDRS=/ip4/1.2.3.4/tcp/14002/p2p/12D3Koo... `
+  --dart-define=NEXMEM_MDNS=true `
+  --dart-define=NEXMEM_PUBLIC_DHT=true
+```
+
+```bash
+# Web 网关注入（发现源用 -mdns / -public-dht 或同名环境变量）
+NEXMEM_DATA_DIR=/srv/nexmem/data \
+NEXMEM_BOOTSTRAPS='/ip4/1.2.3.4/tcp/14001/p2p/12D3Koo...' \
+NEXMEM_DIRECTORY_URL='http://1.2.3.4:8081' \
+NEXMEM_RELAY_ADDRS='/ip4/1.2.3.4/tcp/14002/p2p/12D3Koo...' \
+NEXMEM_MDNS=true \
+NEXMEM_PUBLIC_DHT=true \
+  ./bin/nexmem-webd -token-file ./deploy/web/data/token
+```
+
+> 只在同一 WiFi 下用：把上面所有公网地址都去掉，仅保留 `NEXMEM_MDNS=true`，两端即可自动发现互相通话。
+
+多个中继用逗号分隔，建议部署 2~3 个公网节点让所有客户端填同一份列表。中继在 host 创建时装配，
+**改完配置必须重启客户端**（Web 则重启网关）。
+
+### 验证部署
+
+1. `curl http://<服务器IP>:8081/` 不再是连接拒绝（directory 未注册根路径，404 属正常）。
+2. 客户端「网络诊断」能看到 DHT 入网与目录服务可达。
+3. 加好友发消息：直连失败时状态显示「经中继」，DCUtR 打洞成功后自动升级为直连。
+4. `docker compose logs relay` 无 `RELAY_QUOTA_ALERT`；出现说明带宽超限，需调大 `-bandwidth`。
+
+📖 完整参数、systemd 单元、多中继池与故障排查见 **[服务端部署文档](deploy/server/README.md)**；
+Web 网关专用说明见 [deploy/web/README.md](deploy/web/README.md)。
+
 ## 自动发布
 
 推送 `v*` 标签即触发 [Release 工作流](.github/workflows/release.yml)：云端并行构建 Windows / Linux / macOS / Android / Web，自动创建 GitHub Release 并上传安装包。
@@ -134,6 +260,8 @@ git push origin v1.0.3
 ## 文档
 
 - [安装与使用教程](docs/安装与使用教程.md)
+- [服务端公网部署](deploy/server/README.md)
+- [Web 自托管部署](deploy/web/README.md)
 - [工程实施方案](docs/Nexmem-engineering-plan.md)
 - [开发进度文档](docs/开发进度文档.md)
 - [剩余开发进度](docs/剩余开发进度.md)

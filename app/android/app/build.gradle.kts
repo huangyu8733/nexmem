@@ -52,4 +52,8 @@ dependencies {
     // Go 内核经 gomobile bind 产出的 AAR（make android-aar 生成到 app/android/app/libs/）。
     // 缺失时构建仍可通过（插件会在运行时报告内核不可用），避免 CI 无 NDK 时直接失败。
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+    // 在线升级：FileProvider 授权安装下载的 APK。
+    implementation("androidx.core:core-ktx:1.13.1")
+    // P2P 文件夹共享：SAF 目录树（DocumentFile）遍历。
+    implementation("androidx.documentfile:documentfile:1.0.1")
 }

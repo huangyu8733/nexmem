@@ -2,7 +2,7 @@
 #
 # 产物：
 #   dist\nexmem-windows-x64\                     可直接运行的目录
-#   dist\nexmem-<version>-windows-x64.zip        免安装分发包（解压后运行 install.ps1 安装）
+#   dist\Nexmem-<version>-windows-x64.zip        免安装分发包（解压后运行 install.ps1 安装）
 #
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File deploy\desktop\build-windows.ps1
@@ -73,7 +73,7 @@ Copy-Item -Path (Join-Path $PSScriptRoot 'uninstall.ps1') -Destination $stageDir
 
 # 4. 打 zip
 Write-Output '[4/4] 生成免安装压缩包'
-$zipPath = Join-Path $distDir "nexmem-$Version-windows-x64.zip"
+$zipPath = Join-Path $distDir "Nexmem-$Version-windows-x64.zip"
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 Compress-Archive -Path (Join-Path $stageDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
 
