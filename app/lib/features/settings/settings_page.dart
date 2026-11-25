@@ -425,9 +425,11 @@ WidgetBuilder settingsPaneBuilder({
       return (BuildContext context) => AppearanceDialog(
             mode: themeMode,
             onChanged: onThemeModeChanged,
+            closeOnSelect: false,
           );
     case '语言':
-      return (BuildContext context) => const LanguageDialog();
+      return (BuildContext context) =>
+          const LanguageDialog(closeOnSelect: false);
     case '关于':
       return (BuildContext context) => _AboutDialog(
             diagnostics: diagnostics,
@@ -486,12 +488,22 @@ String _shortId(String id) => id.length <= 14 ? id : '${id.substring(0, 10)}…'
 
 /// 外观：浅色 / 深色 / 跟随系统（ui-spec.md §5）。
 ///
-/// 选择后立即关闭弹窗并通过 [onChanged] 交给 [NexmemApp] 应用与持久化。
-class AppearanceDialog extends StatelessWidget {
-  const AppearanceDialog({super.key, required this.mode, this.onChanged});
+/// [closeOnSelect] 为 true（独立弹窗）时，选择后立即关闭并把结果交给
+/// [onChanged] 应用与持久化；为 false（桌面右栏 / 手机全屏内嵌面板）时，
+/// 选完保留面板，只就地更新勾选态，避免整个「外观」界面消失。
+class AppearanceDialog extends StatefulWidget {
+  const AppearanceDialog({
+    super.key,
+    required this.mode,
+    this.onChanged,
+    this.closeOnSelect = true,
+  });
 
   final ThemeMode mode;
   final ValueChanged<ThemeMode>? onChanged;
+
+  /// 选择后是否关闭。内嵌面板传 false，让用户仍停留在外观界面。
+  final bool closeOnSelect;
 
   static const List<(ThemeMode, String, IconData)> _options =
       <(ThemeMode, String, IconData)>[
@@ -499,6 +511,32 @@ class AppearanceDialog extends StatelessWidget {
         (ThemeMode.light, '浅色', Icons.light_mode_outlined),
         (ThemeMode.dark, '深色', Icons.dark_mode_outlined),
       ];
+
+  @override
+  State<AppearanceDialog> createState() => _AppearanceDialogState();
+
+  static String _optionKey(ThemeMode mode) {
+    switch (mode) {
+      case ThemeMode.light:
+        return 'light';
+      case ThemeMode.dark:
+        return 'dark';
+      case ThemeMode.system:
+        return 'system';
+    }
+  }
+}
+
+class _AppearanceDialogState extends State<AppearanceDialog> {
+  late ThemeMode _selected = widget.mode;
+
+  @override
+  void didUpdateWidget(covariant AppearanceDialog oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.mode != widget.mode) {
+      _selected = widget.mode;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -510,18 +548,24 @@ class AppearanceDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             for (final (ThemeMode option, String label, IconData icon)
-                in _options)
+                in AppearanceDialog._options)
               ListTile(
-                key: ValueKey<String>('appearance-${_optionKey(option)}'),
+                key: ValueKey<String>(
+                    'appearance-${AppearanceDialog._optionKey(option)}'),
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(icon, size: 22),
                 title: Text(context.t(label)),
-                trailing: option == mode
+                trailing: option == _selected
                     ? const Icon(Icons.check, size: 20)
                     : null,
                 onTap: () {
-                  onChanged?.call(option);
-                  Navigator.of(context).pop();
+                  if (option != _selected) {
+                    setState(() => _selected = option);
+                    widget.onChanged?.call(option);
+                  }
+                  if (widget.closeOnSelect) {
+                    Navigator.of(context).pop();
+                  }
                 },
               ),
           ],
@@ -534,17 +578,6 @@ class AppearanceDialog extends StatelessWidget {
         ),
       ],
     );
-  }
-
-  static String _optionKey(ThemeMode mode) {
-    switch (mode) {
-      case ThemeMode.light:
-        return 'light';
-      case ThemeMode.dark:
-        return 'dark';
-      case ThemeMode.system:
-        return 'system';
-    }
   }
 }
 

@@ -11,7 +11,18 @@ import '../../l10n/l10n.dart';
 /// 新 locale 重建组件树，RTL 语种（阿拉伯语等）随之切换为从右到左排版。
 /// 列表语种跨度大，对话框固定较高并滚动，避免在小屏溢出。
 class LanguageDialog extends StatelessWidget {
-  const LanguageDialog({super.key});
+  const LanguageDialog({super.key, this.closeOnSelect = true});
+
+  /// 选择后是否关闭。独立弹窗为 true；内嵌设置面板传 false，
+  /// 让用户切换语言后仍停留在语言界面（选中态随 LocaleScope 自动刷新）。
+  final bool closeOnSelect;
+
+  void _onSelect(BuildContext context, LocaleController controller, Locale? locale) {
+    unawaited(controller.setLocale(locale));
+    if (closeOnSelect) {
+      Navigator.of(context).pop();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,10 +38,7 @@ class LanguageDialog extends StatelessWidget {
             _LanguageTile(
               label: context.t('跟随系统'),
               selected: current == null,
-              onTap: () {
-                unawaited(controller.setLocale(null));
-                Navigator.of(context).pop();
-              },
+              onTap: () => _onSelect(context, controller, null),
             ),
             const Divider(height: 1),
             for (final Locale locale in supportedLocales)
@@ -39,10 +47,7 @@ class LanguageDialog extends StatelessWidget {
                 selected: current != null &&
                     current.languageCode == locale.languageCode &&
                     (current.countryCode ?? '') == locale.countryCode,
-                onTap: () {
-                  unawaited(controller.setLocale(locale));
-                  Navigator.of(context).pop();
-                },
+                onTap: () => _onSelect(context, controller, locale),
               ),
           ],
         ),

@@ -410,4 +410,77 @@ void main() {
     expect(find.text('导入分享码'), findsOneWidget);
     expect(find.text('选择一个会话开始聊天'), findsNothing);
   });
+
+  testWidgets('桌面选择外观主题后面板应保持可见', (WidgetTester tester) async {
+    await _pumpWithSessionAt(
+      tester,
+      const Size(1280, 800),
+      CoreSession(_ProfileTransport()),
+    );
+
+    await tester.tap(find.byTooltip('我的'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('settings-appearance')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('appearance-dark')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey<String>('appearance-dark')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('appearance-dark')),
+      findsOneWidget,
+      reason: '选择主题后外观面板不应消失',
+    );
+
+    // 面板保留的同时，勾选态应就地切换到新选项。
+    final darkTile = tester.widget<ListTile>(
+      find.byKey(const ValueKey<String>('appearance-dark')),
+    );
+    expect(darkTile.trailing, isA<Icon>());
+    expect((darkTile.trailing! as Icon).icon, Icons.check);
+  });
+
+  testWidgets('窄屏选择外观主题后全屏页不应被关闭', (WidgetTester tester) async {
+    await _pumpWithSessionAt(
+      tester,
+      const Size(390, 844),
+      CoreSession(_ProfileTransport()),
+    );
+
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('settings-appearance')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('appearance-dark')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey<String>('appearance-dark')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('appearance-dark')),
+      findsOneWidget,
+      reason: '窄屏选择主题后外观全屏页不应消失',
+    );
+  });
+
+  testWidgets('桌面选择语言后面板应保持可见', (WidgetTester tester) async {
+    await _pumpWithSessionAt(
+      tester,
+      const Size(1280, 800),
+      CoreSession(_ProfileTransport()),
+    );
+
+    await tester.tap(find.byTooltip('我的'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('settings-language')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('language-English')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey<String>('language-English')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('language-English')),
+      findsOneWidget,
+      reason: '选择语言后语言面板不应消失',
+    );
+  });
 }
