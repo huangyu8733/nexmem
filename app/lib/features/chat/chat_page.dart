@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -10,6 +11,7 @@ import '../../app/avatar.dart';
 import '../../app/empty_state.dart';
 import '../../app/theme.dart';
 import '../chats/conversation.dart';
+import '../contacts/contact_service.dart';
 import '../group/group_storage.dart';
 import '../settings/diagnostics.dart';
 import '../settings/report.dart';
@@ -36,12 +38,10 @@ class _BubbleShape extends ShapeBorder {
   ShapeBorder scale(double t) => this;
 
   @override
-  Path getInnerPath(Rect rect, {TextDirection? textDirection}) =>
-      _build(rect);
+  Path getInnerPath(Rect rect, {TextDirection? textDirection}) => _build(rect);
 
   @override
-  Path getOuterPath(Rect rect, {TextDirection? textDirection}) =>
-      _build(rect);
+  Path getOuterPath(Rect rect, {TextDirection? textDirection}) => _build(rect);
 
   Path _build(Rect rect) {
     final double l = rect.left;
@@ -159,6 +159,7 @@ class ChatPage extends StatelessWidget {
     this.onToggleProfile,
     this.profileOpen = false,
     this.onStartCall,
+    this.onStartRemote,
     this.onPickFile,
     this.onDeleteMessage,
     this.onForwardMessage,
@@ -172,10 +173,14 @@ class ChatPage extends StatelessWidget {
     this.mentionController,
     this.onTypingChanged,
     this.onEditMessage,
+    this.presence,
   });
 
   final ConversationItem conversation;
   final ChatStore store;
+
+  /// 在线状态源（十六进制账号 → 是否在线）；传入后聊天头部实时跟随轮询结果。
+  final ValueListenable<Map<String, bool>>? presence;
 
   /// 群聊可 @ 的成员候选（七-1）；为空时不展示 @ 入口。
   final List<MentionCandidate> mentionCandidates;
@@ -207,6 +212,9 @@ class ChatPage extends StatelessWidget {
   /// 发起音视频通话（P6-28）；仅单聊传入，群聊为空不展示入口。
   /// 参数为是否视频通话。
   final ValueChanged<bool>? onStartCall;
+
+  /// 发起远程控制（仅单聊传入）。
+  final VoidCallback? onStartRemote;
 
   /// 选择待发送文件（P2-04）；为空时弹出本机路径输入框。
   ///
@@ -302,9 +310,7 @@ class ChatPage extends StatelessWidget {
     final String selfName = context.t('我');
     final String notAudio = context.t('请选择音频文件（m4a / mp3 / wav / aac 等）');
     if (conversation.isGroup) {
-      messenger.showSnackBar(
-        SnackBar(content: Text(context.t('群聊暂不支持发送语音'))),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(context.t('群聊暂不支持发送语音'))));
       return;
     }
     final ChatAttachment? picked = onPickFile != null
@@ -326,10 +332,7 @@ class ChatPage extends StatelessWidget {
       return;
     }
     try {
-      await store.sendFile(
-        picked.copyWith(mime: mime),
-        senderName: selfName,
-      );
+      await store.sendFile(picked.copyWith(mime: mime), senderName: selfName);
       onSent?.call(picked.name);
     } on Object catch (error) {
       if (!context.mounted) {
@@ -351,11 +354,13 @@ class ChatPage extends StatelessWidget {
           _ChatHeader(
             conversation: conversation,
             store: store,
+            presence: presence,
             onBack: onBack,
             onOpenGroupInfo: onOpenGroupInfo,
             onToggleProfile: onToggleProfile,
             profileOpen: profileOpen,
             onStartCall: onStartCall,
+            onStartRemote: onStartRemote,
             onClearHistory: onClearHistory,
             reportSink: reportSink,
             diagnostics: diagnostics,
@@ -595,15 +600,54 @@ class OfflineStorageNotice extends StatelessWidget {
   }
 }
 
+/// 头部在线状态副标题：有轮询状态源时实时跟随，否则沿用会话快照。
+class _PresenceSubtitle extends StatelessWidget {
+  const _PresenceSubtitle({
+    required this.conversation,
+    required this.style,
+    this.presence,
+  });
+
+  final ConversationItem conversation;
+  final TextStyle? style;
+  final ValueListenable<Map<String, bool>>? presence;
+
+  @override
+  Widget build(BuildContext context) {
+    if (conversation.isGroup) {
+      return Text(context.t('群聊'), style: style);
+    }
+    final ValueListenable<Map<String, bool>>? listenable = presence;
+    if (listenable == null || conversation.peer.isEmpty) {
+      return Text(
+        _ChatHeader._presenceLabel(context, conversation.presence),
+        style: style,
+      );
+    }
+    return ValueListenableBuilder<Map<String, bool>>(
+      valueListenable: listenable,
+      builder: (BuildContext context, Map<String, bool> presence, Widget? _) {
+        final bool? online = presence[normalizeAccountHex(conversation.peer)];
+        final PresenceStatus status = online == null
+            ? conversation.presence
+            : (online ? PresenceStatus.online : PresenceStatus.offline);
+        return Text(_ChatHeader._presenceLabel(context, status), style: style);
+      },
+    );
+  }
+}
+
 class _ChatHeader extends StatelessWidget {
   const _ChatHeader({
     required this.conversation,
     required this.store,
+    this.presence,
     this.onBack,
     this.onOpenGroupInfo,
     this.onToggleProfile,
     this.profileOpen = false,
     this.onStartCall,
+    this.onStartRemote,
     this.onClearHistory,
     this.reportSink = const UnavailableReportSink(),
     this.diagnostics = const UnavailableDiagnosticsService(),
@@ -611,11 +655,13 @@ class _ChatHeader extends StatelessWidget {
 
   final ConversationItem conversation;
   final ChatStore store;
+  final ValueListenable<Map<String, bool>>? presence;
   final VoidCallback? onBack;
   final VoidCallback? onOpenGroupInfo;
   final VoidCallback? onToggleProfile;
   final bool profileOpen;
   final ValueChanged<bool>? onStartCall;
+  final VoidCallback? onStartRemote;
   final Future<void> Function()? onClearHistory;
   final ReportSink reportSink;
   final DiagnosticsService diagnostics;
@@ -708,10 +754,9 @@ class _ChatHeader extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleMedium
                       ?.copyWith(fontSize: 17, fontWeight: FontWeight.w600),
                 ),
-                Text(
-                  conversation.isGroup
-                      ? context.t('群聊')
-                      : _presenceLabel(context, conversation.presence),
+                _PresenceSubtitle(
+                  conversation: conversation,
+                  presence: presence,
                   style: secondary,
                 ),
               ],
@@ -731,6 +776,13 @@ class _ChatHeader extends StatelessWidget {
               onPressed: () => onStartCall!(true),
             ),
           ],
+          if (onStartRemote != null)
+            IconButton(
+              key: const ValueKey<String>('chat-remote-control'),
+              tooltip: context.t('远程控制'),
+              icon: const Icon(Icons.desktop_windows_outlined, size: 20),
+              onPressed: onStartRemote,
+            ),
           if (onToggleProfile != null)
             IconButton(
               key: const ValueKey<String>('chat-profile-toggle'),
@@ -875,7 +927,9 @@ class _MessageListState extends State<_MessageList> {
       final int index = messages.indexWhere(
         (ChatMessage message) => message.id == _newestId,
       );
-      added = index < 0 ? messages.length - _count : messages.length - index - 1;
+      added = index < 0
+          ? messages.length - _count
+          : messages.length - index - 1;
       if (added < 0) {
         added = 0;
       }
@@ -1017,9 +1071,7 @@ class _MessageListState extends State<_MessageList> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.t('编辑失败：{0}', <String>['$e'])),
-        ),
+        SnackBar(content: Text(context.t('编辑失败：{0}', <String>['$e']))),
       );
     }
   }
@@ -1246,10 +1298,12 @@ TextSpan _mentionTextSpan(
     if (match.start > cursor) {
       spans.add(TextSpan(text: text.substring(cursor, match.start)));
     }
-    spans.add(TextSpan(
-      text: match.group(0),
-      style: TextStyle(color: highlightColor, fontWeight: FontWeight.w600),
-    ));
+    spans.add(
+      TextSpan(
+        text: match.group(0),
+        style: TextStyle(color: highlightColor, fontWeight: FontWeight.w600),
+      ),
+    );
     cursor = match.end;
   }
   if (cursor < text.length) {
@@ -1397,13 +1451,13 @@ class MessageBubble extends StatelessWidget {
       return;
     }
     await _confirmDelete(context);
-
   }
 
   /// 弹出编辑框，确认后经 onEdit 交给内核 msg.edit（七-2）。
   Future<void> _editMessage(BuildContext context) async {
-    final TextEditingController controller =
-        TextEditingController(text: message.text);
+    final TextEditingController controller = TextEditingController(
+      text: message.text,
+    );
     final String? revised = await showDialog<String>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
@@ -1604,8 +1658,8 @@ class MessageBubble extends StatelessWidget {
                             label: quoted == null
                                 ? context.t('原消息')
                                 : (quoted!.isMine
-                                    ? context.t('我')
-                                    : quoted!.senderName),
+                                      ? context.t('我')
+                                      : quoted!.senderName),
                             text: quoted?.text ?? context.t('原消息已不可用'),
                             mine: mine,
                           ),
@@ -1717,10 +1771,7 @@ class _FileBubbleContent extends StatelessWidget {
   Widget _imageContent(BuildContext context, ChatAttachment file) {
     final bool transferring = message.status == MessageStatus.sending;
     final double? ratio = message.transferRatio;
-    final double side = math.min(
-      180,
-      MediaQuery.sizeOf(context).width * 0.5,
-    );
+    final double side = math.min(180, MediaQuery.sizeOf(context).width * 0.5);
     final Widget thumb = ClipRRect(
       borderRadius: BorderRadius.circular(8),
       child: LocalImage(
@@ -1759,10 +1810,7 @@ class _FileBubbleContent extends StatelessWidget {
                       ratio == null
                           ? context.t('发送中')
                           : '${(ratio * 100).round()}%',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                      ),
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
                     ),
                   ],
                 ),
@@ -2020,11 +2068,46 @@ class ChatInputBar extends StatefulWidget {
 class _ChatInputBarState extends State<ChatInputBar> {
   /// 表情面板候选（P6-18）：只做字符插入，不引入图片素材或第三方插件。
   static const List<String> _emojis = <String>[
-    '😀', '😁', '😂', '🤣', '😊', '😍', '🤔', '😎',
-    '😭', '😅', '😘', '😡', '😴', '😇', '🥳', '🤝',
-    '👍', '👎', '👏', '🙏', '💪', '🎉', '🔥', '❤️',
-    '💔', '✨', '🌹', '🍀', '☀️', '🌙', '⭐', '🎁',
-    '☕', '🍺', '🚀', '✅', '❌', '📌', '💡', '👀',
+    '😀',
+    '😁',
+    '😂',
+    '🤣',
+    '😊',
+    '😍',
+    '🤔',
+    '😎',
+    '😭',
+    '😅',
+    '😘',
+    '😡',
+    '😴',
+    '😇',
+    '🥳',
+    '🤝',
+    '👍',
+    '👎',
+    '👏',
+    '🙏',
+    '💪',
+    '🎉',
+    '🔥',
+    '❤️',
+    '💔',
+    '✨',
+    '🌹',
+    '🍀',
+    '☀️',
+    '🌙',
+    '⭐',
+    '🎁',
+    '☕',
+    '🍺',
+    '🚀',
+    '✅',
+    '❌',
+    '📌',
+    '💡',
+    '👀',
   ];
 
   final TextEditingController _controller = TextEditingController();
@@ -2199,7 +2282,9 @@ class _ChatInputBarState extends State<ChatInputBar> {
   void _insertMention(MentionCandidate candidate) {
     final String token = '@${candidate.name} ';
     final TextSelection selection = _controller.selection;
-    final int start = selection.start < 0 ? _controller.text.length : selection.start;
+    final int start = selection.start < 0
+        ? _controller.text.length
+        : selection.start;
     final int end = selection.end < 0 ? _controller.text.length : selection.end;
     _controller.value = _controller.value.copyWith(
       text: _controller.text.replaceRange(start, end, token),
@@ -2211,9 +2296,9 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   void _notImplemented(String name) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.t('{0}功能将在后续版本开放', [name]))),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(context.t('{0}功能将在后续版本开放', [name]))));
   }
 
   /// 展开 / 收起表情面板（ui-spec.md §3 输入工具条）。
@@ -2225,9 +2310,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
   void _insertEmoji(String emoji) {
     final TextEditingValue value = _controller.value;
     final TextSelection sel = value.selection;
-    final bool valid = sel.isValid &&
-        sel.start >= 0 &&
-        sel.end <= value.text.length;
+    final bool valid =
+        sel.isValid && sel.start >= 0 && sel.end <= value.text.length;
     final int start = valid ? sel.start : value.text.length;
     final int end = valid ? sel.end : value.text.length;
     _controller.value = TextEditingValue(
@@ -2261,7 +2345,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
               _ToolButton(
                 icon: Icons.mic_none,
                 tooltip: context.t('语音'),
-                onTap: widget.onAttachVoice ??
+                onTap:
+                    widget.onAttachVoice ??
                     () => _notImplemented(context.t('语音')),
               ),
               _ToolButton(
@@ -2287,14 +2372,16 @@ class _ChatInputBarState extends State<ChatInputBar> {
               _ToolButton(
                 icon: Icons.image_outlined,
                 tooltip: context.t('图片'),
-                onTap: widget.onAttachImage ??
+                onTap:
+                    widget.onAttachImage ??
                     () => _notImplemented(context.t('图片')),
               ),
               _ToolButton(
                 icon: Icons.attach_file,
                 tooltip: context.t('文件'),
                 onTap:
-                    widget.onAttachFile ?? () => _notImplemented(context.t('文件')),
+                    widget.onAttachFile ??
+                    () => _notImplemented(context.t('文件')),
               ),
             ],
           ),
@@ -2313,10 +2400,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
                   Text(
                     context.t('定时销毁：{0}后', [ephemeralTtlLabel(_ttlHours)]),
                     key: const ValueKey<String>('ttl-active-chip'),
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: NexmemColors.warning,
-                    ),
+                    style: TextStyle(fontSize: 11, color: NexmemColors.warning),
                   ),
                 ],
               ),
@@ -2420,9 +2504,7 @@ class _EmojiButton extends StatelessWidget {
         key: ValueKey<String>('chat-emoji-$emoji'),
         borderRadius: BorderRadius.circular(6),
         onTap: onTap,
-        child: Center(
-          child: Text(emoji, style: const TextStyle(fontSize: 20)),
-        ),
+        child: Center(child: Text(emoji, style: const TextStyle(fontSize: 20))),
       ),
     );
   }
@@ -2491,7 +2573,10 @@ class _QuotedStrip extends StatelessWidget {
             text.replaceAll('\n', ' '),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 12, color: foreground.withValues(alpha: 0.85)),
+            style: TextStyle(
+              fontSize: 12,
+              color: foreground.withValues(alpha: 0.85),
+            ),
           ),
         ],
       ),

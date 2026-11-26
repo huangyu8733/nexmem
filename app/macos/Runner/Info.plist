@@ -28,6 +28,16 @@
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Nexmem 需要使用摄像头进行视频通话。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Nexmem 需要使用麦克风进行语音/视频通话。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Nexmem 需要访问本地网络，以便在同一 Wi-Fi 下通过 mDNS 发现并连接好友设备。</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_nexmem._udp</string>
+	</array>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

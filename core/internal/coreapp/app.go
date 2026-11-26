@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	lpcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"google.golang.org/protobuf/proto"
 
@@ -41,6 +43,7 @@ import (
 	"github.com/nexmem/core/internal/netnode"
 	"github.com/nexmem/core/internal/social"
 	"github.com/nexmem/core/internal/store"
+	"github.com/nexmem/core/internal/wire"
 )
 
 const (
@@ -788,8 +791,30 @@ func (a *App) newSocialService(dao *store.DAO, contactSvc *contacts.Service) *so
 			return dmSvc.SendText(ctx, target, text, "")
 		},
 		Online: func(ctx context.Context, accountPub []byte) (bool, error) {
-			_, err := a.resolvePeer(ctx, accountPub)
-			return err == nil, nil
+			target, err := a.resolvePeer(ctx, accountPub)
+			if err != nil {
+				return false, nil
+			}
+			a.mu.RLock()
+			h := a.host
+			a.mu.RUnlock()
+			if h == nil || target.PeerID == "" {
+				return true, nil
+			}
+			// 目录里可能残留历史地址：只有真正连上才判定在线，避免「显示在线但发不出」。
+			if h.Network().Connectedness(target.PeerID) == network.Connected {
+				if a.peerStreamAlive(ctx, h, target.PeerID) {
+					return true, nil
+				}
+				// 对端退出后连接可能尚未回收：先断开陈旧连接，再按解析地址重拨。
+				_ = h.Network().ClosePeer(target.PeerID)
+			}
+			cctx, cancel := context.WithTimeout(ctx, 3500*time.Millisecond)
+			defer cancel()
+			if err := h.Connect(cctx, peer.AddrInfo{ID: target.PeerID, Addrs: target.Addrs}); err != nil {
+				return false, nil
+			}
+			return true, nil
 		},
 		Emit: func(name string, data any) { a.emit(name, data) },
 		OnFriendAccepted: func(ctx context.Context, peer []byte) error {
@@ -899,6 +924,26 @@ func (a *App) backupService() *backup.Service {
 
 // resolvePeer 把对端账号解析为可直连地址；未注入解析器时返回不可达，
 // 由单聊层决定是否改走离线投递。
+// peerStreamAlive 通过在既有连接上打开一条 DM 协议流验证对端是否仍可读写。
+//
+// 打开后立刻半关闭写端：对端 `ReadFrame` 收到 EOF 会直接关闭整条流，本端随之
+// 读到 EOF 即证明往返链路健康；对端已退出或中继连接陈旧时读不到 EOF，超时判离线。
+// 相比 `Connectedness`，它能识别「进程已退出但 TCP/中继连接尚未回收」的假在线。
+func (a *App) peerStreamAlive(ctx context.Context, h host.Host, id peer.ID) bool {
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	st, err := h.NewStream(cctx, id, wire.PIDDM)
+	if err != nil {
+		return false
+	}
+	defer st.Close()
+	_ = st.CloseWrite()
+	_ = st.SetReadDeadline(time.Now().Add(1500 * time.Millisecond))
+	var buf [1]byte
+	n, err := st.Read(buf[:])
+	return n == 0 && err == io.EOF
+}
+
 func (a *App) resolvePeer(ctx context.Context, accountPub []byte) (dm.Target, error) {
 	a.mu.RLock()
 	lookup := a.lookup

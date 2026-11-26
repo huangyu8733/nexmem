@@ -9,6 +9,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 /// 一条本地生成的 ICE 候选，待发往对端。
@@ -80,6 +81,13 @@ class FlutterRtcMediaEngine implements RtcMediaEngine {
   bool _video = false;
   bool _videoEnabled = true;
 
+  /// 远端 SDP 是否已应用。候选常先于 answer 到达，未应用前必须排队，
+  /// 否则 addCandidate 会抛错并拆掉整通会话。
+  bool _remoteDescriptionSet = false;
+
+  /// 等待远端描述就绪的 ICE 候选。
+  final List<RtcLocalCandidate> _pendingCandidates = <RtcLocalCandidate>[];
+
   final StreamController<RtcLocalCandidate> _candidates =
       StreamController<RtcLocalCandidate>.broadcast();
   final StreamController<String> _states =
@@ -112,8 +120,14 @@ class FlutterRtcMediaEngine implements RtcMediaEngine {
   @override
   Future<void> start({required bool video}) async {
     _video = video;
+    _remoteDescriptionSet = false;
+    _pendingCandidates.clear();
     _pc = await createPeerConnection(_configuration);
     _pc!.onIceCandidate = (RTCIceCandidate c) {
+      // 释放会话后 PeerConnection 仍可能回调，控制器已关闭时直接丢弃。
+      if (_candidates.isClosed) {
+        return;
+      }
       _candidates.add(RtcLocalCandidate(
         candidate: c.candidate ?? '',
         sdpMid: c.sdpMid,
@@ -121,6 +135,9 @@ class FlutterRtcMediaEngine implements RtcMediaEngine {
       ));
     };
     _pc!.onIceConnectionState = (RTCIceConnectionState state) {
+      if (_states.isClosed) {
+        return;
+      }
       _states.add(state.toString().split('.').last);
     };
     // 远端轨道到达时绑定渲染器。onTrack 比 getRemoteStreams 更早拿到流，
@@ -140,12 +157,16 @@ class FlutterRtcMediaEngine implements RtcMediaEngine {
       }
     };
 
-    _localStream = await navigator.mediaDevices.getUserMedia(<String, dynamic>{
-      'audio': true,
-      'video': video
-          ? <String, dynamic>{'facingMode': 'user'}
-          : false,
-    });
+    try {
+      _localStream = await navigator.mediaDevices.getUserMedia(<String, dynamic>{
+        'audio': true,
+        'video': video
+            ? <String, dynamic>{'facingMode': 'user'}
+            : false,
+      });
+    } on Object catch (error) {
+      throw StateError('getUserMedia 失败（麦克风/摄像头权限或设备不可用）: $error');
+    }
     for (final MediaStreamTrack track in _localStream!.getTracks()) {
       await _pc!.addTrack(track, _localStream!);
     }
@@ -176,17 +197,38 @@ class FlutterRtcMediaEngine implements RtcMediaEngine {
   @override
   Future<void> setRemoteDescription(String sdp, String type) async {
     await _pc!.setRemoteDescription(RTCSessionDescription(sdp, type));
+    _remoteDescriptionSet = true;
+    // 先把排队候选全部应用，再绑定远端流；候选失败不应影响协商结果。
+    final List<RtcLocalCandidate> queued =
+        List<RtcLocalCandidate>.of(_pendingCandidates);
+    _pendingCandidates.clear();
+    for (final RtcLocalCandidate candidate in queued) {
+      await _addCandidateNow(candidate);
+    }
     _bindRemoteStreamIfNeeded();
   }
 
   @override
   Future<void> addCandidate(RtcLocalCandidate candidate) async {
-    await _pc!.addCandidate(RTCIceCandidate(
-      candidate.candidate,
-      candidate.sdpMid,
-      candidate.sdpMLineIndex,
-    ));
-    _bindRemoteStreamIfNeeded();
+    if (!_remoteDescriptionSet) {
+      _pendingCandidates.add(candidate);
+      return;
+    }
+    await _addCandidateNow(candidate);
+  }
+
+  /// 仅做实际添加；候选是尽力而为，失败只记录，不能让会话失败。
+  Future<void> _addCandidateNow(RtcLocalCandidate candidate) async {
+    try {
+      await _pc!.addCandidate(RTCIceCandidate(
+        candidate.candidate,
+        candidate.sdpMid,
+        candidate.sdpMLineIndex,
+      ));
+      _bindRemoteStreamIfNeeded();
+    } on Object catch (error) {
+      debugPrint('Nexmem RTC 忽略无效候选: $error');
+    }
   }
 
   /// onTrack 未带流时的兜底：直接从 PeerConnection 取远端流绑定。
@@ -248,6 +290,8 @@ class FlutterRtcMediaEngine implements RtcMediaEngine {
 
   @override
   Future<void> dispose() async {
+    _remoteDescriptionSet = false;
+    _pendingCandidates.clear();
     await _candidates.close();
     await _states.close();
     _localRenderer?.srcObject = null;

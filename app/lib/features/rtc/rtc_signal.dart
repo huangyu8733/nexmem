@@ -27,7 +27,8 @@ const int kRtcSignalVersion = 2;
 enum RtcSignalType {
   offer('offer'),
   answer('answer'),
-  candidate('candidate');
+  candidate('candidate'),
+  end('end');
 
   const RtcSignalType(this.wireValue);
 
@@ -54,6 +55,7 @@ class RtcSignal {
     this.to = '',
     this.video = false,
     this.members = const <String>[],
+    this.reason = '',
   });
 
   final RtcSignalType type;
@@ -73,9 +75,16 @@ class RtcSignal {
   /// 群聊通话的全体成员账号（base64url）；收到后与其余成员两两建连形成 Mesh。
   final List<String> members;
 
+  /// 结束原因（仅 `end` 信令使用），取值为 CallEndReason.name。
+  final String reason;
+
   /// 是否需要 v2 线格式。纯 1v1 语音沿用 v1，保持与旧端互通。
   bool get _usesV2 =>
-      callId.isNotEmpty || to.isNotEmpty || video || members.isNotEmpty;
+      callId.isNotEmpty ||
+      to.isNotEmpty ||
+      video ||
+      members.isNotEmpty ||
+      reason.isNotEmpty;
 
   /// 编码为内核透传的字节（std base64 由调用方处理）。
   ///
@@ -93,6 +102,7 @@ class RtcSignal {
         'to': to,
         'video': video,
         'members': members.join(','),
+        if (reason.isNotEmpty) 'reason': reason,
       },
     };
     final List<int> bytes = utf8.encode(jsonEncode(json));
@@ -137,6 +147,7 @@ class RtcSignal {
     final Object? callId = decoded['call_id'];
     final Object? to = decoded['to'];
     final Object? rawMembers = decoded['members'];
+    final Object? rawReason = decoded['reason'];
     final List<String> members = rawMembers is String && rawMembers.isNotEmpty
         ? rawMembers
             .split(',')
@@ -153,6 +164,7 @@ class RtcSignal {
       to: to is String ? to : '',
       video: decoded['video'] == true,
       members: members,
+      reason: rawReason is String ? rawReason : '',
     );
   }
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:material_ui/material_ui.dart';
 
 import '../../l10n/l10n.dart';
@@ -36,6 +37,7 @@ class ContactsPage extends StatefulWidget {
     this.onOpenContactChat,
     this.onOpenGroup,
     this.session,
+    this.presence,
     this.onOpenPane,
     this.onContactsChanged,
   });
@@ -59,6 +61,9 @@ class ContactsPage extends StatefulWidget {
 
   /// 内核会话（P6-39 二维码加好友）；为空时不展示二维码入口。
   final CoreSession? session;
+
+  /// 好友在线状态（十六进制账号 → 是否在线）；为空时不显示状态点。
+  final ValueListenable<Map<String, bool>>? presence;
 
   /// 统一的内容展示回调：由壳层决定桌面在右栏展示、手机进全屏页。
   /// pane 取值：好友 / 群聊 / 我的设备 / 好友资料 / 设备列表。
@@ -140,8 +145,10 @@ class ContactsPageState extends State<ContactsPage> {
     }
   }
 
-  GlobalKey _keyFor(String letter) =>
-      _sectionKeys.putIfAbsent(letter, () => GlobalKey(debugLabel: 'contact-$letter'));
+  GlobalKey _keyFor(String letter) => _sectionKeys.putIfAbsent(
+    letter,
+    () => GlobalKey(debugLabel: 'contact-$letter'),
+  );
 
   Future<void> _jumpTo(String letter) async {
     final BuildContext? target = _keyFor(letter).currentContext;
@@ -207,10 +214,7 @@ class ContactsPageState extends State<ContactsPage> {
     }
     final void Function(String, {Object? data})? onOpenPane = widget.onOpenPane;
     if (onOpenPane != null) {
-      onOpenPane('我的设备', data: <String, String>{
-        'peer': '',
-        'title': '我的设备',
-      });
+      onOpenPane('我的设备', data: <String, String>{'peer': '', 'title': '我的设备'});
       return;
     }
     Navigator.of(context).push(
@@ -251,10 +255,8 @@ class ContactsPageState extends State<ContactsPage> {
     }
     final bool? added = await showDialog<bool>(
       context: context,
-      builder: (BuildContext context) => AddFriendDialog(
-        service: service,
-        session: widget.session,
-      ),
+      builder: (BuildContext context) =>
+          AddFriendDialog(service: service, session: widget.session),
     );
     if (added == true) {
       await _reload();
@@ -293,35 +295,35 @@ class ContactsPageState extends State<ContactsPage> {
   }
 
   List<Widget> get _actions => <Widget>[
-        if (widget.session != null)
-          IconButton(
-            key: const ValueKey<String>('contact-social-hub-button'),
-            tooltip: context.t('社交中心'),
-            icon: const Icon(Icons.notifications_none, size: 20),
-            onPressed: _openSocialHub,
-          ),
-        if (widget.service != null)
-          IconButton(
-            key: const ValueKey<String>('contact-add-button'),
-            tooltip: context.t('添加好友'),
-            icon: const Icon(Icons.person_add_alt_1, size: 20),
-            onPressed: _addFriend,
-          ),
-        if (widget.session != null && widget.service != null)
-          IconButton(
-            key: const ValueKey<String>('contact-qr-import-button'),
-            tooltip: context.t('扫码加好友'),
-            icon: const Icon(Icons.qr_code_scanner, size: 20),
-            onPressed: _importQr,
-          ),
-        if (widget.session != null)
-          IconButton(
-            key: const ValueKey<String>('contact-my-qr-button'),
-            tooltip: context.t('我的二维码'),
-            icon: const Icon(Icons.qr_code, size: 20),
-            onPressed: _showMyQr,
-          ),
-      ];
+    if (widget.session != null)
+      IconButton(
+        key: const ValueKey<String>('contact-social-hub-button'),
+        tooltip: context.t('社交中心'),
+        icon: const Icon(Icons.notifications_none, size: 20),
+        onPressed: _openSocialHub,
+      ),
+    if (widget.service != null)
+      IconButton(
+        key: const ValueKey<String>('contact-add-button'),
+        tooltip: context.t('添加好友'),
+        icon: const Icon(Icons.person_add_alt_1, size: 20),
+        onPressed: _addFriend,
+      ),
+    if (widget.session != null && widget.service != null)
+      IconButton(
+        key: const ValueKey<String>('contact-qr-import-button'),
+        tooltip: context.t('扫码加好友'),
+        icon: const Icon(Icons.qr_code_scanner, size: 20),
+        onPressed: _importQr,
+      ),
+    if (widget.session != null)
+      IconButton(
+        key: const ValueKey<String>('contact-my-qr-button'),
+        tooltip: context.t('我的二维码'),
+        icon: const Icon(Icons.qr_code, size: 20),
+        onPressed: _showMyQr,
+      ),
+  ];
 
   /// 本地通讯录筛选：匹配备注名、分组与账号短串/完整账号。
   List<(String, List<Contact>)> _filteredGroups() {
@@ -405,11 +407,13 @@ class ContactsPageState extends State<ContactsPage> {
                     ),
                     if (groups.isNotEmpty) ...<Widget>[
                       const Divider(height: 1),
-                      for (final (String letter, List<Contact> members) in groups) ...<Widget>[
+                      for (final (String letter, List<Contact> members)
+                          in groups) ...<Widget>[
                         _SectionHeader(key: _keyFor(letter), letter: letter),
                         for (final Contact contact in members)
-                          _ContactTile(
+                          _PresenceContactTile(
                             contact: contact,
+                            presence: widget.presence,
                             onTap: () => _openChat(contact),
                             onInfo: () => _openDetail(contact),
                           ),
@@ -429,7 +433,10 @@ class ContactsPageState extends State<ContactsPage> {
                         mainAxisSize: MainAxisSize.min,
                         children: <Widget>[
                           for (final (String letter, List<Contact> _) in groups)
-                            _IndexLetter(letter: letter, onTap: () => _jumpTo(letter)),
+                            _IndexLetter(
+                              letter: letter,
+                              onTap: () => _jumpTo(letter),
+                            ),
                         ],
                       ),
                     ),
@@ -504,7 +511,12 @@ class _EmptyFriends extends StatelessWidget {
 }
 
 class _GroupEntry extends StatelessWidget {
-  const _GroupEntry({super.key, required this.icon, required this.title, this.onTap});
+  const _GroupEntry({
+    super.key,
+    required this.icon,
+    required this.title,
+    this.onTap,
+  });
 
   final IconData icon;
   final String title;
@@ -540,21 +552,63 @@ class _SectionHeader extends StatelessWidget {
       child: Text(
         letter,
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: scheme.onSurface.withValues(alpha: 0.55),
-            ),
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: scheme.onSurface.withValues(alpha: 0.55),
+        ),
       ),
     );
   }
 }
 
+/// 按在线状态变化重建的联系人条目；无状态源时退化为基础条目。
+class _PresenceContactTile extends StatelessWidget {
+  const _PresenceContactTile({
+    required this.contact,
+    this.presence,
+    this.onTap,
+    this.onInfo,
+  });
+
+  final Contact contact;
+  final ValueListenable<Map<String, bool>>? presence;
+  final VoidCallback? onTap;
+  final VoidCallback? onInfo;
+
+  @override
+  Widget build(BuildContext context) {
+    final ValueListenable<Map<String, bool>>? listenable = presence;
+    if (listenable == null) {
+      return _ContactTile(contact: contact, onTap: onTap, onInfo: onInfo);
+    }
+    return ValueListenableBuilder<Map<String, bool>>(
+      valueListenable: listenable,
+      builder: (BuildContext context, Map<String, bool> presence, Widget? _) {
+        return _ContactTile(
+          contact: contact,
+          online: presence[contact.id],
+          onTap: onTap,
+          onInfo: onInfo,
+        );
+      },
+    );
+  }
+}
+
 class _ContactTile extends StatelessWidget {
-  const _ContactTile({required this.contact, this.onTap, this.onInfo});
+  const _ContactTile({
+    required this.contact,
+    this.onTap,
+    this.onInfo,
+    this.online,
+  });
 
   final Contact contact;
   final VoidCallback? onTap;
   final VoidCallback? onInfo;
+
+  /// 在线状态；null 表示未知，不显示状态点。
+  final bool? online;
 
   @override
   Widget build(BuildContext context) {
@@ -564,13 +618,19 @@ class _ContactTile extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space12),
+          padding: const EdgeInsets.symmetric(
+            horizontal: NexmemMetrics.space12,
+          ),
           child: Row(
             children: <Widget>[
               AppAvatar(
                 seed: contact.id,
                 label: contact.name,
                 size: 40,
+                showPresence: online != null,
+                presence: online == true
+                    ? AvatarPresence.online
+                    : AvatarPresence.offline,
               ),
               const SizedBox(width: NexmemMetrics.space12),
               Expanded(
@@ -578,7 +638,8 @@ class _ContactTile extends StatelessWidget {
                   contact.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 15),
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(fontSize: 15),
                 ),
               ),
               if (contact.note.isNotEmpty && contact.note != contact.name)
@@ -588,9 +649,9 @@ class _ContactTile extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontSize: 12,
-                          color: scheme.onSurface.withValues(alpha: 0.5),
-                        ),
+                      fontSize: 12,
+                      color: scheme.onSurface.withValues(alpha: 0.5),
+                    ),
                   ),
                 ),
               if (onInfo != null)

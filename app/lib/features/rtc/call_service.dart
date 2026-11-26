@@ -13,10 +13,24 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:nexmem_app/transport/transport.dart';
 
 import 'rtc_media.dart';
 import 'rtc_signal.dart';
+
+/// 通话结束原因，供 UI 文案与通话记录使用。
+enum CallEndReason {
+  none(''),
+  hangup('已挂断'),
+  rejected('对方已拒绝'),
+  canceled('已取消'),
+  noAnswer('无人接听'),
+  failed('呼叫失败');
+
+  const CallEndReason(this.label);
+  final String label;
+}
 
 /// 通话状态。
 enum CallState {
@@ -56,6 +70,8 @@ class CallInfo {
     this.callId = '',
     this.isGroup = false,
     this.participants = const <CallParticipant>[],
+    this.endReason = CallEndReason.none,
+    this.startedAt,
   });
 
   final CallState state;
@@ -74,11 +90,23 @@ class CallInfo {
   /// 全部成员（含已接听与呼叫中的），供多人网格渲染。
   final List<CallParticipant> participants;
 
+  /// 结束原因；仅 [CallState.ended] 有意义。
+  final CallEndReason endReason;
+
+  /// 接通时刻；未接通为 null。
+  final DateTime? startedAt;
+
+  /// 已通话时长；未接通为 [Duration.zero]。
+  Duration get elapsed =>
+      startedAt == null ? Duration.zero : DateTime.now().difference(startedAt!);
+
   CallInfo copyWith({
     CallState? state,
     bool? muted,
     bool? video,
     List<CallParticipant>? participants,
+    CallEndReason? endReason,
+    DateTime? startedAt,
   }) =>
       CallInfo(
         state: state ?? this.state,
@@ -88,6 +116,8 @@ class CallInfo {
         callId: callId,
         isGroup: isGroup,
         participants: participants ?? this.participants,
+        endReason: endReason ?? this.endReason,
+        startedAt: startedAt ?? this.startedAt,
       );
 }
 
@@ -141,10 +171,23 @@ class CallService {
   /// callId → 尚未接听的来电（群聊可能同时有多个）。
   final Map<String, _PendingOffer> _pending = <String, _PendingOffer>{};
 
+  /// 来电振铃期间先到的对端 ICE 候选；接听后补加到新会话，避免丢候选。
+  final Map<String, List<RtcSignal>> _earlyCandidates =
+      <String, List<RtcSignal>>{};
+
   CallInfo? _current;
   String? _activeCallId;
   bool _isGroup = false;
   bool _muted = false;
+
+  /// 主叫振铃超时（45s 无人接听自动结束）。
+  Timer? _ringTimer;
+
+  /// 接通时刻，用于通话计时。
+  DateTime? _connectedAt;
+
+  /// 振铃超时时长。
+  static const Duration ringTimeout = Duration(seconds: 45);
 
   /// 通话状态变化流；UI 据此刷新来电弹窗/通话页。
   Stream<CallInfo> get changes => _stateChanges.stream;
@@ -161,14 +204,20 @@ class CallService {
     final String callId = 'd-${_newId()}';
     _activeCallId = callId;
     _isGroup = false;
-    await _startSession(
+    final bool started = await _startSession(
       callId: callId,
       peer: peer,
       video: video,
       members: <String>[],
       offer: true,
     );
+    if (!started) {
+      // 采集或信令失败时不再停留在「正在呼叫…」，直接收尾并告知 UI。
+      await endCall(reason: CallEndReason.failed);
+      return;
+    }
     _emit(CallState.outgoing, callId: callId, video: video);
+    _startRingTimer();
   }
 
   /// 发起群聊通话：与 [peers] 中每个成员各建一条 PeerConnection（Mesh）。
@@ -188,6 +237,22 @@ class CallService {
     final String callId = 'g-${_newId()}';
     _activeCallId = callId;
     _isGroup = true;
+    int started = 0;
+    for (final String peer in members) {
+      if (await _startSession(
+        callId: callId,
+        peer: peer,
+        video: video,
+        members: members,
+        offer: true,
+      )) {
+        started++;
+      }
+    }
+    if (started == 0) {
+      await endCall(reason: CallEndReason.failed);
+      return;
+    }
     _emit(
       CallState.outgoing,
       callId: callId,
@@ -196,16 +261,7 @@ class CallService {
           .map((String p) => CallParticipant(peer: p, video: video))
           .toList(growable: false),
     );
-    for (final String peer in members) {
-      await _startSession(
-        callId: callId,
-        peer: peer,
-        video: video,
-        members: members,
-        offer: true,
-      );
-    }
-    _emit(CallState.outgoing, callId: callId, video: video);
+    _startRingTimer();
   }
 
   /// 接听来电。[callId] 为空时接听全部待处理来电。
@@ -216,6 +272,7 @@ class CallService {
     if (ids.isEmpty) {
       return;
     }
+    String? acceptedCallId;
     for (final String id in ids) {
       final _PendingOffer? pending = _pending.remove(id);
       if (pending == null) {
@@ -223,7 +280,15 @@ class CallService {
       }
       _activeCallId = id;
       _isGroup = id.startsWith('g-') || pending.signal.members.isNotEmpty;
-      await _acceptOffer(id, pending.peer, pending.signal);
+      final bool accepted = await _acceptOffer(id, pending.peer, pending.signal);
+      if (!accepted) {
+        // 采集或应答失败：不能对外声称已接通。
+        if (_activeCallId == id) {
+          _activeCallId = null;
+        }
+        continue;
+      }
+      acceptedCallId = id;
 
       // Mesh：对其余成员也各发一路 offer，让所有人都两两直连。
       final List<String> others = pending.signal.members
@@ -244,19 +309,18 @@ class CallService {
         );
       }
     }
-    _emit(CallState.connected, callId: _activeCallId ?? '');
+    if (acceptedCallId == null) {
+      await endCall(reason: CallEndReason.failed);
+      return;
+    }
+    _ringTimer?.cancel();
+    _ringTimer = null;
+    _emit(CallState.connected, callId: acceptedCallId);
   }
 
-  /// 拒绝来电；不建媒体，直接回到空闲。
+  /// 拒绝来电；通知主叫并回到空闲。
   Future<void> reject({String? callId}) async {
-    if (callId != null) {
-      _pending.remove(callId);
-    } else {
-      _pending.clear();
-    }
-    if (_pending.isEmpty && _sessions.isEmpty) {
-      await endCall();
-    }
+    await endCall(reason: CallEndReason.rejected);
   }
 
   /// 处理来自内核 `rtc.signal` 事件的载荷（std base64）。
@@ -264,13 +328,27 @@ class CallService {
     final RtcSignal signal;
     try {
       signal = RtcSignal.fromPayloadB64(payloadB64);
-    } on FormatException {
+    } on FormatException catch (error) {
+      debugPrint('Nexmem rtc.signal parse failed: $error');
       return; // 忽略非法/不兼容载荷，避免被对端构造包击穿状态机。
     }
 
     final String callId = signal.callId.isNotEmpty
         ? signal.callId
         : 'legacy|$peer';
+    debugPrint(
+      'Nexmem rtc.signal recv type=${signal.type.wireValue} '
+      'peer=$peer call=$callId',
+    );
+    if (signal.type == RtcSignalType.end) {
+      // 对端结束/拒绝/取消：立刻收尾，避免主叫干等到超时。
+      _pending.remove(callId);
+      await endCall(
+        reason: _reasonFromWire(signal.reason),
+        notifyPeer: false,
+      );
+      return;
+    }
     if (signal.type == RtcSignalType.offer) {
       // 已与该成员建立本路会话：重复 offer 直接忽略，避免重建 PC。
       if (_sessions.containsKey(_key(callId, peer))) {
@@ -294,6 +372,17 @@ class CallService {
 
     final _CallSession? session = _findSession(callId, peer);
     if (session == null) {
+      // 振铃阶段对端候选先到：先缓存，接听后统一补加，否则 ICE 少一半候选。
+      if (signal.type == RtcSignalType.candidate &&
+          _pending.containsKey(callId)) {
+        final List<RtcSignal> buffered = _earlyCandidates.putIfAbsent(
+          _key(callId, peer),
+          () => <RtcSignal>[],
+        );
+        if (buffered.length < 64) {
+          buffered.add(signal);
+        }
+      }
       return; // 无会话或成员不匹配，忽略迟到的信令。
     }
     try {
@@ -301,14 +390,22 @@ class CallService {
         case RtcSignalType.answer:
           await session.media.setRemoteDescription(signal.sdp, 'answer');
           session.connected = true;
+          _ringTimer?.cancel();
+          _ringTimer = null;
           _emit(CallState.connected, callId: callId, video: session.video);
         case RtcSignalType.candidate:
-          await session.media.addCandidate(RtcLocalCandidate(
-            candidate: signal.sdp,
-            sdpMid: signal.mid,
-            sdpMLineIndex: signal.index,
-          ));
+          // 候选是尽力而为：失败只记录，不能拆掉已建立的会话。
+          try {
+            await session.media.addCandidate(RtcLocalCandidate(
+              candidate: signal.sdp,
+              sdpMid: signal.mid,
+              sdpMLineIndex: signal.index,
+            ));
+          } on Object catch (error) {
+            debugPrint('Nexmem rtc candidate ignored: $error');
+          }
         case RtcSignalType.offer:
+        case RtcSignalType.end:
           break; // 已在前面处理。
       }
     } catch (_) {
@@ -316,8 +413,28 @@ class CallService {
     }
   }
 
-  /// 挂断：释放全部会话并清空状态。
-  Future<void> endCall() async {
+  /// 挂断：释放全部会话并把结束原因告知 UI。
+  ///
+  /// [notifyPeer] 为 true 时先给对端发送一条 end 信令（QQ 式双向收尾），
+  /// 避免对方干等到振铃超时。收到对端 end 信令时传 false 防止乒乓。
+  Future<void> endCall({
+    CallEndReason reason = CallEndReason.hangup,
+    bool notifyPeer = true,
+  }) async {
+    final CallEndReason effective = reason == CallEndReason.hangup &&
+            _current?.state == CallState.outgoing
+        ? CallEndReason.canceled
+        : reason;
+    final String callId = _activeCallId ?? '';
+    final List<String> peers = <String>{
+      ..._sessions.values.map((_CallSession session) => session.peer),
+      ..._pending.values.map((_PendingOffer pending) => pending.peer),
+    }.toList(growable: false);
+    if (notifyPeer && callId.isNotEmpty && peers.isNotEmpty) {
+      await _broadcastEnd(callId, peers, effective);
+    }
+    _ringTimer?.cancel();
+    _ringTimer = null;
     _pending.clear();
     final List<_CallSession> sessions = _sessions.values.toList(growable: false);
     _sessions.clear();
@@ -326,10 +443,55 @@ class CallService {
       await session.connectionSub?.cancel();
       await session.media.dispose();
     }
-    _emit(CallState.ended, callId: _activeCallId ?? '', video: false);
+    _emit(CallState.ended, callId: callId, endReason: effective);
+    // 结束快照已推给 UI（含结束原因与计时），当前会话回到空闲。
     _current = null;
+    _connectedAt = null;
     _activeCallId = null;
     _isGroup = false;
+    _muted = false;
+  }
+
+  void _startRingTimer() {
+    _ringTimer?.cancel();
+    _ringTimer = Timer(ringTimeout, () {
+      if (_current?.state == CallState.outgoing) {
+        unawaited(endCall(reason: CallEndReason.noAnswer));
+      }
+    });
+  }
+
+  /// 通知所有对端本通已结束；失败只记录，不影响本地收尾。
+  Future<void> _broadcastEnd(
+    String callId,
+    List<String> peers,
+    CallEndReason reason,
+  ) async {
+    for (final String peer in peers) {
+      try {
+        await _send(
+          RtcSignal(
+            type: RtcSignalType.end,
+            sdp: reason.name,
+            callId: callId,
+            to: peer,
+            reason: reason.name,
+          ),
+          peer,
+        );
+      } on Object catch (error) {
+        debugPrint('Nexmem rtc end signal failed peer=$peer: $error');
+      }
+    }
+  }
+
+  static CallEndReason _reasonFromWire(String value) {
+    for (final CallEndReason reason in CallEndReason.values) {
+      if (reason != CallEndReason.none && reason.name == value) {
+        return reason;
+      }
+    }
+    return CallEndReason.hangup;
   }
 
   /// 全局静音切换（作用于所有会话）。
@@ -380,7 +542,7 @@ class CallService {
   }
 
   /// 建立一路发往 [peer] 的会话并发送 offer。
-  Future<void> _startSession({
+  Future<bool> _startSession({
     required String callId,
     required String peer,
     required bool video,
@@ -413,13 +575,29 @@ class CallService {
           peer,
         );
       }
-    } catch (_) {
-      await _failSession(session);
+      return true;
+    } on Object catch (error) {
+      debugPrint('Nexmem media start failed peer=$peer: $error');
+      await _releaseSession(session);
+      return false;
+    }
+  }
+
+  /// 释放一路会话资源，不改动通话全局状态（是否结束由调用方决定）。
+  Future<void> _releaseSession(_CallSession session) async {
+    _sessions.remove(_key(session.callId, session.peer));
+    await session.candidateSub?.cancel();
+    await session.connectionSub?.cancel();
+    try {
+      await session.media.dispose();
+    } on Object catch (error) {
+      // 媒体释放失败不能阻断通话状态收尾（例如页面已关闭却仍停留在呼叫中）。
+      debugPrint('Nexmem media dispose failed: $error');
     }
   }
 
   /// 接听某一路 offer：建媒体、应用远端 SDP、回 answer。
-  Future<void> _acceptOffer(
+  Future<bool> _acceptOffer(
     String callId,
     String peer,
     RtcSignal offer,
@@ -437,6 +615,7 @@ class CallService {
     try {
       await media.start(video: offer.video);
       await media.setRemoteDescription(offer.sdp, 'offer');
+      await _flushEarlyCandidates(callId, peer, media);
       final String sdp = await media.createAnswer();
       await _send(
         RtcSignal(
@@ -450,13 +629,36 @@ class CallService {
         peer,
       );
       session.connected = true;
-    } catch (_) {
-      await _failSession(session);
+      return true;
+    } on Object catch (error) {
+      debugPrint('Nexmem accept offer failed peer=$peer: $error');
+      await _releaseSession(session);
+      return false;
     }
   }
 
-  void _bindMedia(_CallSession session) {
-    session.candidateSub =
+  /// 接听成功后补加振铃期间缓存的对端候选；单条失败不影响通话。
+  Future<void> _flushEarlyCandidates(
+    String callId,
+    String peer,
+    RtcMediaEngine media,
+  ) async {
+    final List<RtcSignal> early =
+        _earlyCandidates.remove(_key(callId, peer)) ?? const <RtcSignal>[];
+    for (final RtcSignal candidate in early) {
+      try {
+        await media.addCandidate(RtcLocalCandidate(
+          candidate: candidate.sdp,
+          sdpMid: candidate.mid,
+          sdpMLineIndex: candidate.index,
+        ));
+      } on Object catch (error) {
+        debugPrint('Nexmem early candidate ignored: $error');
+      }
+    }
+  }
+
+  void _bindMedia(_CallSession session) {    session.candidateSub =
         session.media.onLocalCandidate.listen((RtcLocalCandidate c) {
       unawaited(_send(
         RtcSignal(
@@ -474,8 +676,13 @@ class CallService {
     });
     session.connectionSub =
         session.media.onConnectionState.listen((String state) {
+      debugPrint(
+        'Nexmem ice state=$state peer=${session.peer} call=${session.callId}',
+      );
       if (state == 'connected') {
         session.connected = true;
+        _ringTimer?.cancel();
+        _ringTimer = null;
         _emit(CallState.connected, callId: session.callId, video: session.video);
       } else if (state == 'failed' || state == 'disconnected') {
         unawaited(_dropSession(session));
@@ -491,7 +698,7 @@ class CallService {
     await session.connectionSub?.cancel();
     await session.media.dispose();
     if (_sessions.isEmpty) {
-      await endCall();
+      await endCall(reason: CallEndReason.failed);
     } else {
       _emit(_current?.state ?? CallState.connected, callId: session.callId);
     }
@@ -502,13 +709,21 @@ class CallService {
   }
 
   Future<void> _send(RtcSignal signal, String peer) async {
-    await _transport.call(
-      'rtc.sendSignal',
-      params: <String, dynamic>{
-        'peer': peer,
-        'payload_b64': signal.toPayloadB64(),
-      },
-    );
+    try {
+      await _transport.call(
+        'rtc.sendSignal',
+        params: <String, dynamic>{
+          'peer': peer,
+          'payload_b64': signal.toPayloadB64(),
+        },
+      );
+    } on Object catch (error) {
+      debugPrint(
+        'Nexmem rtc signal send failed type=${signal.type.wireValue} '
+        'peer=$peer: $error',
+      );
+      rethrow;
+    }
   }
 
   void _emit(
@@ -517,6 +732,7 @@ class CallService {
     bool? video,
     bool? muted,
     List<CallParticipant>? participants,
+    CallEndReason endReason = CallEndReason.none,
   }) {
     final List<_CallSession> sessions = _sessions.values.toList(growable: false);
     final List<CallParticipant> rendered = (participants ??
@@ -539,15 +755,24 @@ class CallService {
         ));
       }
     }
+    // 结束时会话已释放，保留上一帧成员，便于结束页继续显示对方信息。
+    if (rendered.isEmpty && state == CallState.ended) {
+      rendered.addAll(_current?.participants ?? const <CallParticipant>[]);
+    }
+    if (state == CallState.connected && _connectedAt == null) {
+      _connectedAt = DateTime.now();
+    }
     final String peer = sessions.isNotEmpty
         ? sessions.first.peer
-        : (_pending.values.isEmpty ? '' : _pending.values.first.peer);
+        : _pending.values.isNotEmpty
+            ? _pending.values.first.peer
+            : (_current?.peer ?? '');
     final bool resolvedVideo = video ??
         (sessions.isNotEmpty
             ? sessions.first.video
-            : (_pending.values.isEmpty
-                ? false
-                : _pending.values.first.signal.video));
+            : _pending.values.isNotEmpty
+                ? _pending.values.first.signal.video
+                : (_current?.video ?? false));
     _current = CallInfo(
       state: state,
       peer: peer,
@@ -556,6 +781,8 @@ class CallService {
       callId: callId.isNotEmpty ? callId : (_activeCallId ?? ''),
       isGroup: _isGroup,
       participants: rendered,
+      endReason: endReason,
+      startedAt: _connectedAt,
     );
     if (!_stateChanges.isClosed) {
       _stateChanges.add(_current!);
@@ -563,6 +790,8 @@ class CallService {
   }
 
   Future<void> _reset() async {
+    _ringTimer?.cancel();
+    _ringTimer = null;
     _pending.clear();
     final List<_CallSession> sessions = _sessions.values.toList(growable: false);
     _sessions.clear();
@@ -574,6 +803,7 @@ class CallService {
     _activeCallId = null;
     _isGroup = false;
     _muted = false;
+    _connectedAt = null;
   }
 
   /// 优先按 callId+peer 精确定位；旧端 v1 信令没有 callId，按 peer 回退查找。

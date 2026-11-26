@@ -10,6 +10,7 @@ import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 import '../social/social_hub_page.dart';
+import '../remote/remote_settings_page.dart';
 import '../updater/update_dialog.dart';
 import 'backup.dart';
 import 'diagnostics.dart';
@@ -51,6 +52,7 @@ class SettingsPage extends StatelessWidget {
     this.session,
     this.webOnlineOnly = false,
     this.coreInfo,
+    this.profileOnly = false,
     this.onOpenProfileView,
     this.onOpenPane,
   });
@@ -84,6 +86,9 @@ class SettingsPage extends StatelessWidget {
   /// 内核版本与能力（P6-29）；为 null 表示内核未接入或协商失败。
   final CoreInfo? coreInfo;
 
+  /// 拆分模式：「我的」只展示账号卡片与个人资料，普通设置为纯菜单列表。
+  final bool profileOnly;
+
   /// 点击账号卡片：打开只读资料展示。为空时退回本地弹窗（兼容独立使用）。
   final VoidCallback? onOpenProfileView;
 
@@ -91,11 +96,16 @@ class SettingsPage extends StatelessWidget {
   /// 参数为菜单 label；为空时退回原有弹窗行为（兼容独立使用）。
   final ValueChanged<String>? onOpenPane;
 
-  static const List<(IconData, String)> _items = <(IconData, String)>[
-    (Icons.groups, '社交中心'),
+  /// 「我的」页仅保留资料相关入口；其余项归入底部「设置」。
+  static const List<(IconData, String)> _profileItems = <(IconData, String)>[
     (Icons.badge_outlined, '个人资料'),
+  ];
+
+  static const List<(IconData, String)> _settingsItems = <(IconData, String)>[
+    (Icons.groups, '社交中心'),
     (Icons.shield_outlined, '账号与安全'),
     (Icons.sync_outlined, '多设备同步'),
+    (Icons.desktop_windows_outlined, '远程控制'),
     (Icons.wifi_tethering, '网络'),
     (Icons.cloud_outlined, '离线存储'),
     (Icons.palette_outlined, '外观'),
@@ -112,64 +122,65 @@ class SettingsPage extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        PaneHeader(title: context.t('我的')),
+        PaneHeader(title: context.t(profileOnly ? '我的' : '设置')),
         Expanded(
           child: ListView(
             children: <Widget>[
-              Padding(
-                padding: const EdgeInsets.all(NexmemMetrics.space12),
-                child: InkWell(
-                  key: const ValueKey<String>('settings-profile-card'),
-                  onTap: () => _openProfileView(context),
-                  borderRadius: BorderRadius.circular(
-                    NexmemMetrics.radiusListItem,
-                  ),
-                  child: Container(
-                  padding: const EdgeInsets.all(NexmemMetrics.space16),
-                  decoration: BoxDecoration(
-                    color: scheme.surface,
+              if (profileOnly)
+                Padding(
+                  padding: const EdgeInsets.all(NexmemMetrics.space12),
+                  child: InkWell(
+                    key: const ValueKey<String>('settings-profile-card'),
+                    onTap: () => _openProfileView(context),
                     borderRadius: BorderRadius.circular(
                       NexmemMetrics.radiusListItem,
                     ),
-                  ),
-                  child: Row(
-                    children: <Widget>[
-                      const SelfAvatar(iconSize: 24),
-                      const SizedBox(width: NexmemMetrics.space12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            _AccountName(
-                              account: account,
-                              settings: settings,
-                            ),
-                            if (accountId.isNotEmpty)
-                              ScrollingIdText(
-                                text: accountId,
-                                keyName: 'settings-account-id-full',
-                                label: context.t('账号'),
-                                onCopy: () => _copyId(context, accountId, '账号'),
-                                copyKeyName: 'settings-copy-account',
-                              ),
-                            if (deviceId.isNotEmpty)
-                              ScrollingIdText(
-                                text: deviceId,
-                                keyName: 'settings-device-id-full',
-                                label: context.t('设备'),
-                                onCopy: () => _copyId(context, deviceId, '设备'),
-                                copyKeyName: 'settings-copy-device',
-                              ),
-                          ],
-                        ),
+                    child: Container(
+                    padding: const EdgeInsets.all(NexmemMetrics.space16),
+                    decoration: BoxDecoration(
+                      color: scheme.surface,
+                      borderRadius: BorderRadius.circular(
+                        NexmemMetrics.radiusListItem,
                       ),
-                    ],
-                  ),
+                    ),
+                    child: Row(
+                      children: <Widget>[
+                        const SelfAvatar(iconSize: 24),
+                        const SizedBox(width: NexmemMetrics.space12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              _AccountName(
+                                account: account,
+                                settings: settings,
+                              ),
+                              if (accountId.isNotEmpty)
+                                ScrollingIdText(
+                                  text: accountId,
+                                  keyName: 'settings-account-id-full',
+                                  label: context.t('账号'),
+                                  onCopy: () => _copyId(context, accountId, '账号'),
+                                  copyKeyName: 'settings-copy-account',
+                                ),
+                              if (deviceId.isNotEmpty)
+                                ScrollingIdText(
+                                  text: deviceId,
+                                  keyName: 'settings-device-id-full',
+                                  label: context.t('设备'),
+                                  onCopy: () => _copyId(context, deviceId, '设备'),
+                                  copyKeyName: 'settings-copy-device',
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    ),
                   ),
                 ),
-              ),
-              if (webOnlineOnly)
+              if (webOnlineOnly && !profileOnly)
                 Container(
                   key: const ValueKey<String>('settings-web-online-only'),
                   margin: const EdgeInsets.fromLTRB(
@@ -203,7 +214,8 @@ class SettingsPage extends StatelessWidget {
                   ),
                 ),
               const Divider(height: 1),
-              for (final (IconData icon, String label) in _items)
+              for (final (IconData icon, String label)
+                  in (profileOnly ? _profileItems : _settingsItems))
                 SizedBox(
                   height: NexmemMetrics.listItemHeight,
                   child: ListTile(
@@ -266,6 +278,8 @@ class SettingsPage extends StatelessWidget {
         return 'account';
       case '多设备同步':
         return 'device-sync';
+      case '远程控制':
+        return 'remote-control';
       case '网络':
         return 'network';
       case '离线存储':
@@ -336,6 +350,13 @@ class SettingsPage extends StatelessWidget {
         context: context,
         builder: (BuildContext context) =>
             SettingsSyncDialog(settings: settings),
+      );
+      return;
+    }
+    if (label == '远程控制') {
+      showDialog<void>(
+        context: context,
+        builder: (BuildContext context) => const RemoteSettingsPage(),
       );
       return;
     }
@@ -412,6 +433,8 @@ WidgetBuilder settingsPaneBuilder({
       return (BuildContext context) => AccountSecurityDialog(backup: backup);
     case '多设备同步':
       return (BuildContext context) => SettingsSyncDialog(settings: settings);
+    case '远程控制':
+      return (BuildContext context) => const RemoteSettingsPage();
     case '网络':
       return (BuildContext context) => _NetworkDiagnosticsDialog(
             diagnostics: diagnostics,

@@ -1,9 +1,13 @@
 // P6-28：音视频通话界面（来电 / 呼叫中 / 通话中）。
 //
 // 全屏页面，由壳层在收到 rtc.signal 或用户点击通话入口时压入。
+// 交互对齐 QQ：来电全屏显示对方头像与「接听/拒绝」，视频来电接听按钮
+// 明确标注「视频接听」；呼叫中可取消；接通后计时；结束展示结束原因。
 // UI 只依赖 CallInfo 快照与回调，媒体渲染视图由工厂注入，便于无插件 widget 测试。
-// 群聊时按 participants 渲染成员网格；视频视图由 videoViewBuilder 提供。
 
+import 'dart:async';
+
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../l10n/l10n.dart';
@@ -11,7 +15,7 @@ import '../../l10n/l10n.dart';
 import 'call_service.dart';
 
 /// 通话页。
-class CallPage extends StatelessWidget {
+class CallPage extends StatefulWidget {
   const CallPage({
     super.key,
     required this.info,
@@ -45,11 +49,79 @@ class CallPage extends StatelessWidget {
   final VoidCallback? onSwitchCamera;
   final bool cameraEnabled;
 
-  bool get _incoming => info.state == CallState.incoming;
-  bool get _active =>
-      info.state == CallState.connected || info.state == CallState.outgoing;
+  @override
+  State<CallPage> createState() => _CallPageState();
+}
 
-  bool get _groupGrid => info.isGroup && info.participants.length > 1;
+class _CallPageState extends State<CallPage> {
+  /// 每秒刷新通话时长。
+  Timer? _tick;
+
+  /// 来电提示音/振动（每 2s 一次，最多 15 次≈30s）。
+  Timer? _ring;
+  int _ringCount = 0;
+
+  CallInfo get _info => widget.info;
+
+  bool get _incoming => _info.state == CallState.incoming;
+  bool get _outgoing => _info.state == CallState.outgoing;
+  bool get _connected => _info.state == CallState.connected;
+  bool get _active => _connected || _outgoing;
+  bool get _groupGrid => _info.isGroup && _info.participants.length > 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncEffects();
+  }
+
+  @override
+  void didUpdateWidget(CallPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.info.state != widget.info.state) {
+      _syncEffects();
+    }
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    _ring?.cancel();
+    super.dispose();
+  }
+
+  /// 依据当前状态启停计时器与响铃；不依赖 build，避免每帧重建计时器。
+  void _syncEffects() {
+    if (_connected) {
+      _tick ??= Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    } else {
+      _tick?.cancel();
+      _tick = null;
+    }
+    if (_incoming) {
+      _ring ??= Timer.periodic(const Duration(seconds: 2), (Timer timer) {
+        if (!mounted || !_incoming) {
+          timer.cancel();
+          return;
+        }
+        if (_ringCount >= 15) {
+          timer.cancel();
+          return;
+        }
+        _ringCount++;
+        SystemSound.play(SystemSoundType.alert);
+        HapticFeedback.vibrate();
+      });
+      SystemSound.play(SystemSoundType.alert);
+      HapticFeedback.vibrate();
+    } else {
+      _ring?.cancel();
+      _ring = null;
+      _ringCount = 0;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -67,13 +139,13 @@ class CallPage extends StatelessWidget {
                   Icon(Icons.call, color: scheme.primary, size: 20),
                   const SizedBox(width: 8),
                   Text(
-                    context.t(info.video ? '视频通话' : '语音通话'),
+                    context.t(_info.video ? '视频通话' : '语音通话'),
                     style: const TextStyle(color: Colors.white70, fontSize: 14),
                   ),
-                  if (info.isGroup) ...<Widget>[
+                  if (_info.isGroup) ...<Widget>[
                     const SizedBox(width: 12),
                     Text(
-                      context.t('${info.participants.length} 人'),
+                      context.t('${_info.participants.length} 人'),
                       style: const TextStyle(color: Colors.white54, fontSize: 12),
                     ),
                   ],
@@ -85,85 +157,78 @@ class CallPage extends StatelessWidget {
                   ? _buildGroupGrid(context, scheme)
                   : _buildSingle(context, scheme),
             ),
-            if (info.video && videoViewBuilder != null && _active)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: SizedBox(
-                  width: 120,
-                  height: 90,
-                  child: videoViewBuilder!(
-                    info.peer,
-                    local: true,
-                  ),
-                ),
-              ),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 48),
-              child: Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 28,
-                runSpacing: 16,
-                children: <Widget>[
-                  if (_incoming) ...<Widget>[
-                    _RoundAction(
-                      key: const ValueKey<String>('call-reject'),
-                      icon: Icons.call_end,
-                      color: Colors.red,
-                      label: context.t('拒绝'),
-                      onPressed: onReject,
-                    ),
-                    _RoundAction(
-                      key: const ValueKey<String>('call-accept'),
-                      icon: Icons.call,
-                      color: const Color(0xFF2BB673),
-                      label: context.t('接听'),
-                      onPressed: onAccept,
-                    ),
-                  ],
-                  if (_active) ...<Widget>[
-                    _RoundAction(
-                      key: const ValueKey<String>('call-mute'),
-                      icon: info.muted ? Icons.mic_off : Icons.mic,
-                      color: info.muted ? Colors.grey : scheme.primary,
-                      label: context.t(info.muted ? '取消静音' : '静音'),
-                      onPressed: onToggleMute,
-                    ),
-                    if (info.video && onToggleCamera != null)
-                      _RoundAction(
-                        key: const ValueKey<String>('call-camera'),
-                        icon: cameraEnabled
-                            ? Icons.videocam
-                            : Icons.videocam_off,
-                        color: cameraEnabled ? scheme.primary : Colors.grey,
-                        label: context.t(cameraEnabled ? '关闭摄像头' : '开启摄像头'),
-                        onPressed: onToggleCamera!,
-                      ),
-                    if (info.video && onSwitchCamera != null)
-                      _RoundAction(
-                        key: const ValueKey<String>('call-switch-camera'),
-                        icon: Icons.switch_camera,
-                        color: scheme.primary,
-                        label: context.t('切换摄像头'),
-                        onPressed: onSwitchCamera!,
-                      ),
-                    _RoundAction(
-                      key: const ValueKey<String>('call-hangup'),
-                      icon: Icons.call_end,
-                      color: Colors.red,
-                      label: context.t('挂断'),
-                      onPressed: onHangup,
-                    ),
-                  ],
-                ],
-              ),
-            ),
+            _buildActions(context, scheme),
           ],
         ),
       ),
     );
   }
 
+  /// 底部操作区：固定贴底，独立于视频视图，保证任何尺寸下按钮可见可点。
+  Widget _buildActions(BuildContext context, ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: <Widget>[
+          if (_incoming) ...<Widget>[
+            _RoundAction(
+              key: const ValueKey<String>('call-reject'),
+              icon: Icons.call_end,
+              color: const Color(0xFFE5484D),
+              label: context.t('拒绝'),
+              size: 36,
+              onPressed: widget.onReject,
+            ),
+            _RoundAction(
+              key: const ValueKey<String>('call-accept'),
+              icon: _info.video ? Icons.videocam : Icons.call,
+              color: const Color(0xFF2BB673),
+              label: context.t(_info.video ? '视频接听' : '接听'),
+              size: 36,
+              onPressed: widget.onAccept,
+            ),
+          ],
+          if (_active) ...<Widget>[
+            _RoundAction(
+              key: const ValueKey<String>('call-mute'),
+              icon: _info.muted ? Icons.mic_off : Icons.mic,
+              color: _info.muted ? Colors.grey : scheme.primary,
+              label: context.t(_info.muted ? '取消静音' : '静音'),
+              onPressed: widget.onToggleMute,
+            ),
+            if (_info.video && _connected && widget.onToggleCamera != null)
+              _RoundAction(
+                key: const ValueKey<String>('call-camera'),
+                icon: widget.cameraEnabled ? Icons.videocam : Icons.videocam_off,
+                color: widget.cameraEnabled ? scheme.primary : Colors.grey,
+                label: context.t(widget.cameraEnabled ? '关闭摄像头' : '开启摄像头'),
+                onPressed: widget.onToggleCamera!,
+              ),
+            if (_info.video && _connected && widget.onSwitchCamera != null)
+              _RoundAction(
+                key: const ValueKey<String>('call-switch-camera'),
+                icon: Icons.switch_camera,
+                color: scheme.primary,
+                label: context.t('切换摄像头'),
+                onPressed: widget.onSwitchCamera!,
+              ),
+            _RoundAction(
+              key: const ValueKey<String>('call-hangup'),
+              icon: Icons.call_end,
+              color: const Color(0xFFE5484D),
+              label: context.t(_outgoing ? '取消' : '挂断'),
+              onPressed: widget.onHangup,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildGroupGrid(BuildContext context, ColorScheme scheme) {
+    final Widget Function(String, {bool local})? builder =
+        widget.videoViewBuilder;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: GridView.count(
@@ -172,11 +237,11 @@ class CallPage extends StatelessWidget {
         crossAxisSpacing: 12,
         childAspectRatio: 0.85,
         children: <Widget>[
-          for (final CallParticipant participant in info.participants)
+          for (final CallParticipant participant in _info.participants)
             _ParticipantTile(
               participant: participant,
-              view: info.video && videoViewBuilder != null
-                  ? videoViewBuilder!(participant.peer, local: false)
+              view: _info.video && builder != null
+                  ? builder(participant.peer, local: false)
                   : null,
             ),
         ],
@@ -185,29 +250,52 @@ class CallPage extends StatelessWidget {
   }
 
   Widget _buildSingle(BuildContext context, ColorScheme scheme) {
-    final Widget? remoteView = info.video
-        ? videoViewBuilder?.call(info.peer, local: false) ??
-            (remoteViewBuilder != null ? remoteViewBuilder!(context) : null)
-        : null;
-    return Center(
+    final bool showVideo = _info.video && widget.videoViewBuilder != null;
+    final Widget? remoteView = showVideo
+        ? widget.videoViewBuilder!(_info.peer, local: false)
+        : (widget.remoteViewBuilder != null
+            ? widget.remoteViewBuilder!(context)
+            : null);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: <Widget>[
-          if (remoteView != null)
-            SizedBox(
-              width: 260,
-              height: 200,
-              child: remoteView,
+          if (showVideo && _connected)
+            // 视频接通后主画面为远端视频，本地预览缩到右上角。
+            Expanded(
+              child: Stack(
+                children: <Widget>[
+                  Positioned.fill(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: remoteView ?? const SizedBox.shrink(),
+                    ),
+                  ),
+                  Positioned(
+                    top: 12,
+                    right: 12,
+                    child: SizedBox(
+                      width: 96,
+                      height: 132,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: widget.videoViewBuilder!(_info.peer, local: true),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             )
           else
             CircleAvatar(
-              radius: 48,
+              radius: _incoming ? 56 : 48,
               backgroundColor: scheme.primary.withValues(alpha: 0.25),
-              child: Icon(Icons.person, size: 48, color: scheme.primary),
+              child: Icon(Icons.person, size: _incoming ? 56 : 48, color: scheme.primary),
             ),
           const SizedBox(height: 20),
           Text(
-            peerName.isEmpty ? info.peer : peerName,
+            widget.peerName.isEmpty ? _info.peer : widget.peerName,
             style: const TextStyle(
               color: Colors.white,
               fontSize: 20,
@@ -216,13 +304,36 @@ class CallPage extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            _statusLabel(context, info.state),
+            _statusLabel(context, _info.state),
             key: const ValueKey<String>('call-status'),
             style: const TextStyle(color: Colors.white60, fontSize: 14),
           ),
+          if (_incoming) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(
+              context.t(
+                '邀请你进行${_info.video ? '视频' : '语音'}通话',
+              ),
+              style: const TextStyle(color: Colors.white38, fontSize: 13),
+            ),
+          ],
+          if (_connected) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(
+              _formatDuration(_info.elapsed),
+              key: const ValueKey<String>('call-duration'),
+              style: const TextStyle(color: Colors.white54, fontSize: 13),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  static String _formatDuration(Duration d) {
+    final String mm = d.inMinutes.toString().padLeft(2, '0');
+    final String ss = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$mm:$ss';
   }
 
   static String _statusLabel(BuildContext context, CallState state) =>
@@ -297,21 +408,25 @@ class _RoundAction extends StatelessWidget {
     required this.color,
     required this.label,
     required this.onPressed,
+    this.size = 30,
   });
 
   final IconData icon;
   final Color color;
   final String label;
   final VoidCallback onPressed;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         CircleAvatar(
-          radius: 30,
+          radius: size,
           backgroundColor: color,
           child: IconButton(
+            iconSize: size,
             icon: Icon(icon, color: Colors.white),
             onPressed: onPressed,
           ),

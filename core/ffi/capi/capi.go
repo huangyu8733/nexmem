@@ -18,7 +18,6 @@ import "C"
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"unsafe"
 
@@ -44,11 +43,9 @@ func main() {}
 func coreApp() *coreapp.App {
 	appOnce.Do(func() {
 		a, err := coreapp.New(gw, coreapp.EventSinkFunc(func(eventType string, data any) {
-			payload, err := json.Marshal(data)
-			if err != nil {
-				payload = []byte("{}")
-			}
-			emitter.Emit(eventType, payload)
+			// data 必须是原始对象：Emitter 会自行序列化；若在这里先 Marshal 成
+			// []byte，Data 就会被二次编码成 base64 字符串，Dart 侧解析不到字段。
+			emitter.Emit(eventType, data)
 		}))
 		if err != nil {
 			panic("coreapp: " + err.Error())

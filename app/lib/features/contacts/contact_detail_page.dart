@@ -21,6 +21,7 @@ class ContactDetailPage extends StatefulWidget {
     this.service,
     this.onChanged,
     this.onSendMessage,
+    this.onStartRemote,
     this.onOpenDevices,
     this.onDeleted,
     this.embedded = false,
@@ -36,6 +37,9 @@ class ContactDetailPage extends StatefulWidget {
 
   /// 点击「发消息」；为空表示当前还没有可用的内核通道。
   final VoidCallback? onSendMessage;
+
+  /// 点击「远程控制」；为空或已拉黑时不展示。
+  final VoidCallback? onStartRemote;
 
   /// 点击「设备」行：传 `(peerId, title)` 由调用方展示设备列表。
   final void Function(String peer, String title)? onOpenDevices;
@@ -479,6 +483,15 @@ class _ContactDetailPageState extends State<ContactDetailPage> {
             onPressed: _contact.blocked ? null : widget.onSendMessage,
             child: Text(context.t('发消息')),
           ),
+          if (widget.onStartRemote != null) ...<Widget>[
+            const SizedBox(height: NexmemMetrics.space12),
+            OutlinedButton.icon(
+              key: const ValueKey<String>('contact-remote-button'),
+              onPressed: _contact.blocked ? null : widget.onStartRemote,
+              icon: const Icon(Icons.desktop_windows_outlined, size: 18),
+              label: Text(context.t('远程控制')),
+            ),
+          ],
           if (widget.service != null) ...<Widget>[
             const SizedBox(height: NexmemMetrics.space12),
             Center(

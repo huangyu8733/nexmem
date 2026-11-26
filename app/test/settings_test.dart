@@ -578,6 +578,7 @@ void main() {
     await tester.pumpWidget(
       _wrap(
         SettingsPage(
+          profileOnly: true,
           account: CoreAccount(
             accountId: 'a' * 64,
             deviceId: 'b' * 64,
@@ -612,7 +613,7 @@ void main() {
   });
 
   testWidgets('设置页未接入内核时账号卡片保持离线占位', (WidgetTester tester) async {
-    await tester.pumpWidget(_wrap(const SettingsPage()));
+    await tester.pumpWidget(_wrap(const SettingsPage(profileOnly: true)));
 
     expect(find.text('未登录设备'), findsOneWidget);
     expect(
@@ -891,6 +892,7 @@ void main() {
     await tester.pumpWidget(
       _wrap(
         SettingsPage(
+          profileOnly: true,
           account: CoreAccount(accountId: 'a' * 64, deviceId: 'b' * 64),
           settings: TransportSettingsService(transport),
         ),

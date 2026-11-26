@@ -11,9 +11,12 @@ class SocialService {
 
   final CoreTransport _transport;
 
-  Future<Map<String, dynamic>> _call(String method,
-      [Map<String, dynamic> params = const <String, dynamic>{}]) async {
-    return _transport.call(method, params: params);
+  Future<Map<String, dynamic>> _call(
+    String method, [
+    Map<String, dynamic> params = const <String, dynamic>{},
+    Duration? timeout,
+  ]) async {
+    return _transport.call(method, params: params, timeout: timeout);
   }
 
   static int _int(Object? v, [int fallback = 0]) =>
@@ -38,7 +41,10 @@ class SocialService {
     return _str(data['id']);
   }
 
-  Future<List<FriendRequest>> listFriendRequests({int? status, int limit = 100}) async {
+  Future<List<FriendRequest>> listFriendRequests({
+    int? status,
+    int limit = 100,
+  }) async {
     final params = <String, dynamic>{'limit': limit};
     if (status != null) params['status'] = status;
     final data = await _call('friend.request.list', params);
@@ -54,7 +60,9 @@ class SocialService {
 
   /// 删除一条好友申请（仅本机记录），返回实际删除条数。
   Future<int> deleteFriendRequest(String id) async {
-    final data = await _call('friend.request.delete', <String, dynamic>{'id': id});
+    final data = await _call('friend.request.delete', <String, dynamic>{
+      'id': id,
+    });
     return _int(data['deleted']);
   }
 
@@ -71,8 +79,12 @@ class SocialService {
 
   // ---- 入群审批 ----
 
-  Future<String> requestGroupJoin(String groupId, String owner,
-      {String groupTitle = '', String message = ''}) async {
+  Future<String> requestGroupJoin(
+    String groupId,
+    String owner, {
+    String groupTitle = '',
+    String message = '',
+  }) async {
     final data = await _call('group.join.request', <String, dynamic>{
       'group_id': groupId,
       'owner': owner,
@@ -120,10 +132,7 @@ class SocialService {
     String? title,
     int? muteMinutes,
   }) async {
-    final params = <String, dynamic>{
-      'group_id': groupId,
-      'account': account,
-    };
+    final params = <String, dynamic>{'group_id': groupId, 'account': account};
     if (role != null) params['role'] = role;
     if (title != null) params['title'] = title;
     if (muteMinutes != null) params['mute_minutes'] = muteMinutes;
@@ -132,7 +141,10 @@ class SocialService {
 
   // ---- 通知与在线状态 ----
 
-  Future<NotificationList> listNotifications({int limit = 100, bool unreadOnly = false}) async {
+  Future<NotificationList> listNotifications({
+    int limit = 100,
+    bool unreadOnly = false,
+  }) async {
     final data = await _call('notification.list', <String, dynamic>{
       'limit': limit,
       'unread_only': unreadOnly,
@@ -151,7 +163,9 @@ class SocialService {
 
   /// 删除一条通知，返回实际删除条数。
   Future<int> deleteNotification(String id) async {
-    final data = await _call('notification.delete', <String, dynamic>{'id': id});
+    final data = await _call('notification.delete', <String, dynamic>{
+      'id': id,
+    });
     return _int(data['deleted']);
   }
 
@@ -161,17 +175,26 @@ class SocialService {
     return _int(data['deleted']);
   }
 
-  Future<List<Presence>> listPresence(List<String> accounts) async {
+  /// 查询账号在线状态；[accounts] 为十六进制账号公钥。
+  ///
+  /// 内核会并发探测每个账号，离线好友较多时也需要数秒，故默认放宽到 30s。
+  Future<List<Presence>> listPresence(
+    List<String> accounts, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
     final data = await _call('presence.list', <String, dynamic>{
       'accounts': accounts,
-    });
+    }, timeout);
     return _items(data['items']).map(Presence.fromJson).toList();
   }
 
   // ---- 动态 ----
 
-  Future<String> postMoment(String text,
-      {String attachments = '', List<String> peers = const <String>[]}) async {
+  Future<String> postMoment(
+    String text, {
+    String attachments = '',
+    List<String> peers = const <String>[],
+  }) async {
     final data = await _call('moment.post', <String, dynamic>{
       'text': text,
       'attachments': attachments,
@@ -185,23 +208,28 @@ class SocialService {
     return _items(data['items']).map(Moment.fromJson).toList();
   }
 
-  Future<void> likeMoment(String id, {bool unlike = false, String? voter}) async {
+  Future<void> likeMoment(
+    String id, {
+    bool unlike = false,
+    String? voter,
+  }) async {
     final params = <String, dynamic>{'id': id, 'unlike': unlike};
     if (voter != null) params['voter'] = voter;
     await _call('moment.like', params);
   }
 
   Future<void> commentMoment(String id, String text) async {
-    await _call('moment.comment', <String, dynamic>{
-      'id': id,
-      'text': text,
-    });
+    await _call('moment.comment', <String, dynamic>{'id': id, 'text': text});
   }
 
   // ---- 投票 ----
 
-  Future<String> createPoll(String groupId, String question, List<String> options,
-      {int closesAt = 0}) async {
+  Future<String> createPoll(
+    String groupId,
+    String question,
+    List<String> options, {
+    int closesAt = 0,
+  }) async {
     final data = await _call('poll.create', <String, dynamic>{
       'group_id': groupId,
       'question': question,
@@ -220,10 +248,7 @@ class SocialService {
   }
 
   Future<void> votePoll(String id, int option) async {
-    await _call('poll.vote', <String, dynamic>{
-      'id': id,
-      'option': option,
-    });
+    await _call('poll.vote', <String, dynamic>{'id': id, 'option': option});
   }
 }
 
@@ -253,15 +278,15 @@ class FriendRequest {
   bool get isIncoming => direction == 'in';
 
   factory FriendRequest.fromJson(Map<String, dynamic> json) => FriendRequest(
-        id: SocialService._str(json['id']),
-        from: SocialService._str(json['from']),
-        to: SocialService._str(json['to']),
-        message: SocialService._str(json['message']),
-        status: SocialService._int(json['status']),
-        direction: SocialService._str(json['direction']),
-        createdAt: SocialService._int(json['created_at']),
-        respondedAt: SocialService._int(json['responded_at']),
-      );
+    id: SocialService._str(json['id']),
+    from: SocialService._str(json['from']),
+    to: SocialService._str(json['to']),
+    message: SocialService._str(json['message']),
+    status: SocialService._int(json['status']),
+    direction: SocialService._str(json['direction']),
+    createdAt: SocialService._int(json['created_at']),
+    respondedAt: SocialService._int(json['responded_at']),
+  );
 }
 
 /// 入群申请。
@@ -291,7 +316,8 @@ class GroupJoinRequest {
   bool get isPending => status == 0;
   bool get isIncoming => direction == 'in';
 
-  factory GroupJoinRequest.fromJson(Map<String, dynamic> json) => GroupJoinRequest(
+  factory GroupJoinRequest.fromJson(Map<String, dynamic> json) =>
+      GroupJoinRequest(
         id: SocialService._str(json['id']),
         groupId: SocialService._str(json['group_id']),
         groupTitle: SocialService._str(json['group_title']),
@@ -324,7 +350,8 @@ class AppNotification {
   final bool read;
   final int createdAt;
 
-  factory AppNotification.fromJson(Map<String, dynamic> json) => AppNotification(
+  factory AppNotification.fromJson(Map<String, dynamic> json) =>
+      AppNotification(
         id: SocialService._str(json['id']),
         kind: SocialService._str(json['kind']),
         title: SocialService._str(json['title']),
@@ -354,10 +381,10 @@ class Presence {
   final bool known;
 
   factory Presence.fromJson(Map<String, dynamic> json) => Presence(
-        account: SocialService._str(json['account']),
-        online: SocialService._bool(json['online']),
-        known: SocialService._bool(json['known']),
-      );
+    account: SocialService._str(json['account']),
+    online: SocialService._bool(json['online']),
+    known: SocialService._bool(json['known']),
+  );
 }
 
 /// 好友动态。
@@ -379,13 +406,13 @@ class Moment {
   final int createdAt;
 
   factory Moment.fromJson(Map<String, dynamic> json) => Moment(
-        id: SocialService._str(json['id']),
-        author: SocialService._str(json['author']),
-        text: SocialService._str(json['text']),
-        attachments: SocialService._str(json['attachments']),
-        likes: SocialService._int(json['likes']),
-        createdAt: SocialService._int(json['created_at']),
-      );
+    id: SocialService._str(json['id']),
+    author: SocialService._str(json['author']),
+    text: SocialService._str(json['text']),
+    attachments: SocialService._str(json['attachments']),
+    likes: SocialService._int(json['likes']),
+    createdAt: SocialService._int(json['created_at']),
+  );
 }
 
 /// 群投票。
@@ -433,13 +460,13 @@ class GroupPoll {
   }
 
   factory GroupPoll.fromJson(Map<String, dynamic> json) => GroupPoll(
-        id: SocialService._str(json['id']),
-        groupId: SocialService._str(json['group_id']),
-        creator: SocialService._str(json['creator']),
-        question: SocialService._str(json['question']),
-        options: SocialService._str(json['options']),
-        votes: SocialService._str(json['votes']),
-        createdAt: SocialService._int(json['created_at']),
-        closesAt: SocialService._int(json['closes_at']),
-      );
+    id: SocialService._str(json['id']),
+    groupId: SocialService._str(json['group_id']),
+    creator: SocialService._str(json['creator']),
+    question: SocialService._str(json['question']),
+    options: SocialService._str(json['options']),
+    votes: SocialService._str(json['votes']),
+    createdAt: SocialService._int(json['created_at']),
+    closesAt: SocialService._int(json['closes_at']),
+  );
 }

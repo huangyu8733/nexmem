@@ -20,7 +20,11 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        // Android 15（API 35）对 targetSdk 35+ 的应用要求：启动 mediaProjection
+        // 前台服务前必须先持有录屏授权令牌；而 flutter_webrtc 在授权回调内直接
+        // 创建 MediaProjection，两者互相等待，导致录屏必然崩溃。降到 34 可解除
+        // 该校验，待插件支持可控顺序后再升到 35+。
+        targetSdk = 34
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
         // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`

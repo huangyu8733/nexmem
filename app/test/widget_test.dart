@@ -69,7 +69,7 @@ Future<void> _pumpWithSessionAt(
 }
 
 void main() {
-  testWidgets('移动端宽度使用底部四 Tab', (WidgetTester tester) async {
+  testWidgets('移动端宽度使用底部五 Tab', (WidgetTester tester) async {
     await _pumpAt(tester, const Size(390, 844));
 
     expect(find.byType(NavigationBar), findsOneWidget);
@@ -114,6 +114,11 @@ void main() {
     expect(find.text('好友'), findsOneWidget);
 
     await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+    expect(find.text('个人资料'), findsOneWidget);
+    expect(find.text('账号与安全'), findsNothing);
+
+    await tester.tap(find.text('设置'));
     await tester.pumpAndSettle();
     expect(find.text('账号与安全'), findsOneWidget);
   });
@@ -206,6 +211,8 @@ void main() {
     expect(find.text('个人介绍'), findsOneWidget);
 
     // 点击其它设置项右栏切到对应面板（语言）：右栏内容切换且仍是编辑面板之外。
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey<String>('settings-language')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey<String>('profile-save')), findsNothing);
@@ -262,7 +269,7 @@ void main() {
       nav.destinations
           .map((Widget d) => (d as NavigationDestination).label)
           .toList(),
-      <String>['消息', '联系人', '文件', '我的'],
+      <String>['消息', '联系人', '文件', '我的', '设置'],
     );
 
     await tester.tap(find.text('文件'));
@@ -352,11 +359,18 @@ void main() {
       CoreSession(_ProfileTransport()),
     );
 
-    await tester.tap(find.byTooltip('我的'));
+    await tester.tap(find.byTooltip('设置'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey<String>('settings-language')));
     await tester.pumpAndSettle();
     expect(find.text('语言'), findsWidgets);
+
+    await tester.tap(find.byTooltip('我的'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('profile-view-name')),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byTooltip('我的'));
     await tester.pumpAndSettle();
@@ -418,7 +432,7 @@ void main() {
       CoreSession(_ProfileTransport()),
     );
 
-    await tester.tap(find.byTooltip('我的'));
+    await tester.tap(find.byTooltip('设置'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey<String>('settings-appearance')));
     await tester.pumpAndSettle();
@@ -447,7 +461,7 @@ void main() {
       CoreSession(_ProfileTransport()),
     );
 
-    await tester.tap(find.text('我的'));
+    await tester.tap(find.text('设置'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey<String>('settings-appearance')));
     await tester.pumpAndSettle();
@@ -469,7 +483,7 @@ void main() {
       CoreSession(_ProfileTransport()),
     );
 
-    await tester.tap(find.byTooltip('我的'));
+    await tester.tap(find.byTooltip('设置'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey<String>('settings-language')));
     await tester.pumpAndSettle();

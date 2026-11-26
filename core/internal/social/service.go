@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -341,21 +342,49 @@ func (s *Service) IsMuted(ctx context.Context, groupID, account []byte) (bool, e
 
 // ---- 在线状态 ----
 
-// ListPresence 返回已知联系人的在线状态；能解析到地址的标记为在线，其余用缓存。
+// ListPresence 返回已知联系人的在线状态；并发探测避免多个离线好友把请求拖超时。
+// 探测成功（含确定的离线）覆盖缓存；探测失败时保留上次缓存。
 func (s *Service) ListPresence(ctx context.Context, accounts []string) ([]map[string]any, error) {
 	cached, _ := s.dao.ListPresence(ctx)
+	type probe struct {
+		hexID  string
+		pub    []byte
+		online bool
+		known  bool
+		set    bool
+	}
+	probes := make([]probe, len(accounts))
+	var wg sync.WaitGroup
+	for i, hexID := range accounts {
+		probes[i] = probe{hexID: hexID}
+		pub, err := hex.DecodeString(hexID)
+		if err != nil || s.online == nil {
+			continue
+		}
+		probes[i].pub = pub
+		wg.Add(1)
+		go func(p *probe, pub []byte) {
+			defer wg.Done()
+			ok, err := s.online(ctx, pub)
+			if err != nil {
+				return
+			}
+			p.online, p.known, p.set = ok, true, true
+		}(&probes[i], pub)
+	}
+	wg.Wait()
 	out := make([]map[string]any, 0, len(accounts))
-	for _, hexID := range accounts {
-		online, known := cached[hexID]
-		if s.online != nil {
-			if pub, err := hex.DecodeString(hexID); err == nil {
-				if ok, err := s.online(ctx, pub); err == nil {
-					online, known = ok, true
-					_ = s.dao.UpsertPresence(ctx, pub, ok, time.Now().Unix())
-				}
+	for i := range probes {
+		p := &probes[i]
+		if !p.known {
+			if v, ok := cached[p.hexID]; ok {
+				p.online, p.known = v, true
 			}
 		}
-		out = append(out, map[string]any{"account": hexID, "online": online && known, "known": known})
+		if p.set {
+			_ = s.dao.UpsertPresence(ctx, p.pub, p.online, time.Now().Unix())
+		}
+		out = append(out, map[string]any{"account": p.hexID, "online": p.online, "known": p.known})
 	}
 	return out, nil
 }

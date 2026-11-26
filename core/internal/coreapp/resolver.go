@@ -44,6 +44,10 @@ func (r *directoryResolver) ResolvePeer(ctx context.Context, accountPub []byte) 
 		return dm.Target{}, fmt.Errorf("%w: 读取档案: %v", dm.ErrPeerUnreached, err)
 	}
 	var lastErr error
+	// 即使 DHT 查不到地址，也保留从档案推导出的设备 PeerID：
+	// 上层 CascadingResolver 会用 mDNS / 本地地址簿 / 公共 DHT 补齐地址，
+	// 否则同网段对端会因为 DHT 未收敛而直接判定不可达。
+	var candidate peer.ID
 	for _, dev := range profile.GetDevices() {
 		pub, err := lpcrypto.UnmarshalPublicKey(dev.GetDevicePub())
 		if err != nil {
@@ -55,6 +59,7 @@ func (r *directoryResolver) ResolvePeer(ctx context.Context, accountPub []byte) 
 			lastErr = err
 			continue
 		}
+		candidate = id
 		info, err := r.findPeer(ctx, id)
 		if err != nil {
 			lastErr = err
@@ -68,6 +73,10 @@ func (r *directoryResolver) ResolvePeer(ctx context.Context, accountPub []byte) 
 	}
 	if lastErr == nil {
 		lastErr = errors.New("档案中没有可用设备")
+	}
+	if candidate != "" {
+		return dm.Target{PeerID: candidate, AccountPub: accountPub},
+			fmt.Errorf("%w: %v", dm.ErrPeerUnreached, lastErr)
 	}
 	return dm.Target{}, fmt.Errorf("%w: %v", dm.ErrPeerUnreached, lastErr)
 }

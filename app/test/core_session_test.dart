@@ -635,7 +635,7 @@ void main() {
 
     // 设置页三个服务均由内核会话注入，而不是保留占位实现（P6-04/05/06）。
     final SettingsPage settings = tester.widget<SettingsPage>(
-      find.byType(SettingsPage, skipOffstage: false),
+      find.byType(SettingsPage, skipOffstage: false).first,
     );
     expect(settings.diagnostics, isA<TransportDiagnosticsService>());
     expect(settings.backup, isA<TransportBackupService>());

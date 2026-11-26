@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Nexmem</string>
+    <string name="remote_accessibility_label">Nexmem 远程控制</string>
+    <string name="remote_accessibility_description">允许 Nexmem 在远程控制会话中模拟点击、滑动与文字粘贴。仅在你主动授权远控时使用。</string>
 </resources>

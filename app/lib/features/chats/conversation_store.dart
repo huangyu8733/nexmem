@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../contacts/contact_service.dart';
 import 'conversation.dart';
 
 /// 会话列表数据源与排序规则（ui-spec.md §2）。
@@ -7,7 +8,9 @@ import 'conversation.dart';
 /// 当前由 UI 层持有内存状态；P1-16 传输层接通后由内核事件驱动
 /// [receive] / [markRead] / [setPinned]，页面无需改动。
 class ConversationStore extends ChangeNotifier {
-  ConversationStore({Iterable<ConversationItem> initial = const <ConversationItem>[]}) {
+  ConversationStore({
+    Iterable<ConversationItem> initial = const <ConversationItem>[],
+  }) {
     for (final ConversationItem item in initial) {
       _items[item.id] = item;
     }
@@ -43,9 +46,9 @@ class ConversationStore extends ChangeNotifier {
 
   /// 全部会话未读之和，供 Tab 角标使用。
   int get totalUnread => _items.values.fold<int>(
-        0,
-        (int sum, ConversationItem item) => sum + item.unread,
-      );
+    0,
+    (int sum, ConversationItem item) => sum + item.unread,
+  );
 
   ConversationItem? byId(String id) => _items[id];
 
@@ -132,6 +135,26 @@ class ConversationStore extends ChangeNotifier {
     }
     _items[id] = current.copyWith(muted: muted);
     notifyListeners();
+  }
+
+  /// 应用在线状态：key 支持对端 base64url 或十六进制账号，仅变化时通知。
+  void applyPresence(Map<String, PresenceStatus> byPeer) {
+    bool changed = false;
+    for (final ConversationItem item in _items.values.toList()) {
+      if (item.isGroup || item.peer.isEmpty) {
+        continue;
+      }
+      final PresenceStatus? status =
+          byPeer[item.peer] ?? byPeer[normalizeAccountHex(item.peer)];
+      if (status == null || status == item.presence) {
+        continue;
+      }
+      _items[item.id] = item.copyWith(presence: status);
+      changed = true;
+    }
+    if (changed) {
+      notifyListeners();
+    }
   }
 
   void remove(String id) {

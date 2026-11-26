@@ -74,6 +74,11 @@ func (r *CascadingResolver) ResolvePeer(ctx context.Context, accountPub []byte) 
 	if r.fallback != nil {
 		candidate, baseErr = r.fallback.ResolvePeer(ctx, accountPub)
 		if baseErr == nil && len(candidate.Addrs) > 0 {
+			// DHT 可能返回过期地址（对端重启后端口变化），同网段时把 mDNS /
+			// 已连接地址合并进来，避免拨号到陈旧地址后一直等 ACK 超时。
+			if info := r.enhanceWithLocal(ctx, candidate.PeerID, candidate.Addrs); len(info.Addrs) > 0 {
+				return dm.Target{PeerID: info.ID, Addrs: info.Addrs, AccountPub: accountPub}, nil
+			}
 			return candidate, nil
 		}
 	}
