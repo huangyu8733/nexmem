@@ -164,6 +164,17 @@ P2P 的数据传输是端到端的，但"找到对方"需要一个发现机制�
 | 主节点 `103.119.14.14` | `http://103.119.14.14:8081` | `12D3KooWFV5aGaZ9nFepfiJaPkM18EzmFVC34Lg2LAY8Cv5JKrU2` | `12D3KooWS3cnEVm6z4XQQB9nXs9WBb5sfaHnck5TRCAfxEKZQFKm` |
 | 备用 `103.142.103.6` | `http://103.142.103.6:8081` | `12D3KooWCbUVU3fQFfa44t8MHag7xVq3snMA9udR2EEXNS4xHEz3` | `12D3KooWCv4mouxCSAK6CXJ4B5gZbpjB2pdxVLu8DTz4jViLVvsJ` |
 
+**部署形态与实测状态**
+
+| 节点 | 部署内容 | 对外端口 | 运行方式 | 实测结果 |
+| --- | --- | --- | --- | --- |
+| `103.119.14.14` | directory + bootstrap + relay | `8081/tcp`、`14001/tcp+udp`、`14002/tcp+udp` | systemd 常驻、开机自启、异常自动重启 | 档案签名上传/回读、DHT 入网、纯中继回显全部通过；中继 RTT ≈ 0.3 s |
+| `103.142.103.6` | directory + bootstrap + relay（独立账号库） | 同上 | 同上 | 同上；中继 RTT ≈ 1.4–4.6 s |
+
+> 服务端数据在 `/var/lib/nexmem/`（`directory.db`、`bootstrap.key`、`relay.key`），公网 IP 配置在 `/etc/nexmem/server.env`。
+> 自建时若沿用本仓库的 systemd 单元，可直接参考 [deploy/server/README.md](deploy/server/README.md)。
+> 公共节点运维命令：`systemctl status nexmem-directory nexmem-bootstrap nexmem-relay`、`journalctl -u nexmem-relay -f`。
+
 完整多地址（含 `/p2p/<PeerID>`，可直接粘贴到设置页）：
 
 ```
