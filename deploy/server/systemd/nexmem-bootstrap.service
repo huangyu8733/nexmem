@@ -13,7 +13,7 @@ ExecStart=/opt/nexmem/bin/nexmem-bootstrap \
   -listen /ip4/0.0.0.0/tcp/14001,/ip4/0.0.0.0/udp/14001/quic-v1 \
   -announce /ip4/${NEXMEM_PUBLIC_IP}/tcp/14001,/ip4/${NEXMEM_PUBLIC_IP}/udp/14001/quic-v1 \
   -id /var/lib/nexmem/bootstrap.key
-Restart=unless-stopped
+Restart=always
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true

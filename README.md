@@ -108,6 +108,8 @@
 
 📖 各平台详细步骤、首次配置、FAQ 见 **[安装与使用教程](docs/安装与使用教程.md)**。
 
+> 跨网使用（不在同一 WiFi）需要一个可达的 directory + bootstrap。项目已提供**现成公共节点**，无需自建，地址与客户端配置见 [公网部署 → 现成公共节点](#现成公共节点可直接填写无需自建)。
+
 > 桌面安装包已内置 Go 内核动态库（`nexmem.dll` / `libnexmem.so` / `libnexmem.dylib`）。请保持压缩包内的目录结构，不要只复制主程序。
 >
 > macOS 包由独立工作流构建，GitHub macOS 运行器排队时，该资产可能比其他平台稍晚出现在 Release 页面。
@@ -153,6 +155,67 @@ P2P 的数据传输是端到端的，但"找到对方"需要一个发现机制�
 > Nexmem 的 P2P **不是零服务器**：消息内容不经中心服务器，但若要跨网寻址与离线消息，就需要 directory 与 bootstrap。
 > 若只想在同一局域网内使用，开启 mDNS 即可，无需部署下面任何组件。只配中继器并不能让任意两人连通。
 
+### 现成公共节点（可直接填写，无需自建）
+
+项目已部署两组公共节点，长时间在线。**直接复制下面的配置即可使用**，无需自己搭服务器。
+
+| 节点 | directory | bootstrap PeerID | relay PeerID |
+| --- | --- | --- | --- |
+| 主节点 `103.119.14.14` | `http://103.119.14.14:8081` | `12D3KooWFV5aGaZ9nFepfiJaPkM18EzmFVC34Lg2LAY8Cv5JKrU2` | `12D3KooWS3cnEVm6z4XQQB9nXs9WBb5sfaHnck5TRCAfxEKZQFKm` |
+| 备用 `103.142.103.6` | `http://103.142.103.6:8081` | `12D3KooWCbUVU3fQFfa44t8MHag7xVq3snMA9udR2EEXNS4xHEz3` | `12D3KooWCv4mouxCSAK6CXJ4B5gZbpjB2pdxVLu8DTz4jViLVvsJ` |
+
+完整多地址（含 `/p2p/<PeerID>`，可直接粘贴到设置页）：
+
+```
+# bootstrap（主节点）
+/ip4/103.119.14.14/tcp/14001/p2p/12D3KooWFV5aGaZ9nFepfiJaPkM18EzmFVC34Lg2LAY8Cv5JKrU2
+
+# bootstrap（备用节点）
+/ip4/103.142.103.6/tcp/14001/p2p/12D3KooWCbUVU3fQFfa44t8MHag7xVq3snMA9udR2EEXNS4xHEz3
+
+# relay（主节点）
+/ip4/103.119.14.14/tcp/14002/p2p/12D3KooWS3cnEVm6z4XQQB9nXs9WBb5sfaHnck5TRCAfxEKZQFKm
+
+# relay（备用节点）
+/ip4/103.142.103.6/tcp/14002/p2p/12D3KooWCv4mouxCSAK6CXJ4B5gZbpjB2pdxVLu8DTz4jViLVvsJ
+```
+
+> 想要 QUIC/UDP 时，把 `/tcp/14001` 换成 `/udp/14001/quic-v1`、`/tcp/14002` 换成 `/udp/14002/quic-v1`，PeerID 不变。
+
+**桌面端**（设置页「网络 → 中继设置 / 发现源设置」填入上面的多地址后重启，或启动时注入）：
+
+```bash
+NEXMEM_DIRECTORY_URL='http://103.119.14.14:8081' \
+NEXMEM_BOOTSTRAPS='/ip4/103.119.14.14/tcp/14001/p2p/12D3KooWFV5aGaZ9nFepfiJaPkM18EzmFVC34Lg2LAY8Cv5JKrU2' \
+NEXMEM_RELAY_ADDRS='/ip4/103.119.14.14/tcp/14002/p2p/12D3KooWS3cnEVm6z4XQQB9nXs9WBb5sfaHnck5TRCAfxEKZQFKm,/ip4/103.142.103.6/tcp/14002/p2p/12D3KooWCv4mouxCSAK6CXJ4B5gZbpjB2pdxVLu8DTz4jViLVvsJ' \
+  ./your-nexmem-app
+```
+
+**Android**（需带 `--dart-define` 重新打包，Git Bash 会误转 `/ip4/...`，请用 PowerShell）：
+
+```powershell
+flutter build apk --release `
+  --dart-define=NEXMEM_DIRECTORY_URL=http://103.119.14.14:8081 `
+  --dart-define=NEXMEM_BOOTSTRAPS=/ip4/103.119.14.14/tcp/14001/p2p/12D3KooWFV5aGaZ9nFepfiJaPkM18EzmFVC34Lg2LAY8Cv5JKrU2 `
+  --dart-define=NEXMEM_RELAY_ADDRS=/ip4/103.119.14.14/tcp/14002/p2p/12D3KooWS3cnEVm6z4XQQB9nXs9WBb5sfaHnck5TRCAfxEKZQFKm,/ip4/103.142.103.6/tcp/14002/p2p/12D3KooWCv4mouxCSAK6CXJ4B5gZbpjB2pdxVLu8DTz4jViLVvsJ
+```
+
+**Web 网关**：
+
+```bash
+NEXMEM_DATA_DIR=/srv/nexmem/data \
+NEXMEM_DIRECTORY_URL='http://103.119.14.14:8081' \
+NEXMEM_BOOTSTRAPS='/ip4/103.119.14.14/tcp/14001/p2p/12D3KooWFV5aGaZ9nFepfiJaPkM18EzmFVC34Lg2LAY8Cv5JKrU2' \
+NEXMEM_RELAY_ADDRS='/ip4/103.119.14.14/tcp/14002/p2p/12D3KooWS3cnEVm6z4XQQB9nXs9WBb5sfaHnck5TRCAfxEKZQFKm,/ip4/103.142.103.6/tcp/14002/p2p/12D3KooWCv4mouxCSAK6CXJ4B5gZbpjB2pdxVLu8DTz4jViLVvsJ' \
+  ./bin/nexmem-webd -token-file ./deploy/web/data/token
+```
+
+> ⚠️ 两台节点各有独立的 directory 数据库：**所有客户端请统一用同一台 directory + 对应 bootstrap**（推荐 `103.119.14.14`），否则账号数据不互通。
+> 两个 relay 可以同时填进 `NEXMEM_RELAY_ADDRS`，跨运营商 / 对称 NAT 下兜底成功率更高。
+> 公共节点仅提供寻址与中继，消息仍端到端加密、不经服务器落盘。
+>
+> 官方 Release 的安装包**未预置**上述节点：桌面端可在「设置 → 网络」填写或在启动时注入环境变量；Android 没有中继设置入口，需按上面的 `--dart-define` 命令自行重打包。
+
 ### 需要部署什么
 
 | 组件 | 默认端口 | 作用 | 必需性 |
@@ -197,6 +260,8 @@ Linux 服务器可用仓库自带的 systemd 单元配置开机自启（详见 `
 `-announce` 必须写真实公网 IP 与对外端口，写 `127.0.0.1` 会导致其他节点无法拨号。
 
 ### 客户端接入
+
+> 只想直接用公共节点：跳过本节，复制上方「现成公共节点」里的命令即可。下面以 `1.2.3.4` 为例说明自建节点的通用接入方式。
 
 拼出引导地址（用 bootstrap 日志里的 PeerID）：
 
