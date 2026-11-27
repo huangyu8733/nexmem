@@ -142,7 +142,12 @@ test('令牌登录：无令牌为离线空态，带令牌建立内核连接', as
   const socket = await socketPromise;
   expect(socket.url()).toContain('/ws');
   expect(socket.url()).toContain('token=');
-  await expect(authed.page.getByRole('group', { name: /暂无会话，点击 \+ 发起聊天|联调预热/ })).toBeVisible();
+  // 连上内核后预热会话以按钮形式呈现（含时间后缀），空态则可能仍在 group 名称里。
+  await expect(
+    authed.page.getByRole('button', { name: /联调预热/ }).or(
+      authed.page.getByRole('group', { name: /暂无会话，点击 \+ 发起聊天/ }),
+    ).first(),
+  ).toBeVisible();
   await authed.context.close();
 });
 
@@ -151,32 +156,17 @@ test('双端互发文本：A 端 UI 发送，B 端内核实时入库', async ({ 
   const page = a.page;
   await openApp(page, stack.url('webA'), stack.tokens.a);
 
-  await page.getByRole('tab', { name: '联系人' }).click();
-  await page.getByRole('button', { name: '添加好友' }).click();
-
-  await typeInto(page, page.getByRole('textbox', { name: '账号公钥' }), stack.accountB.account_id);
-  await typeInto(page, page.getByRole('textbox', { name: '备注（可选）' }), 'E2E 对端');
-  await page.getByRole('button', { name: '添加', exact: true }).click();
-
-  const contactRow = page.getByRole('button', { name: /E2E 对端/ });
-  const sendButton = page.getByRole('button', { name: '发消息' });
-  await expect(contactRow).toBeVisible({ timeout: 10000 });
-  await contactRow.click();
-  // 首次点击可能被输入框失焦流程吞掉，最多补点一次并等待资料页出现。
-  const detailShown = await sendButton
-    .waitFor({ state: 'visible', timeout: 4000 })
-    .then(() => true, () => false);
-  if (!detailShown) {
-    await contactRow.click();
-    await sendButton.waitFor({ state: 'visible', timeout: 10000 });
-  }
-  await sendButton.click();
+  // warmup 已通过内核在 A↔B 间建立会话，直接点开该会话发送文本。
+  // （Web 端「添加好友」现为好友申请制，需对方同意，不属于消息链路测试范围。）
+  const chatRow = page.getByRole('button', { name: /联调预热/ });
+  await expect(chatRow).toBeVisible({ timeout: 15000 });
+  await chatRow.click();
 
   const message = `E2E 你好 ${Date.now()}`;
   const composer = page.getByRole('textbox', { name: '输入消息' });
   await composer.waitFor({ state: 'visible', timeout: 15000 });
   await typeInto(page, composer, message);
-  await page.getByRole('button', { name: '发送' }).click();
+  await page.getByRole('button', { name: '发送', exact: true }).click();
 
   await expect(page.getByText(message).first()).toBeVisible();
   await stack.waitMessage(
