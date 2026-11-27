@@ -128,7 +128,11 @@ test('令牌登录：无令牌为离线空态，带令牌建立内核连接', as
   const sockets = [];
   anonymous.page.on('websocket', (ws) => sockets.push(ws.url()));
   await openApp(anonymous.page, stack.url('webA'), '');
-  await expect(anonymous.page.getByText('暂无会话，点击 + 发起聊天')).toBeVisible();
+  // Flutter Web 会把空态文案合并进所在 group 的可访问名称，
+  // 未必生成独立的文本节点，因此按可访问名称匹配而非 getByText。
+  await expect(
+    anonymous.page.getByRole('group', { name: /暂无会话，点击 \+ 发起聊天/ }),
+  ).toBeVisible();
   expect(sockets).toHaveLength(0);
   await anonymous.context.close();
 
@@ -138,9 +142,7 @@ test('令牌登录：无令牌为离线空态，带令牌建立内核连接', as
   const socket = await socketPromise;
   expect(socket.url()).toContain('/ws');
   expect(socket.url()).toContain('token=');
-  await expect(authed.page.getByText('暂无会话，点击 + 发起聊天').or(
-    authed.page.getByText('联调预热'),
-  ).first()).toBeVisible();
+  await expect(authed.page.getByRole('group', { name: /暂无会话，点击 \+ 发起聊天|联调预热/ })).toBeVisible();
   await authed.context.close();
 });
 
