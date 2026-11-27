@@ -25,8 +25,8 @@ const (
 	ContentKeySize = 32
 
 	envelopeVersion   byte = 1
-	ephemeralKeySize       = 32
-	envelopeNonceSize      = 12
+	ephemeralKeySize  int  = 32
+	envelopeNonceSize int  = 12
 
 	wrapDomain    = "nexmem/key-wrap/v1"
 	contentDomain = "nexmem/offline-message/v1"

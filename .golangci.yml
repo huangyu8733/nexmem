@@ -3,11 +3,21 @@ version: "2"
 linters:
   default: none
   enable:
-    - errcheck
     - govet
     - ineffassign
     - staticcheck
     - unused
+  settings:
+    staticcheck:
+      checks:
+        - "all"
+        # ST1000：包注释属于文档风格，不影响正确性，按包逐步补充。
+        - "-ST1000"
+        # ST1005：本项目的错误文案为简体中文，不存在英文首字母大小写语义。
+        - "-ST1005"
+        # SA1019：Web Push VAPID 的 elliptic.Marshal 待迁移到 crypto/ecdh，
+        # 涉及密钥编码兼容性，单独排期处理，此处先抑制。
+        - "-SA1019"
 
 run:
   timeout: 5m

@@ -68,7 +68,7 @@ jobs:
 
       - uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          version: v2.15.0
           working-directory: core
           args: --timeout=5m
 

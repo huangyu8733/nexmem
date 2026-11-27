@@ -203,9 +203,7 @@ func (s *Service) HandleFrame(ctx context.Context, f Frame) error {
 		if f.ID != "" {
 			_ = s.dao.SetGroupJoinRequestStatus(ctx, f.ID, 1)
 		}
-		if f.Extra != nil && f.Extra["group_key_envelope"] != "" && s.opts.OnGroupInvite != nil {
-			// 群密钥随同意帧下发（已在 coreapp 层处理信封，这里只更新状态）。
-		}
+		// 群密钥随同意帧下发，已在 coreapp 层处理信封，这里只更新状态。
 		_ = s.dao.InsertNotification(ctx, store.Notification{
 			ID: newID(), Kind: "group.joined", Title: "入群成功",
 			Body: "你已加入群聊", Payload: `{"group_id":"` + f.GroupID + `"}`,

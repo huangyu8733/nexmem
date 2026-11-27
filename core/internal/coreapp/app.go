@@ -54,8 +54,6 @@ const (
 	DefaultUserAgent = "nexmem-core/0.1.0"
 	// defaultResolveTimeout 是对端解析的总超时。
 	defaultResolveTimeout = 12 * time.Second
-	// dhtResolveAttempts 是 DHT 冷启动时 FindPeer 的重试次数。
-	dhtResolveAttempts = 3
 	// readReceiptTimeout 是单次已读回执发送的总超时（P6-07）。
 	readReceiptTimeout = 10 * time.Second
 	// recallTimeout 是单次撤回通知发送的总超时（P6-12）。
