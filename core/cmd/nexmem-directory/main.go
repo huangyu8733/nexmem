@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"log"
@@ -28,15 +29,19 @@ func main() {
 	apnsTeamID := flag.String("apns-team-id", envOr("NEXMEM_APNS_TEAM_ID", ""), "Apple Developer 团队 ID")
 	apnsBundleID := flag.String("apns-bundle-id", envOr("NEXMEM_APNS_BUNDLE_ID", ""), "应用 Bundle ID（apns-topic）")
 	apnsSandbox := flag.Bool("apns-sandbox", os.Getenv("NEXMEM_APNS_SANDBOX") == "1", "使用 APNs 开发环境")
+	fcmAccount := flag.String("fcm-account", envOr("NEXMEM_FCM_ACCOUNT", ""), "FCM 服务账号 JSON 路径（留空关闭 Android 唤醒推送）")
+	vapidKey := flag.String("vapid-key", envOr("NEXMEM_VAPID_KEY", ""), "Web Push VAPID P-256 私钥 .pem 路径（留空关闭 Web 唤醒推送）")
+	vapidSubject := flag.String("vapid-subject", envOr("NEXMEM_VAPID_SUBJECT", ""), "VAPID Subject，如 mailto:admin@example.com")
 	flag.Parse()
 
 	cfg := directory.Config{}
+	var apnsSender *push.Client
 	if *apnsKey != "" {
 		raw, err := os.ReadFile(*apnsKey)
 		if err != nil {
 			log.Fatalf("读取 APNs 密钥: %v", err)
 		}
-		client, err := push.New(push.Config{
+		apnsSender, err = push.New(push.Config{
 			KeyID:         *apnsKeyID,
 			TeamID:        *apnsTeamID,
 			BundleID:      *apnsBundleID,
@@ -44,13 +49,44 @@ func main() {
 			Sandbox:       *apnsSandbox,
 		})
 		if err != nil {
-			log.Fatalf("初始化唤醒推送: %v", err)
+			log.Printf("APNs 推送配置无效，已跳过：%v", err)
+			apnsSender = nil
 		}
-		cfg.Push = client
-		log.Printf("唤醒推送已启用（sandbox=%v）", *apnsSandbox)
-	} else {
-		log.Printf("唤醒推送未配置，/v1/push/wake 将返回 enabled=false")
 	}
+
+	var fcmSender *push.FCMClient
+	if *fcmAccount != "" {
+		raw, err := os.ReadFile(*fcmAccount)
+		if err != nil {
+			log.Printf("读取 FCM 服务账号失败，已跳过：%v", err)
+		} else {
+			var sa push.ServiceAccount
+			if err := json.Unmarshal(raw, &sa); err != nil {
+				log.Printf("FCM 服务账号 JSON 非法，已跳过：%v", err)
+			} else if fcmSender, err = push.NewFCM(sa); err != nil {
+				log.Printf("FCM 推送配置无效，已跳过：%v", err)
+				fcmSender = nil
+			}
+		}
+	}
+
+	var webSender *push.WebPushClient
+	if *vapidKey != "" {
+		raw, err := os.ReadFile(*vapidKey)
+		if err != nil {
+			log.Printf("读取 VAPID 私钥失败，已跳过：%v", err)
+		} else if webSender, err = push.NewWebPush(push.WebPushConfig{
+			Subject:       *vapidSubject,
+			PrivateKeyPEM: string(raw),
+		}); err != nil {
+			log.Printf("Web Push 配置无效，已跳过：%v", err)
+			webSender = nil
+		}
+	}
+
+	router := push.NewRouter(apnsSender, fcmSender, webSender)
+	cfg.Push = router
+	log.Printf("唤醒推送路由：apns=%v fcm=%v web=%v", apnsSender != nil, fcmSender != nil, webSender != nil)
 
 	srv, err := directory.NewWithConfig(*dbPath, cfg)
 	if err != nil {

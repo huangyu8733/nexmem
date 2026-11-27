@@ -74,7 +74,7 @@ class _RecordingTransport implements CoreTransport {
 }
 
 Future<void> _openAccountDialog(WidgetTester tester, BackupService service) async {
-  await tester.pumpWidget(_wrap(SettingsPage(backup: service)));
+  await tester.pumpWidget(_wrap(SettingsPage(backup: service, profileOnly: true)));
   await tester.tap(find.byKey(const ValueKey<String>('settings-account')));
   await tester.pumpAndSettle();
 }

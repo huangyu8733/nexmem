@@ -13,8 +13,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +26,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	ma "github.com/multiformats/go-multiaddr"
 	"google.golang.org/protobuf/proto"
 
 	nexmemv1 "github.com/nexmem/core/api/v1"
@@ -95,6 +98,10 @@ type Config struct {
 	PublicDHT *bool `json:"public_dht"`
 	// ManualAddrs 手动导入的对端地址（multiaddr 列表，含 /p2p/<PeerID>）。
 	ManualAddrs []string `json:"manual_addrs"`
+	// LanAddrs 宿主注入的本机局域网 IP（Android/iOS 原生层获取）。
+	// Go 的 net.Interfaces() 在 Android 上常被 SELinux 拦截，libp2p 无法展开
+	// /ip4/0.0.0.0，导致 mDNS 无地址可广播；注入后补全宣告地址。
+	LanAddrs []string `json:"lan_addrs"`
 
 	// applyDiscoveryDefaults 仅由 core.start 契约入口设置：客户端未显式配置时
 	// 套用 mDNS / 公共 DHT 默认开启策略。直接调用 Start 的 Go 代码不受影响。
@@ -163,6 +170,8 @@ type App struct {
 	// discovery 持有三种发现源的运行时句柄，Stop 时统一关闭。
 	book      *discovery.Peerbook
 	mdns      *discovery.MDNS
+	mdnsErr   string               // mDNS 启动失败原因，供 net.discoverDevices 诊断
+	lanBeacon *discovery.LANBeacon // 同 WiFi 账号发现（UDP 广播签名名片）
 	publicDHT *dht.IpfsDHT
 	// groupTargets / groupXPub 是群密钥信封投递的目标解析器；
 	// groupTargets 可由平台层注入，未注入时基于索引服务档案 + DHT 默认实现。
@@ -226,6 +235,7 @@ func New(g *gateway.Gateway, sink EventSink) (*App, error) {
 	coreHandlers := map[string]gateway.HandlerFunc{
 		"core.start":              a.startHandler(),
 		"core.stop":               a.stopHandler(),
+		"core.dataDir":            a.dataDirHandler(),
 		"account.devices":         a.accountDevicesHandler(),
 		"account.me":              a.accountHandler(),
 		"account.qrPayload":       a.qrPayloadHandler(),
@@ -242,6 +252,7 @@ func New(g *gateway.Gateway, sink EventSink) (*App, error) {
 		"net.addPeer":             a.peerbookAddHandler(),
 		"net.removePeer":          a.peerbookRemoveHandler(),
 		"net.listPeers":           a.peerbookListHandler(),
+		"net.discoverDevices":     a.discoverDevicesHandler(),
 		"net.connectAddr":         a.connectAddrHandler(),
 	}
 	for method, h := range coreHandlers {
@@ -376,6 +387,7 @@ func (a *App) Start(ctx context.Context, cfg Config) (string, error) {
 	h, err := netnode.NewHost(ctx, netnode.Config{
 		PrivateKey:       devKey,
 		Listen:           cfg.Listen,
+		LanAddrs:         cfg.LanAddrs,
 		UserAgent:        DefaultUserAgent,
 		EnableNATService: cfg.EnableNAT,
 		EnableHolePunch:  cfg.EnableHolePunch,
@@ -420,10 +432,14 @@ func (a *App) Start(ctx context.Context, cfg Config) (string, error) {
 
 	// mDNS 局域网发现（可选）。
 	var md *discovery.MDNS
+	a.mdnsErr = ""
 	if cfg.EnableMDNS != nil && *cfg.EnableMDNS {
-		md, err = discovery.StartMDNS(h)
-		if err != nil && a.log != nil {
-			a.log.Warn("network", "mDNS 启动失败，降级为其他发现源", map[string]any{"err": err.Error()})
+		md, err = discovery.StartMDNSWithLan(h, cfg.LanAddrs)
+		if err != nil {
+			a.mdnsErr = err.Error()
+			if a.log != nil {
+				a.log.Warn("network", "mDNS 启动失败，降级为其他发现源", map[string]any{"err": err.Error()})
+			}
 			md = nil
 		}
 		if md != nil {
@@ -631,6 +647,17 @@ func (a *App) Start(ctx context.Context, cfg Config) (string, error) {
 	}
 	if a.groupTargets == nil && lookup != nil {
 		a.groupTargets = defaultGroupTargets{peer: lookup, xpub: xpubResolver}
+	}
+	// 同 WiFi 账号发现：UDP 广播签名名片。独立于 mDNS，绕开 Android 对
+	// netlink/sysfs 的限制，让同一局域网的设备能互相发现并直接加好友。
+	a.lanBeacon = startLANBeaconLocked(cfg, acc, h, sm)
+	if a.lanBeacon != nil {
+		beacon := a.lanBeacon
+		cleanups = append(cleanups, func() { _ = beacon.Close() })
+		// 让账号解析能命中同 WiFi 发现的对端（发好友申请/消息时按账号找地址）。
+		if cascading, ok := a.lookup.(*discovery.CascadingResolver); ok {
+			cascading.SetLANBeacon(beacon)
+		}
 	}
 	a.started = true
 	a.state = string(sm.State())
@@ -886,6 +913,127 @@ func (a *App) dbHandle() *sql.DB {
 	return a.db
 }
 
+// startLANBeaconLocked 启动同 WiFi 账号发现广播。使用宿主注入的局域网 IP
+// 与 host 的 TCP 监听端口构造宣告地址；无局域网 IP 时不启动（桌面可走 mDNS）。
+// 调用时 a.mu 已持有，函数本身只依赖入参。
+func startLANBeaconLocked(cfg Config, acc *identity.Account, h host.Host, sm *netnode.StateMachine) *discovery.LANBeacon {
+	if acc == nil || h == nil {
+		return nil
+	}
+	// 局域网 IP：优先宿主原生注入（Android/iOS 需绕开被 SELinux 拦截的
+	// net.Interfaces）；为空时回退到 Go 枚举（桌面 macOS/Linux/Windows 可用），
+	// 让桌面与 Web 内核也能广播名片、与移动端双向发现。
+	lanIPs := effectiveLANIPv4(cfg.LanAddrs)
+	if len(lanIPs) == 0 {
+		return nil
+	}
+	// 取 host 的 TCP 监听端口。
+	port := 0
+	for _, addr := range h.Network().ListenAddresses() {
+		if v, err := addr.ValueForProtocol(ma.P_TCP); err == nil {
+			if _, err := fmt.Sscanf(v, "%d", &port); err == nil && port > 0 {
+				break
+			}
+		}
+	}
+	if port <= 0 {
+		return nil
+	}
+	peerID := h.ID().String()
+	addrs := lanBeaconAddrs(lanIPs, port, peerID)
+	name := cfg.DisplayName
+	beacon, err := discovery.StartLANBeacon(acc, peerID, name, addrs)
+	if err != nil {
+		return nil
+	}
+	return beacon
+}
+
+// effectiveLANIPv4 返回 LAN Beacon 应广播的局域网 IP：原生注入优先，
+// 否则回退到 Go 枚举（桌面/Web）。测试可注入固定值绕开网卡与权限假设。
+func effectiveLANIPv4(injected []string) []string {
+	if len(injected) > 0 {
+		return injected
+	}
+	return localLANIPv4()
+}
+
+// lanBeaconAddrs 把局域网 IP 列表转成带 PeerID 的宣告 multiaddr 列表。
+func lanBeaconAddrs(lanIPs []string, port int, peerID string) []string {
+	addrs := make([]string, 0, len(lanIPs))
+	for _, ip := range lanIPs {
+		addrs = append(addrs, "/ip4/"+ip+"/tcp/"+strconv.Itoa(port)+"/p2p/"+peerID)
+	}
+	return addrs
+}
+
+// localLANIPv4 用 Go runtime 枚举本机非回环 IPv4 地址，供桌面/Web 内核在
+// 未注入 lan_addrs 时启动 LAN Beacon。Android 上 net.Interfaces() 被 SELinux
+// 拦截会返回空，此时必须依赖原生层注入，不能靠本函数。
+func localLANIPv4() []string {
+	out := []string{}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return out
+	}
+	// 先收集物理网卡，再收集其余网卡：LAN Beacon 只广播第一个地址，
+	// 必须优先选真正接入局域网的接口，避免广告出 Docker/虚拟网桥 IP
+	// （Linux 开发机常见），导致同网段对端拿到无法回连的地址。
+	physical := []string{}
+	virtual := []string{}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil {
+				continue
+			}
+			ipv4 := ip.To4()
+			if ipv4 == nil || ipv4.IsLoopback() || ipv4.IsUnspecified() || ipv4.IsLinkLocalUnicast() {
+				continue
+			}
+			if isVirtualInterface(iface.Name) {
+				virtual = append(virtual, ipv4.String())
+			} else {
+				physical = append(physical, ipv4.String())
+			}
+		}
+	}
+	out = append(out, physical...)
+	out = append(out, virtual...)
+	return out
+}
+
+// isVirtualInterface 判断网卡名是否为虚拟/容器/隧道接口。这类接口的 IP
+// 通常无法被同网段对端回连，LAN Beacon 选广播地址时应排在物理网卡之后。
+func isVirtualInterface(name string) bool {
+	lower := strings.ToLower(name)
+	// 常见虚拟接口前缀：docker 网桥、veth 对、virbr/KVM、tun/tap 隧道、
+	// WireGuard/Tailscale、CNI/Flannel/Calico、dummy、sit/gre 隧道。
+	for _, prefix := range []string{
+		"docker", "br-", "veth", "virbr", "tun", "tap", "wg",
+		"tailscale", "zerotier", "zt", "cni", "flannel", "cali",
+		"dummy", "sit", "gre", "vxlan", "macvlan", "hv",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *App) accountHandle() *identity.Account {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -1112,7 +1260,9 @@ func (a *App) acceptGroupMeta(env *nexmemv1.GroupKeyEnvelope) error {
 // 群撤回控制帧不落库，只删除本机命中的原消息并发出 message.recalled（P6-14）；
 // 群解散控制帧校验发送方为管理员后清理本地群并发出 group.dissolved（P4-12）；
 // 群公告控制帧校验发送方为管理员后更新本机公告并发出 group.announcement（P6-26）；
-// 加好友开关控制帧校验管理员后更新本机设置并发出 group.allowFriendAddChanged。
+// 加好友开关控制帧校验管理员后更新本机设置并发出 group.allowFriendAddChanged；
+// 群等级配置与本群称呼控制帧校验管理员（本人改自己称呼例外）后更新本机资料并发出
+// group.levelsChanged / group.memberProfileChanged。所有控制帧都不落消息库。
 func (a *App) onGroupMessage(ev group.Received) {
 	if group.IsDissolveNotice(ev.Plaintext) {
 		a.handleGroupDissolved(ev)
@@ -1128,6 +1278,14 @@ func (a *App) onGroupMessage(ev group.Received) {
 	}
 	if enabled, ok := group.ParseAllowFriendAddNotice(ev.Plaintext); ok {
 		a.handleGroupAllowFriendAdd(ev, enabled)
+		return
+	}
+	if cfg, ok := group.ParseLevelsNotice(ev.Plaintext); ok {
+		a.handleGroupLevels(ev, cfg)
+		return
+	}
+	if profile, ok := group.ParseMemberProfileNotice(ev.Plaintext); ok {
+		a.handleGroupMemberProfile(ev, profile)
 		return
 	}
 	if target, ok := group.ParseRecallNotice(ev.Plaintext); ok {
@@ -1287,6 +1445,67 @@ func (a *App) handleGroupAllowFriendAdd(ev group.Received, enabled bool) {
 	a.emit("group.allowFriendAddChanged", map[string]any{
 		"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
 		"enabled":  enabled,
+	})
+}
+
+// handleGroupLevels 处理入站群等级配置帧：仅接受本地成员表登记的管理员发来的配置。
+// 更新本机 groups 后发出 group.levelsChanged 供 UI 通过 group.members 刷新。
+func (a *App) handleGroupLevels(ev group.Received, cfg group.LevelConfig) {
+	svc := a.groupService()
+	if svc == nil {
+		return
+	}
+	ctx := context.Background()
+	applied, err := svc.ApplyLevelConfig(ctx, ev.GroupID, ev.SenderAccount, cfg)
+	if err != nil {
+		a.log.Warn("group", "群等级配置本地处理失败", map[string]any{
+			"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+			"sender":   base64.RawURLEncoding.EncodeToString(ev.SenderAccount),
+			"error":    err.Error(),
+		})
+		return
+	}
+	if !applied {
+		a.log.Warn("group", "忽略非管理员群等级配置", map[string]any{
+			"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+			"sender":   base64.RawURLEncoding.EncodeToString(ev.SenderAccount),
+		})
+		return
+	}
+	a.emit("group.levelsChanged", map[string]any{
+		"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+	})
+}
+
+// handleGroupMemberProfile 处理入站成员本群资料帧：仅接受管理员或本人（仅改昵称）
+// 发来的改动；更新本机 group_members 后发出 group.memberProfileChanged 供 UI 刷新。
+func (a *App) handleGroupMemberProfile(ev group.Received, profile group.MemberProfile) {
+	svc := a.groupService()
+	if svc == nil {
+		return
+	}
+	ctx := context.Background()
+	applied, err := svc.ApplyMemberProfile(ctx, ev.GroupID, ev.SenderAccount, profile)
+	if err != nil {
+		a.log.Warn("group", "成员本群资料本地处理失败", map[string]any{
+			"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+			"sender":   base64.RawURLEncoding.EncodeToString(ev.SenderAccount),
+			"error":    err.Error(),
+		})
+		return
+	}
+	if !applied {
+		a.log.Warn("group", "忽略非法成员本群资料控制帧", map[string]any{
+			"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+			"sender":   base64.RawURLEncoding.EncodeToString(ev.SenderAccount),
+		})
+		return
+	}
+	a.emit("group.memberProfileChanged", map[string]any{
+		"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+		"account":  profile.Account,
+		"nickname": profile.Nickname,
+		"level_id": profile.LevelID,
 	})
 }
 

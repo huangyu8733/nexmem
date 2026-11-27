@@ -11,6 +11,15 @@ const String relayEnabledSettingKey = 'net.relay_enabled';
 /// 中继地址设置键（P6-20），多行分隔的 libp2p multiaddr。
 const String relayAddrsSettingKey = 'net.relay_addrs';
 
+/// 官方公共中继节点（README「完整多地址」的主/备 relay）。
+///
+/// 首次启动、用户尚未保存过中继配置时默认开启并预填这两个地址，开箱即用；
+/// 用户显式保存过（哪怕关闭或清空）则完全尊重用户选择，不再回落默认值。
+const List<String> defaultRelayAddrs = <String>[
+  '/ip4/103.119.14.14/tcp/14002/p2p/12D3KooWS3cnEVm6z4XQQB9nXs9WBb5sfaHnck5TRCAfxEKZQFKm',
+  '/ip4/103.142.103.6/tcp/14002/p2p/12D3KooWCv4mouxCSAK6CXJ4B5gZbpjB2pdxVLu8DTz4jViLVvsJ',
+];
+
 /// 按换行 / 逗号拆分中继地址，去空白、去重；与内核侧 `splitRelayAddrs` 对齐。
 List<String> parseRelayAddrs(String raw) {
   final List<String> out = <String>[];
@@ -71,7 +80,8 @@ class RelaySettingsDialog extends StatefulWidget {
 class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
   final TextEditingController _addrs = TextEditingController();
 
-  bool _enabled = false;
+  // 默认开启并预填官方中继地址；用户保存过则以 stored 为准（见 _loadStored）。
+  bool _enabled = true;
   bool _loading = true;
   bool _saving = false;
   String? _error;
@@ -89,8 +99,12 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
     super.dispose();
   }
 
-  /// 回显已保存的开关与地址；未接入内核时保持默认关闭。
+  /// 回显已保存的开关与地址；用户从未保存过时用官方默认值（默认开启）。
+  ///
+  /// 关键：区分「没保存过」（两个键都读不到，回落默认）与「显式关闭/清空」
+  /// （键存在，哪怕值为 false/空串也尊重用户），避免用户关掉后又被默认开启。
   Future<void> _loadStored() async {
+    final String defaultText = defaultRelayAddrs.join('\n');
     try {
       final String? enabled = await widget.service.read(relayEnabledSettingKey);
       final String? addrs = await widget.service.read(relayAddrsSettingKey);
@@ -98,16 +112,26 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
         return;
       }
       setState(() {
-        _enabled = enabled == 'true';
-        _addrs.text = addrs ?? '';
+        if (enabled == null && addrs == null) {
+          // 首次配置：默认开启 + 官方主/备中继。
+          _enabled = true;
+          _addrs.text = defaultText;
+        } else {
+          _enabled = enabled == 'true';
+          _addrs.text = addrs ?? '';
+        }
         _loading = false;
       });
     } catch (_) {
-      // NOT_STARTED 或读取失败时保持默认，表单仍可编辑。
+      // NOT_STARTED 或读取失败时保持默认（开启+官方地址），表单仍可编辑。
       if (!mounted) {
         return;
       }
-      setState(() => _loading = false);
+      setState(() {
+        _enabled = true;
+        _addrs.text = defaultText;
+        _loading = false;
+      });
     }
   }
 
@@ -176,8 +200,8 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
             children: <Widget>[
               Text(
                 context.t(
-                  '中继仅在双方直连失败时兜底转发流量，默认关闭；'
-                  '建议只在桌面端或网络受限时手动开启。',
+                  '中继在双方直连失败时兜底转发流量，已默认开启并预填官方公共节点；'
+                  '可按需关闭或改为自建中继。',
                 ),
                 style: TextStyle(
                   fontSize: 12,

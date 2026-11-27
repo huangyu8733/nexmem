@@ -13,9 +13,13 @@ import (
 
 // Config 是 P0 阶段 host 的最小配置集合。
 type Config struct {
-	PrivateKey       crypto.PrivKey
-	Listen           []string
-	Announce         []string
+	PrivateKey crypto.PrivKey
+	Listen     []string
+	Announce   []string
+	// LanAddrs 是宿主注入的本机局域网 IP（如 192.168.1.5）。Android 上 Go 的
+	// net.Interfaces() 常被 SELinux 拦截，libp2p 无法把 /ip4/0.0.0.0 展开为
+	// 局域网地址，导致 mDNS 无地址可广播。注入后用于改写宣告地址。
+	LanAddrs         []string
 	UserAgent        string
 	EnableNATService bool
 	EnableHolePunch  bool
@@ -64,6 +68,12 @@ func NewHost(ctx context.Context, cfg Config) (host.Host, error) {
 		opts = append(opts, libp2p.AddrsFactory(func([]multiaddr.Multiaddr) []multiaddr.Multiaddr {
 			return announced
 		}))
+	} else if len(cfg.LanAddrs) > 0 {
+		// 把 libp2p 的 0.0.0.0 通配地址展开为宿主注入的局域网 IP。
+		// 不改其他地址（公网/loopback/中继），仅补全缺失的局域网地址。
+		opts = append(opts, libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+			return expandUnspecifiedWithLan(addrs, cfg.LanAddrs)
+		}))
 	}
 	if cfg.ConnLow > 0 && cfg.ConnHigh >= cfg.ConnLow {
 		cm, err := connmgr.NewConnManager(cfg.ConnLow, cfg.ConnHigh, connmgr.WithGracePeriod(time.Minute))
@@ -76,4 +86,48 @@ func NewHost(ctx context.Context, cfg Config) (host.Host, error) {
 	// ctx 仅用于建 host 阶段；libp2p 会自行管理后台生命周期。
 	_ = ctx
 	return libp2p.New(opts...)
+}
+
+// expandUnspecifiedWithLan 把 libp2p 的 /ip4/0.0.0.0 通配监听地址展开为宿主
+// 注入的局域网 IP。Android 上 net.Interfaces() 被 SELinux 拦截时，libp2p 无法
+// 自行展开，mDNS 没有可广播地址；这里用原生层拿到的 IP 补全。
+//
+// 只处理 0.0.0.0 地址，保留其余地址（含公网、loopback、p2p-circuit），
+// 并对注入 IP 生成的地址去重，避免与 libp2p 已展开的地址重复。
+func expandUnspecifiedWithLan(addrs []multiaddr.Multiaddr, lanIPs []string) []multiaddr.Multiaddr {
+	out := make([]multiaddr.Multiaddr, 0, len(addrs)+len(lanIPs))
+	seen := make(map[string]struct{}, len(addrs)+len(lanIPs))
+	add := func(a multiaddr.Multiaddr) {
+		if a == nil {
+			return
+		}
+		s := a.String()
+		if _, ok := seen[s]; ok {
+			return
+		}
+		seen[s] = struct{}{}
+		out = append(out, a)
+	}
+	const anyIPv4 = "/ip4/0.0.0.0"
+	for _, a := range addrs {
+		if a == nil {
+			add(a)
+			continue
+		}
+		first, rest := multiaddr.SplitFirst(a)
+		if first == nil || first.String() != anyIPv4 {
+			add(a)
+			continue
+		}
+		// 地址以 /ip4/0.0.0.0 开头：为每个注入 IP 生成一份替换地址。
+		for _, ip := range lanIPs {
+			replacement, err := multiaddr.NewMultiaddr("/ip4/" + ip + rest.String())
+			if err == nil {
+				add(replacement)
+			}
+		}
+		// 保留原始 0.0.0.0 地址本身，避免丢失端口信息。
+		add(a)
+	}
+	return out
 }

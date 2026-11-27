@@ -181,8 +181,8 @@ abstract final class NexmemTheme {
         style: FilledButton.styleFrom(
           backgroundColor: NexmemColors.primary,
           foregroundColor: Colors.white,
-          disabledBackgroundColor: textSecondary.withValues(alpha: 0.18),
-          disabledForegroundColor: card,
+          disabledBackgroundColor: textSecondary.withValues(alpha: 0.16),
+          disabledForegroundColor: textSecondary.withValues(alpha: 0.62),
           minimumSize: const Size(72, 38),
           padding: const EdgeInsets.symmetric(
             horizontal: NexmemMetrics.space16,

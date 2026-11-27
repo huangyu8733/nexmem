@@ -24,12 +24,16 @@ class FileSharePage extends StatefulWidget {
     super.key,
     required this.session,
     this.showHeader = true,
+    this.mediaSourceUri,
   });
 
   final CoreSession session;
 
   /// 嵌入「文件与传输」页面时隐藏自身标题，使用外层统一标题栏。
   final bool showHeader;
+
+  /// Web 端已下载文件仍在网关进程内，预览需走鉴权 inline 链接。
+  final Uri? Function(String path)? mediaSourceUri;
 
   @override
   State<FileSharePage> createState() => _FileSharePageState();
@@ -193,8 +197,8 @@ class _FileSharePageState extends State<FileSharePage> {
         context: context,
         builder: (BuildContext context) => AlertDialog(
           title: Text(share.name.isEmpty ? context.t('共享详情') : share.name),
-          content: SizedBox(
-            width: 420,
+          content: responsiveDialogContent(
+            maxWidth: 420,
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -214,7 +218,12 @@ class _FileSharePageState extends State<FileSharePage> {
                         dense: true,
                         contentPadding: EdgeInsets.zero,
                         leading: Icon(mediaIcon(kind), size: 18),
-                        title: Text(f.path, style: const TextStyle(fontSize: 13)),
+                        title: Text(
+                          f.path,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 13),
+                        ),
                         subtitle: Text(_formatSize(f.size), style: const TextStyle(fontSize: 11)),
                         trailing: canPreview
                             ? IconButton(
@@ -255,12 +264,16 @@ class _FileSharePageState extends State<FileSharePage> {
   /// 预览已下载到本机的媒体文件；路径按共享根目录 + 清单相对路径拼装。
   Future<void> _previewFile(FileShare share, FileShareEntry entry) async {
     final String filePath = p.join(share.localRoot, entry.path);
+    final Uri? source = widget.mediaSourceUri == null
+        ? null
+        : widget.mediaSourceUri!(filePath);
     await showDialog<void>(
       context: context,
       builder: (BuildContext context) => MediaViewerDialog(
         path: filePath,
         mime: entry.mime,
         title: entry.path,
+        sourceUri: source,
       ),
     );
   }
@@ -285,6 +298,8 @@ class _FileSharePageState extends State<FileSharePage> {
 
   Future<void> _download(FileShare share) async {
     if (_downloading) return;
+    // 每次下载先清掉上一次的错误，避免旧提示与新进度同时显示误导用户。
+    if (mounted) setState(() => _error = '');
     final TransferStore store = TransferStore.instance;
     if (store.active.any((TransferTask t) => t.shareId == share.shareId)) {
       if (mounted) {
@@ -329,36 +344,15 @@ class _FileSharePageState extends State<FileSharePage> {
     final String name = share.name.isEmpty
         ? share.shareId.substring(0, share.shareId.length.clamp(0, 8))
         : share.name;
-    final TextEditingController controller = TextEditingController(
-      text: p.join(defaultDir, name),
-    );
-    final String? result = await showPaneDialog<String>(
+    // 控制器由对话框 State 自己持有并在 dispose 时释放。不能在 showPaneDialog
+    // 的 future 完成时 dispose：路由关闭动画期间 TextField 仍在树里，
+    // 提前释放会触发 “controller used after disposed” 并连带 inherited
+    // element 断言崩溃（真机窄屏复现）。
+    return showPaneDialog<String>(
       context: context,
-      builder: (BuildContext ctx) => AlertDialog(
-        title: Text(context.t('下载到本机目录')),
-        content: responsiveDialogContent(
-          child: TextField(
-            controller: controller,
-            autofocus: true,
-            decoration: InputDecoration(
-              labelText: context.t('本机目标目录绝对路径'),
-              isDense: true,
-            ),
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(context.t('取消')),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(controller.text),
-            child: Text(context.t('开始下载')),
-          ),
-        ],
-      ),
-    ).whenComplete(controller.dispose);
-    return result;
+      builder: (BuildContext ctx) =>
+          _DownloadDestDialog(initial: p.join(defaultDir, name)),
+    );
   }
 
   /// 系统下载目录；Web / 平台不支持时回落到文档目录或相对目录。
@@ -582,6 +576,8 @@ class _FileSharePageState extends State<FileSharePage> {
                                       share.name.isEmpty
                                           ? context.t('未命名共享')
                                           : share.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                       style: Theme.of(context).textTheme.titleSmall,
                                     ),
                                     const SizedBox(height: 2),
@@ -651,6 +647,55 @@ class _FileSharePageState extends State<FileSharePage> {
                 ),
             ],
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 下载目标目录输入对话框。控制器由 State 持有，随对话框元素一起释放，
+/// 避免路由关闭动画期间 TextField 仍引用已 dispose 的控制器。
+class _DownloadDestDialog extends StatefulWidget {
+  const _DownloadDestDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_DownloadDestDialog> createState() => _DownloadDestDialogState();
+}
+
+class _DownloadDestDialogState extends State<_DownloadDestDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(context.t('下载到本机目录')),
+      content: responsiveDialogContent(
+        child: TextField(
+          controller: _controller,
+          autofocus: true,
+          decoration: InputDecoration(
+            labelText: context.t('本机目标目录绝对路径'),
+            isDense: true,
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(context.t('取消')),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text),
+          child: Text(context.t('开始下载')),
         ),
       ],
     );

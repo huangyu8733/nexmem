@@ -70,8 +70,14 @@ func (b *eventBuffer) replay(since uint64) (items []bufferedEvent, ok bool) {
 	if len(b.items) == 0 {
 		return nil, false
 	}
-	if since >= b.latest() {
-		// 没有遗漏：客户端已追平或超前（超前时按追平处理，等待新事件）。
+	if since > b.latest() {
+		// 客户端水位超前于服务端：网关进程重启后 seq 从 0 重新计数，
+		// 若按"已追平"处理，客户端会用旧水位把后续新事件误判为重复丢弃。
+		// 返回 false 让上层下发 resync_required，客户端据 latest_seq 纠正水位。
+		return nil, false
+	}
+	if since == b.latest() {
+		// 没有遗漏：客户端恰好追平，等待新事件。
 		return nil, true
 	}
 	if since+1 < b.oldest() {

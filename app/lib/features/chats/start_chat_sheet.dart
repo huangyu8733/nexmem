@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
 
@@ -245,7 +246,20 @@ class _ContactPickerDialogState extends State<_ContactPickerDialog> {
     return AlertDialog(
       key: const ValueKey<String>('contact-picker-dialog'),
       title: Text(context.t('发起单聊')),
-      content: SizedBox(width: 360, height: 380, child: _buildContent()),
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 480,
+          maxHeight: 380,
+        ),
+        child: SizedBox(
+          width: double.maxFinite,
+          // 矮屏（横屏/分屏）下收缩，避免底部按钮被裁切。
+          height: math.min(380, MediaQuery.sizeOf(context).height - 160)
+              .clamp(120, 380)
+              .toDouble(),
+          child: _buildContent(),
+        ),
+      ),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -411,7 +425,10 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
     return AlertDialog(
       key: const ValueKey<String>('create-group-dialog'),
       title: Text(context.t('创建群聊')),
-      content: SizedBox(width: 380, height: 420, child: _buildContent()),
+      content: responsiveDialogContent(
+        height: 420,
+        child: _buildContent(),
+      ),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),

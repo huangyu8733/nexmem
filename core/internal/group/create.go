@@ -31,6 +31,10 @@ type MemberInfo struct {
 	AccountPub []byte
 	Role       int
 	JoinedAt   int64
+	// Nickname 是本群称呼；空串表示未设置。
+	Nickname string
+	// LevelID 是本群等级 ID；空串表示未设置。
+	LevelID string
 }
 
 // GroupInfo 是本机视角的群资料与成员表。
@@ -45,7 +49,11 @@ type GroupInfo struct {
 	Alias string
 	// AllowFriendAdd 是群设置：是否允许成员互相添加好友（默认关闭）。
 	AllowFriendAdd bool
-	Members        []MemberInfo
+	// LevelsEnabled 是群等级总开关（默认关闭）。
+	LevelsEnabled bool
+	// Levels 是群等级配置，受 LevelsEnabled 控制是否生效。
+	Levels  []GroupLevel
+	Members []MemberInfo
 }
 
 // CreateGroup 创建群聊并分发 v1 群密钥。
@@ -118,6 +126,10 @@ func (s *Service) GroupInfo(ctx context.Context, groupID []byte) (GroupInfo, err
 	if err != nil {
 		return GroupInfo{}, err
 	}
+	levels, err := parseLevelConfig(g.LevelsJSON)
+	if err != nil {
+		return GroupInfo{}, err
+	}
 	info := GroupInfo{
 		GroupID:           append([]byte(nil), g.GroupID...),
 		Title:             g.Title,
@@ -126,6 +138,8 @@ func (s *Service) GroupInfo(ctx context.Context, groupID []byte) (GroupInfo, err
 		Announcement:      g.Announcement,
 		Alias:             g.Alias,
 		AllowFriendAdd:    g.AllowFriendAdd,
+		LevelsEnabled:     g.LevelsEnabled,
+		Levels:            levels,
 		Members:           make([]MemberInfo, 0, len(members)),
 	}
 	for _, m := range members {
@@ -133,6 +147,8 @@ func (s *Service) GroupInfo(ctx context.Context, groupID []byte) (GroupInfo, err
 			AccountPub: append([]byte(nil), m.AccountPub...),
 			Role:       m.Role,
 			JoinedAt:   m.JoinedAt,
+			Nickname:   m.Nickname,
+			LevelID:    m.LevelID,
 		})
 	}
 	return info, nil

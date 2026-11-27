@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 
 import '../app/core_session.dart';
 import '../features/files/directory_picker.dart';
+import '../features/files/system_file_picker.dart';
 import 'event_buffer.dart';
 import 'event_sequencer.dart';
 import 'transport.dart';
@@ -505,6 +506,7 @@ CoreSession? openNativeSession() {
   return CoreSession(
     transport,
     startConfig: config,
+    pickFile: pickLocalFile,
     pickDirectory: pickShareDirectory,
   );
 }

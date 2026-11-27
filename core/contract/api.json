@@ -43,6 +43,11 @@
       "description": "参数缺失、类型错误或 method 未知"
     },
     {
+      "code": "UNAUTHORIZED",
+      "retryable": false,
+      "description": "Web 网关访问令牌无效或已轮换"
+    },
+    {
       "code": "NOT_STARTED",
       "retryable": false,
       "description": "内核未启动，或该能力当前阶段尚未接入"
@@ -544,6 +549,26 @@
       "implemented": false
     },
     {
+      "name": "core.dataDir",
+      "summary": "返回当前内核数据目录，供客户端在多账号切换后恢复原账号",
+      "params": {
+        "type": "object",
+        "properties": {}
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "data_dir": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "data_dir"
+        ]
+      },
+      "implemented": false
+    },
+    {
       "name": "core.info",
       "summary": "返回 API 版本、内核版本与当前已接入能力，用于启动时版本协商",
       "params": {
@@ -805,7 +830,9 @@
             "type": "string"
           },
           "text": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 4096,
+            "description": "正文，最长 4096 字符"
           },
           "mentions": {
             "type": "array",
@@ -851,7 +878,8 @@
           },
           "text": {
             "type": "string",
-            "description": "文本正文"
+            "maxLength": 4096,
+            "description": "文本正文，最长 4096 字符"
           },
           "reply_to": {
             "type": "string",
@@ -1135,6 +1163,8 @@
           },
           "parallel": {
             "type": "integer",
+            "minimum": 1,
+            "maximum": 32,
             "description": "并发连接数，默认 4"
           }
         },
@@ -1210,7 +1240,8 @@
         "type": "object",
         "properties": {
           "code": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1048576
           }
         },
         "required": [
@@ -1278,6 +1309,7 @@
           },
           "name": {
             "type": "string",
+            "maxLength": 128,
             "description": "可选，共享显示名"
           }
         },
@@ -1688,7 +1720,7 @@
     },
     {
       "name": "group.members",
-      "summary": "列出群成员与密钥版本；`storage_configured` 供客户端展示群盘未配置提示，`announcement` 为本机群公告，`allow_friend_add` 表示是否允许成员互加好友",
+      "summary": "列出群成员与密钥版本；`storage_configured` 供客户端展示群盘未配置提示，`announcement` 为本机群公告，`allow_friend_add` 表示是否允许成员互加好友，`level_enabled`/`levels` 为群等级配置，members[] 含本群称呼 `nickname` 与 `level_id`",
       "params": {
         "type": "object",
         "properties": {
@@ -1706,7 +1738,24 @@
           "members": {
             "type": "array",
             "items": {
-              "type": "object"
+              "type": "object",
+              "properties": {
+                "account": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "joined_at": {
+                  "type": "integer"
+                },
+                "nickname": {
+                  "type": "string"
+                },
+                "level_id": {
+                  "type": "string"
+                }
+              }
             }
           },
           "storage_configured": {
@@ -1717,6 +1766,15 @@
           },
           "allow_friend_add": {
             "type": "boolean"
+          },
+          "level_enabled": {
+            "type": "boolean"
+          },
+          "levels": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
           }
         },
         "required": [
@@ -1883,6 +1941,124 @@
         },
         "required": [
           "announcement"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.setLevelConfig",
+      "summary": "设置群等级配置（仅管理员）：enabled 为总开关，levels 最多 12 项；每项含 id、名称（最长 16 字）与 64x64 PNG 图标 base64；关闭时清空全部成员等级 ID",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "levels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 16
+                },
+                "icon_b64": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ]
+            }
+          }
+        },
+        "required": [
+          "group_id",
+          "enabled",
+          "levels"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "levels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "icon_b64": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "enabled",
+          "levels"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.setMemberProfile",
+      "summary": "设置本群称呼与等级（成员改自己称呼无需管理员，设置他人或等级需管理员）：省略字段表示不变，空串表示清除",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string",
+            "maxLength": 24
+          },
+          "level_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "account"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "level_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "account",
+          "nickname",
+          "level_id"
         ]
       },
       "implemented": false
@@ -2080,7 +2256,8 @@
           },
           "text": {
             "type": "string",
-            "description": "新的正文，非空"
+            "maxLength": 4096,
+            "description": "新的正文，非空，最长 4096 字符"
           }
         },
         "required": [
@@ -2339,6 +2516,119 @@
         },
         "required": [
           "peer_id"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "net.discoverDevices",
+      "summary": "汇总当前可见设备（地址簿、mDNS、已连接节点、peerstore），支持分页；不主动做 IP 归属查询",
+      "params": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "每页条数，默认 200，上限 1000"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "起始偏移，默认 0"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "diagnostics": {
+            "type": "object",
+            "description": "发现链路诊断：各源原始数量、过滤计数、本机监听地址，供空态定位原因",
+            "properties": {
+              "mdns_enabled": {
+                "type": "boolean"
+              },
+              "mdns_raw": {
+                "type": "integer"
+              },
+              "peerbook_raw": {
+                "type": "integer"
+              },
+              "connected_raw": {
+                "type": "integer"
+              },
+              "peerstore_raw": {
+                "type": "integer"
+              },
+              "filtered_infra": {
+                "type": "integer"
+              },
+              "filtered_no_protocol": {
+                "type": "integer"
+              },
+              "has_lan_addr": {
+                "type": "boolean"
+              },
+              "self_addrs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "self_id": {
+                "type": "string"
+              },
+              "net_ifaces": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "listen_addrs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "injected_lan": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "mdns_error": {
+                "type": "string"
+              },
+              "lan_raw": {
+                "type": "integer"
+              },
+              "lan_beacon_active": {
+                "type": "boolean"
+              },
+              "lan_broadcast_error": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "offset",
+          "limit"
         ]
       },
       "implemented": false
@@ -3453,6 +3743,48 @@
         "required": [
           "group_id",
           "enabled"
+        ]
+      }
+    },
+    {
+      "type": "group.levelsChanged",
+      "description": "管理员更新群等级配置（含开关），成员按 group_id 通过 group.members 刷新本机等级列表（不产生气泡）",
+      "data": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ]
+      }
+    },
+    {
+      "type": "group.memberProfileChanged",
+      "description": "群成员本群称呼或等级变化，UI 按 group_id/account 刷新成员展示（不产生气泡）",
+      "data": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "level_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "account",
+          "nickname",
+          "level_id"
         ]
       }
     },

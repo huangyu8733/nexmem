@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'event_buffer.dart';
@@ -10,6 +11,10 @@ import 'transport.dart';
 
 /// 建立 WebSocket 连接的注入点，便于测试替换。
 typedef WsConnector = Future<WebSocketChannel> Function(Uri uri);
+
+/// 握手前的令牌探测：返回 false 表示令牌无效/已轮换，应停止重连并暴露错误；
+/// 探测不可用时返回 true，退回 WebSocket 握手自身的错误判断。
+typedef AuthProber = Future<bool> Function(Uri uri, String token);
 
 /// Web 端传输实现（P1-16）：浏览器经 WebSocket 复用内核的
 /// Request/Response/Event 契约，令牌随握手查询参数携带。
@@ -27,7 +32,9 @@ class WsTransport implements CoreTransport {
     this.seqStore,
     int eventBufferSize = 512,
     WsConnector? connector,
+    AuthProber? authProber,
   }) : _connector = connector ?? _defaultConnector,
+       _authProber = authProber ?? _defaultAuthProber,
        _backoff = reconnectMin {
     _buffer = EventBuffer(capacity: eventBufferSize);
   }
@@ -54,6 +61,7 @@ class WsTransport implements CoreTransport {
   final EventSeqStore? seqStore;
 
   final WsConnector _connector;
+  final AuthProber _authProber;
   final StreamController<CoreEvent> _events =
       StreamController<CoreEvent>.broadcast();
   late final EventBuffer _buffer;
@@ -67,6 +75,7 @@ class WsTransport implements CoreTransport {
   int _nextId = 0;
   bool _closed = false;
   bool _restored = false;
+  bool _authFailed = false;
 
   /// 当前是否处于已连接状态。
   bool get isConnected => _channel != null;
@@ -88,14 +97,20 @@ class WsTransport implements CoreTransport {
         const NexmemException('NOT_STARTED', '传输已关闭，无法连接'),
       );
     }
+    if (_authFailed) {
+      return Future<void>.error(_authException());
+    }
     if (_channel != null) {
       return Future<void>.value();
     }
     return _connecting ??= _open().whenComplete(() {
       _connecting = null;
     }).catchError((Object error) {
-      // 首次握手失败（如网关尚未就绪）也要进入重连，否则会永久离线。
-      _scheduleReconnect();
+      // 令牌错误不是瞬时故障：停止重连，把真实原因交给上层展示。
+      if (!_isAuthFailure(error)) {
+        // 首次握手失败（如网关尚未就绪）也要进入重连，否则会永久离线。
+        _scheduleReconnect();
+      }
       throw error;
     });
   }
@@ -112,8 +127,11 @@ class WsTransport implements CoreTransport {
       // 首屏可能在握手完成前就发起请求：先等待本次连接建立，避免竞态失败。
       try {
         await connect().timeout(limit);
-      } catch (_) {
-        // 连接失败时保持 NOT_ONLINE 语义，由调用方按可重试处理。
+      } catch (error) {
+        // 令牌错误必须原样上抛；其余连接失败仍保持 NOT_ONLINE 语义。
+        if (_isAuthFailure(error)) {
+          rethrow;
+        }
       }
       channel = _channel;
     }
@@ -184,11 +202,27 @@ class WsTransport implements CoreTransport {
       if (since > 0) 'since': '$since',
     };
     final uri = base.replace(queryParameters: query);
+    // 浏览器 WebSocket 错误不带 HTTP 状态码，握手前先做轻量令牌探测；
+    // 探测失败（如旧网关无 /auth）回落到握手错误文本判断。
+    bool authorized = true;
+    try {
+      authorized = await _authProber(uri, token);
+    } catch (_) {
+      authorized = true;
+    }
+    if (!authorized) {
+      _authFailed = true;
+      throw _authException();
+    }
     WebSocketChannel channel;
     try {
       channel = await _connector(uri);
       await channel.ready;
     } catch (e) {
+      if (_looksLikeAuthError(e)) {
+        _authFailed = true;
+        throw _authException();
+      }
       throw NexmemException(
         'NOT_ONLINE',
         'WebSocket 连接失败: $e',
@@ -257,7 +291,16 @@ class WsTransport implements CoreTransport {
       return;
     }
     if (event.isResync) {
-      // 服务端缓冲无法补齐缺口，交由应用做全量重新同步。
+      // 服务端缓冲无法补齐缺口（或网关重启后 seq 回退），交由应用做全量
+      // 重新同步。关键是同时把本端水位对齐到服务端 latest_seq：否则网关
+      // 重启后服务端 seq 从 0 重新计数，而本端仍停在旧水位，后续新事件会
+      // 被 EventSequencer 当作重复静默丢弃，直到追平旧水位为止。
+      final Object? latestSeq = event.data['latest_seq'];
+      final int aligned = latestSeq is num && latestSeq.toInt() >= 0
+          ? latestSeq.toInt()
+          : 0;
+      _buffer.reset(lastSeq: aligned);
+      seqStore?.save(aligned);
       _events.add(event);
       return;
     }
@@ -313,7 +356,7 @@ class WsTransport implements CoreTransport {
   }
 
   void _scheduleReconnect() {
-    if (_closed || !autoReconnect || _reconnectTimer != null) {
+    if (_closed || _authFailed || !autoReconnect || _reconnectTimer != null) {
       return;
     }
     final delay = _backoff;
@@ -349,6 +392,47 @@ class WsTransport implements CoreTransport {
           const NexmemException('NOT_ONLINE', '连接已断开', retryable: true),
         );
       }
+    }
+  }
+
+  static NexmemException _authException() => const NexmemException(
+        'UNAUTHORIZED',
+        'Web 网关访问令牌无效或已轮换，请重新输入 token',
+        retryable: false,
+      );
+
+  static bool _isAuthFailure(Object error) =>
+      error is NexmemException && error.code == 'UNAUTHORIZED';
+
+  /// WebSocket 握手在浏览器里拿不到状态码，只能从错误文本兜底识别 401。
+  ///
+  /// 403 不能归为 token 失效：网关 Origin 白名单、策略拒绝也会返回 403，
+  /// 归为 token 错误会让用户停掉重连并看到误导性的提示。
+  static bool _looksLikeAuthError(Object error) {
+    final String text = error.toString().toLowerCase();
+    return text.contains('401') || text.contains('unauthorized');
+  }
+
+  /// 握手前探测 `/auth`：401 视为令牌错误，其它结果（含旧网关 404）继续握手。
+  static Future<bool> _defaultAuthProber(Uri wsUri, String token) async {
+    final Uri authUri = wsUri.replace(
+      scheme: wsUri.scheme == 'wss' ? 'https' : 'http',
+      path: '/auth',
+      queryParameters: <String, String>{
+        ...wsUri.queryParameters,
+        'token': token,
+      },
+    );
+    try {
+      final http.Response response = await http
+          .get(
+            authUri,
+            headers: <String, String>{'X-Nexmem-Token': token},
+          )
+          .timeout(const Duration(seconds: 5));
+      return response.statusCode != 401;
+    } catch (_) {
+      return true;
     }
   }
 

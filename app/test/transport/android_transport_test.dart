@@ -20,6 +20,7 @@ void main() {
   late List<Map<String, dynamic>> replayFrames;
   late Map<String, dynamic> Function(Map<String, dynamic> request) onCall;
   String? dataDir;
+  String? localIp;
   int startServiceCalls = 0;
   Map<String, dynamic>? pickedFile;
   bool pickFileFails = false;
@@ -38,6 +39,7 @@ void main() {
     ackedSeq = 0;
     replayFrames = <Map<String, dynamic>>[];
     dataDir = '/data/user/0/io.nexmem.nexmem_app/files';
+    localIp = null;
     startServiceCalls = 0;
     pickedFile = null;
     pickFileFails = false;
@@ -65,6 +67,8 @@ void main() {
               return null;
             case 'dataDir':
               return dataDir;
+            case 'localIp':
+              return localIp;
             case 'pickFile':
               if (pickFileFails) {
                 throw PlatformException(code: 'PICK_FAILED', message: '选择器不可用');
@@ -295,7 +299,8 @@ void main() {
   });
 
   test('openAndroidSession 注入 filesDir 作为 data_dir 并拉起前台服务', () async {
-    final session = await openAndroidSession();
+    // 宿主 shell 可能注入 NEXMEM_* 联调变量，这里显式隔离为发布版默认配置。
+    final session = await openAndroidSession(environment: <String, String>{});
     expect(session, isNotNull);
     expect(
       session!.startConfig,
@@ -303,6 +308,26 @@ void main() {
     );
     expect(session.pickFile, isNotNull);
     expect(startServiceCalls, 1);
+    await session.transport.close();
+  });
+
+  test('openAndroidSession 注入原生局域网 IP 作为 lan_addrs 修复 mDNS', () async {
+    localIp = '192.168.10.91';
+    final session = await openAndroidSession(environment: <String, String>{});
+    expect(session, isNotNull);
+    expect(
+      session!.startConfig!['lan_addrs'],
+      <String>['192.168.10.91'],
+    );
+    expect(log.map((MethodCall c) => c.method), contains('localIp'));
+    await session.transport.close();
+  });
+
+  test('localIp 不可用时 openAndroidSession 不注入 lan_addrs', () async {
+    localIp = null;
+    final session = await openAndroidSession(environment: <String, String>{});
+    expect(session, isNotNull);
+    expect(session!.startConfig!.containsKey('lan_addrs'), isFalse);
     await session.transport.close();
   });
 
@@ -354,7 +379,10 @@ void main() {
 
   group('androidStartConfig', () {
     test('未注入网络配置时仅包含数据目录', () {
-      final Map<String, dynamic> config = androidStartConfig('/data/user/0/x/files');
+      final Map<String, dynamic> config = androidStartConfig(
+        '/data/user/0/x/files',
+        environment: <String, String>{},
+      );
       expect(config['data_dir'], '/data/user/0/x/files');
       expect(config.containsKey('bootstraps'), isFalse);
       expect(config.containsKey('directory_url'), isFalse);

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import '../../transport/transport.dart';
 import '../contacts/contact_service.dart';
 
@@ -64,12 +67,119 @@ class GroupSummary {
   }
 }
 
+/// 群等级图标与名称（`group.members` 的 `levels[]` 条目）。
+///
+/// 图标是 64x64 PNG 的 base64 字符串，内核负责校验尺寸与格式；客户端只负责
+/// 选择图片、自动居中裁剪并转成 base64，不做二次压缩。
+class GroupLevel {
+  const GroupLevel({
+    required this.id,
+    required this.name,
+    this.iconB64 = '',
+  });
+
+  factory GroupLevel.fromJson(Map<String, dynamic> json) {
+    final Object? id = json['id'];
+    final Object? name = json['name'];
+    final Object? icon = json['icon_b64'];
+    return GroupLevel(
+      id: id is String ? id : '',
+      name: name is String ? name : '',
+      iconB64: icon is String ? icon : '',
+    );
+  }
+
+  final String id;
+  final String name;
+  final String iconB64;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'id': id,
+        'name': name,
+        'icon_b64': iconB64,
+      };
+
+  /// 解码后的 PNG 字节；base64 非法时返回 null，由 UI 回退为文字占位。
+  Uint8List? get iconBytes {
+    if (iconB64.isEmpty) {
+      return null;
+    }
+    try {
+      return base64.decode(iconB64);
+    } on FormatException {
+      return null;
+    }
+  }
+}
+
+/// 群等级配置：管理员可开关并维护等级列表。
+class GroupLevels {
+  const GroupLevels({
+    this.enabled = false,
+    this.items = const <GroupLevel>[],
+  });
+
+  factory GroupLevels.fromJson(Map<String, dynamic> json) {
+    final Object? raw = json['levels'];
+    final List<GroupLevel> items = <GroupLevel>[];
+    if (raw is List) {
+      for (final Object? item in raw) {
+        if (item is Map<String, dynamic>) {
+          items.add(GroupLevel.fromJson(item));
+        }
+      }
+    }
+    return GroupLevels(
+      enabled: json['level_enabled'] == true || json['enabled'] == true,
+      items: items,
+    );
+  }
+
+  final bool enabled;
+  final List<GroupLevel> items;
+
+  GroupLevel? find(String id) {
+    for (final GroupLevel level in items) {
+      if (level.id == id) {
+        return level;
+      }
+    }
+    return null;
+  }
+}
+
+/// `group.setMemberProfile` 的回包，也用于构造请求参数。
+class GroupMemberProfile {
+  const GroupMemberProfile({
+    required this.account,
+    this.nickname = '',
+    this.levelId = '',
+  });
+
+  factory GroupMemberProfile.fromJson(Map<String, dynamic> json) {
+    final Object? account = json['account'];
+    final Object? nickname = json['nickname'];
+    final Object? levelId = json['level_id'];
+    return GroupMemberProfile(
+      account: account is String ? account : '',
+      nickname: nickname is String ? nickname : '',
+      levelId: levelId is String ? levelId : '',
+    );
+  }
+
+  final String account;
+  final String nickname;
+  final String levelId;
+}
+
 /// 群成员（`group.members` 的 `members[]` 条目）。
 class GroupMember {
   const GroupMember({
     required this.account,
     required this.role,
     this.joinedAt = 0,
+    this.nickname = '',
+    this.levelId = '',
   });
 
   factory GroupMember.fromJson(Map<String, dynamic> json) {
@@ -79,10 +189,14 @@ class GroupMember {
     }
     final Object? role = json['role'];
     final Object? joined = json['joined_at'];
+    final Object? nickname = json['nickname'];
+    final Object? levelId = json['level_id'];
     return GroupMember(
       account: account,
       role: role is String && role.isNotEmpty ? role : 'member',
       joinedAt: joined is num ? joined.toInt() : 0,
+      nickname: nickname is String ? nickname : '',
+      levelId: levelId is String ? levelId : '',
     );
   }
 
@@ -95,10 +209,27 @@ class GroupMember {
   /// 入群时间（毫秒时间戳），未知时为 0。
   final int joinedAt;
 
+  /// 本群称呼（群内可见）；空串表示未设置。
+  final String nickname;
+
+  /// 当前等级 ID；空串表示未设置。
+  final String levelId;
+
   bool get isAdmin => role == 'admin';
 
   /// 账号短串展示，避免在成员列表里铺满完整公钥。
   String get label => shortAccountLabel(account);
+
+  /// 群成员列表优先展示本群称呼，未设置时回退账号短串。
+  String get displayLabel => nickname.isNotEmpty ? nickname : label;
+
+  GroupMember copyWith({String? nickname, String? levelId}) => GroupMember(
+        account: account,
+        role: role,
+        joinedAt: joinedAt,
+        nickname: nickname ?? this.nickname,
+        levelId: levelId ?? this.levelId,
+      );
 }
 
 /// 群资料（`group.members` 回包，P4-07 数据源）。
@@ -112,6 +243,8 @@ class GroupInfo {
     this.announcement = '',
     this.alias = '',
     this.allowFriendAdd = false,
+    this.levelEnabled = false,
+    this.levels = const <GroupLevel>[],
   });
 
   factory GroupInfo.fromJson(Map<String, dynamic> json) {
@@ -138,6 +271,8 @@ class GroupInfo {
       announcement: json['announcement'] is String ? json['announcement'] as String : '',
       alias: json['alias'] is String ? json['alias'] as String : '',
       allowFriendAdd: json['allow_friend_add'] == true,
+      levelEnabled: json['level_enabled'] == true,
+      levels: GroupLevels.fromJson(json).items,
       members: members,
     );
   }
@@ -158,7 +293,48 @@ class GroupInfo {
   /// 群设置：是否允许成员互相添加好友；默认关闭。
   final bool allowFriendAdd;
 
+  /// 群等级系统开关与等级列表；关闭时等级 ID 不展示。
+  final bool levelEnabled;
+  final List<GroupLevel> levels;
+
   final List<GroupMember> members;
+
+  /// 局部更新群资料，避免界面保存公告/备注时漏掉等级与群设置字段。
+  GroupInfo copyWith({
+    String? title,
+    int? keyVersion,
+    bool? storageConfigured,
+    String? announcement,
+    String? alias,
+    bool? allowFriendAdd,
+    bool? levelEnabled,
+    List<GroupLevel>? levels,
+    List<GroupMember>? members,
+  }) =>
+      GroupInfo(
+        groupId: groupId,
+        title: title ?? this.title,
+        keyVersion: keyVersion ?? this.keyVersion,
+        storageConfigured: storageConfigured ?? this.storageConfigured,
+        announcement: announcement ?? this.announcement,
+        alias: alias ?? this.alias,
+        allowFriendAdd: allowFriendAdd ?? this.allowFriendAdd,
+        levelEnabled: levelEnabled ?? this.levelEnabled,
+        levels: levels ?? this.levels,
+        members: members ?? this.members,
+      );
+
+  GroupLevel? levelOf(String id) {
+    if (!levelEnabled || id.isEmpty) {
+      return null;
+    }
+    for (final GroupLevel level in levels) {
+      if (level.id == id) {
+        return level;
+      }
+    }
+    return null;
+  }
 
   /// 展示标题：群备注优先于群名，均为空时回退占位（P6-27）。
   String get displayTitle {
@@ -265,6 +441,21 @@ abstract class GroupService {
 
   /// 设置本机群备注：空串表示清除，最多 32 字；仅本机可见、不上行（P6-27）。
   Future<String> setAlias(String groupId, String alias);
+
+  /// 管理员开关群等级系统并维护等级名称/图标。
+  Future<GroupLevels> setLevelConfig(
+    String groupId, {
+    required bool enabled,
+    required List<GroupLevel> levels,
+  });
+
+  /// 设置成员本群称呼与等级；成员只能改自己称呼，管理员可改任意成员。
+  Future<GroupMemberProfile> setMemberProfile(
+    String groupId,
+    String account, {
+    String? nickname,
+    String? levelId,
+  });
 }
 
 /// 群会话 ID：与内核 `coreapp` 的 `group:<base64url>` 同构。
@@ -422,6 +613,49 @@ class TransportGroupService implements GroupService {
     return saved;
   }
 
+  @override
+  Future<GroupLevels> setLevelConfig(
+    String groupId, {
+    required bool enabled,
+    required List<GroupLevel> levels,
+  }) async {
+    final Map<String, dynamic> data = await transport.call(
+      'group.setLevelConfig',
+      params: <String, dynamic>{
+        'group_id': groupId,
+        'enabled': enabled,
+        'levels': <Map<String, dynamic>>[
+          for (final GroupLevel level in levels) level.toJson(),
+        ],
+      },
+    );
+    return GroupLevels.fromJson(data);
+  }
+
+  @override
+  Future<GroupMemberProfile> setMemberProfile(
+    String groupId,
+    String account, {
+    String? nickname,
+    String? levelId,
+  }) async {
+    final Map<String, dynamic> params = <String, dynamic>{
+      'group_id': groupId,
+      'account': account,
+    };
+    if (nickname != null) {
+      params['nickname'] = nickname;
+    }
+    if (levelId != null) {
+      params['level_id'] = levelId;
+    }
+    final Map<String, dynamic> data = await transport.call(
+      'group.setMemberProfile',
+      params: params,
+    );
+    return GroupMemberProfile.fromJson(data);
+  }
+
   Future<int> _memberMutation(
     String method,
     String groupId,
@@ -513,6 +747,25 @@ class UnavailableGroupService implements GroupService {
 
   @override
   Future<String> setAlias(String groupId, String alias) async {
+    throw const NexmemException('NOT_STARTED', '群聊服务尚未接入内核');
+  }
+
+  @override
+  Future<GroupLevels> setLevelConfig(
+    String groupId, {
+    required bool enabled,
+    required List<GroupLevel> levels,
+  }) async {
+    throw const NexmemException('NOT_STARTED', '群聊服务尚未接入内核');
+  }
+
+  @override
+  Future<GroupMemberProfile> setMemberProfile(
+    String groupId,
+    String account, {
+    String? nickname,
+    String? levelId,
+  }) async {
     throw const NexmemException('NOT_STARTED', '群聊服务尚未接入内核');
   }
 }

@@ -151,8 +151,8 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return AlertDialog(
       title: Text(context.t('群盘设置')),
-      content: SizedBox(
-        width: 420,
+      content: responsiveDialogContent(
+        maxWidth: 420,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -260,7 +260,7 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
                 Padding(
                   padding: const EdgeInsets.only(top: NexmemMetrics.space8),
                   child: Text(
-                    _error!,
+                    context.t(_error!),
                     key: const ValueKey<String>('group-storage-error'),
                     style: const TextStyle(
                       fontSize: 13,

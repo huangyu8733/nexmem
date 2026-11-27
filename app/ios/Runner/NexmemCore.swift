@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import Nexmem
 
 /// gomobile 内核单例（P1-08）。
 ///
@@ -8,7 +9,10 @@ import Security
 ///    Keychain 条目被删除后主密钥无法恢复，对应“删除条目后无法解密”的验收语义；
 /// 2. 持有唯一的 `MobileHandle`，把事件按 seq 写入 [EventBuffer] 供热重启重放；
 /// 3. 向 Flutter 插件提供线程安全的 call / replay / ack 入口。
-final class NexmemCore: NSObject, MobileEventSink {
+// gomobile 生成的 MobileEventSink 同时存在同名类与 protocol，Swift 无法消歧；
+// 通过 ObjC adapter（NexmemEventSink）显式遵循 protocol 后再传给 MobileNew，
+// 直接把 self 当 sink 传会触发 go_seq_go_to_refnum 引用映射崩溃。
+final class NexmemCore {
     static let shared = NexmemCore()
 
     private let ring = EventBuffer()
@@ -17,12 +21,18 @@ final class NexmemCore: NSObject, MobileEventSink {
     private var listener: ((String) -> Void)?
     private var consumedSeq: Int64 = 0
 
+    /// 必须强引用：gomobile 只持有 unref 的协议对象，释放后会回调野指针。
+    private let sink = NexmemEventSink()
+
     private let keychainService = "io.nexmem.core"
     private let keychainAccount = "master.key"
     private let masterKeyBytes = 32
 
-    private override init() {
-        super.init()
+    private init() {
+        sink.onEventPayload = { [weak self] payload in
+            guard let self, let payload else { return }
+            self.onEvent(payload)
+        }
     }
 
     /// 应用沙盒数据目录，与 Android `filesDir` / 桌面数据目录等价。
@@ -145,8 +155,12 @@ final class NexmemCore: NSObject, MobileEventSink {
             return current
         }
         let key = try loadOrCreateMasterKey()
-        _ = try MobileSetMasterKey(key)
-        let created = try MobileNew(self)
+        // gomobile 导出的 C 函数第二个参数是 NSError**，Swift 不会自动
+        // 映射成 throws，这里显式传 nil，错误由内核侧 call() 抛出。
+        _ = MobileSetMasterKey(key, nil)
+        guard let created = MobileNew(sink, nil) else {
+            throw NexmemCoreError.handle
+        }
         handle = created
         return created
     }
@@ -207,11 +221,14 @@ final class NexmemCore: NSObject, MobileEventSink {
 
 enum NexmemCoreError: Error, LocalizedError {
     case keychain(OSStatus)
+    case handle
 
     var errorDescription: String? {
         switch self {
         case let .keychain(status):
             return "Keychain 主密钥不可用（OSStatus \(status)）"
+        case .handle:
+            return "内核句柄创建失败"
         }
     }
 }

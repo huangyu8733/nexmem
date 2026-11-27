@@ -35,9 +35,17 @@ Future<CoreSession?> openIOSSession() async {
     await transport.close();
     return null;
   }
+  // 注入原生局域网 IP，启用同 WiFi 账号发现（UDP 广播签名名片）。
+  final String? localIp = await transport.localIp();
+  final Map<String, dynamic> config = <String, dynamic>{'data_dir': dataDir};
+  if (localIp != null && localIp.isNotEmpty) {
+    config['lan_addrs'] = <String>[localIp];
+  }
   return CoreSession(
     transport,
-    startConfig: <String, dynamic>{'data_dir': dataDir},
+    startConfig: config,
+    // iOS 重装/备份恢复会改变沙盒容器 UUID，需重定位失效的数据目录。
+    rebaseStaleDataDir: true,
     pickFile: transport.pickFile,
   );
 }

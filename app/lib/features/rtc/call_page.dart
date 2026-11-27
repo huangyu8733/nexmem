@@ -145,7 +145,7 @@ class _CallPageState extends State<CallPage> {
                   if (_info.isGroup) ...<Widget>[
                     const SizedBox(width: 12),
                     Text(
-                      context.t('${_info.participants.length} 人'),
+                      context.t('{0} 人', ['${_info.participants.length}']),
                       style: const TextStyle(color: Colors.white54, fontSize: 12),
                     ),
                   ],
@@ -312,7 +312,8 @@ class _CallPageState extends State<CallPage> {
             const SizedBox(height: 8),
             Text(
               context.t(
-                '邀请你进行${_info.video ? '视频' : '语音'}通话',
+                '邀请你进行{0}通话',
+                [_info.video ? context.t('视频') : context.t('语音')],
               ),
               style: const TextStyle(color: Colors.white38, fontSize: 13),
             ),

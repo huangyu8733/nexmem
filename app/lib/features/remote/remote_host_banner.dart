@@ -39,7 +39,7 @@ class RemoteHostBanner extends StatelessWidget {
                 child: Text(
                   paused
                       ? context.t('远程控制已暂停（画面仍可见）')
-                      : context.t('${_name()} 正在远程控制本机'),
+                      : context.t('{0} 正在远程控制本机', [_name()]),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.white, fontSize: 12),

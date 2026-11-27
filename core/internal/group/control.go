@@ -3,6 +3,7 @@ package group
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 	"unicode/utf8"
@@ -121,6 +122,96 @@ func ParseAnnouncementNotice(body []byte) (string, bool) {
 		return "", false
 	}
 	return out, true
+}
+
+// levelsNoticePrefix 是群等级配置控制帧前缀。
+// 帧正文为 base64url(JSON(LevelConfig))，字段名与 group.setLevelConfig 契约一致；
+// 控制帧不落库、不生成聊天气泡。
+const levelsNoticePrefix = controlFrameDomain + "levels:"
+
+// EncodeLevelsNotice 生成群等级配置控制帧正文。
+func EncodeLevelsNotice(cfg LevelConfig) (string, error) {
+	if err := ValidateLevelConfig(cfg); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return "", err
+	}
+	return levelsNoticePrefix + base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// ParseLevelsNotice 解析群等级配置控制帧；非本类正文或配置非法返回 ok=false。
+func ParseLevelsNotice(body []byte) (LevelConfig, bool) {
+	text := string(body)
+	if !strings.HasPrefix(text, levelsNoticePrefix) {
+		return LevelConfig{}, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(text[len(levelsNoticePrefix):])
+	if err != nil {
+		return LevelConfig{}, false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return LevelConfig{}, false
+	}
+	if _, ok := fields["enabled"]; !ok {
+		return LevelConfig{}, false
+	}
+	if _, ok := fields["levels"]; !ok {
+		return LevelConfig{}, false
+	}
+	var cfg LevelConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil || ValidateLevelConfig(cfg) != nil {
+		return LevelConfig{}, false
+	}
+	return cfg, true
+}
+
+// memberProfileNoticePrefix 是成员本群资料控制帧前缀。
+// 帧正文为 base64url(JSON(MemberProfile))，字段名与 group.setMemberProfile 契约一致。
+const memberProfileNoticePrefix = controlFrameDomain + "member-profile:"
+
+// EncodeMemberProfileNotice 生成成员本群资料控制帧正文。
+func EncodeMemberProfileNotice(profile MemberProfile) (string, error) {
+	if profile.Account == "" {
+		return "", ErrMemberNotFound
+	}
+	if err := ValidateNickname(profile.Nickname); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(profile)
+	if err != nil {
+		return "", err
+	}
+	return memberProfileNoticePrefix + base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// ParseMemberProfileNotice 解析成员本群资料控制帧；非本类正文或字段缺失返回 ok=false。
+func ParseMemberProfileNotice(body []byte) (MemberProfile, bool) {
+	text := string(body)
+	if !strings.HasPrefix(text, memberProfileNoticePrefix) {
+		return MemberProfile{}, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(text[len(memberProfileNoticePrefix):])
+	if err != nil {
+		return MemberProfile{}, false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return MemberProfile{}, false
+	}
+	for _, name := range []string{"account", "nickname", "level_id"} {
+		if _, ok := fields[name]; !ok {
+			return MemberProfile{}, false
+		}
+	}
+	var profile MemberProfile
+	if err := json.Unmarshal(raw, &profile); err != nil ||
+		profile.Account == "" || ValidateNickname(profile.Nickname) != nil {
+		return MemberProfile{}, false
+	}
+	return profile, true
 }
 
 // allowFriendAddNoticePrefix 是「允许成员互加好友」群设置控制帧前缀。

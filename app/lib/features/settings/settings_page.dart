@@ -9,7 +9,14 @@ import '../../app/pane_header.dart';
 import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
+import '../account/account_manager.dart';
+import '../account/account_manager_page.dart';
+import '../account/app_exit.dart';
+import 'developer_settings.dart';
 import '../social/social_hub_page.dart';
+import '../push/push_controller.dart';
+import '../push/push_settings_dialog.dart';
+import '../permissions/permissions_pane.dart';
 import '../remote/remote_settings_page.dart';
 import '../updater/update_dialog.dart';
 import 'backup.dart';
@@ -52,6 +59,8 @@ class SettingsPage extends StatelessWidget {
     this.session,
     this.webOnlineOnly = false,
     this.coreInfo,
+    this.accountManager,
+    this.push,
     this.profileOnly = false,
     this.onOpenProfileView,
     this.onOpenPane,
@@ -86,6 +95,12 @@ class SettingsPage extends StatelessWidget {
   /// 内核版本与能力（P6-29）；为 null 表示内核未接入或协商失败。
   final CoreInfo? coreInfo;
 
+  /// 账号管理/临时锁入口所需的本机账号管理器。
+  final AccountManager? accountManager;
+
+  /// 消息通知设置；为空时设置页不展示对应面板。
+  final PushController? push;
+
   /// 拆分模式：「我的」只展示账号卡片与个人资料，普通设置为纯菜单列表。
   final bool profileOnly;
 
@@ -96,21 +111,29 @@ class SettingsPage extends StatelessWidget {
   /// 参数为菜单 label；为空时退回原有弹窗行为（兼容独立使用）。
   final ValueChanged<String>? onOpenPane;
 
-  /// 「我的」页仅保留资料相关入口；其余项归入底部「设置」。
+  /// 「我的」页放资料与账号相关入口；其余系统项归入底部「设置」。
   static const List<(IconData, String)> _profileItems = <(IconData, String)>[
     (Icons.badge_outlined, '个人资料'),
+    (Icons.devices_other_outlined, '远程设备'),
+    (Icons.radar, '账号发现'),
+    (Icons.groups, '社交中心'),
+    (Icons.shield_outlined, '账号与安全'),
+    (Icons.manage_accounts_outlined, '账号管理'),
+    (Icons.lock_outline, '临时锁'),
+    (Icons.exit_to_app, '退出应用'),
   ];
 
   static const List<(IconData, String)> _settingsItems = <(IconData, String)>[
-    (Icons.groups, '社交中心'),
-    (Icons.shield_outlined, '账号与安全'),
     (Icons.sync_outlined, '多设备同步'),
     (Icons.desktop_windows_outlined, '远程控制'),
+    (Icons.notifications_none, '消息通知'),
+    (Icons.verified_user_outlined, '权限管理'),
     (Icons.wifi_tethering, '网络'),
     (Icons.cloud_outlined, '离线存储'),
     (Icons.palette_outlined, '外观'),
     (Icons.language, '语言'),
     (Icons.info_outline, '关于'),
+    (Icons.code, '开发者'),
   ];
 
   @override
@@ -220,6 +243,8 @@ class SettingsPage extends StatelessWidget {
                   height: NexmemMetrics.listItemHeight,
                   child: ListTile(
                     key: ValueKey<String>('settings-${_itemKey(label)}'),
+                    // 与外层 SizedBox 同高，避免内容比卡片中心高 2px。
+                    minTileHeight: NexmemMetrics.listItemHeight,
                     leading: Icon(icon, size: 22),
                     title: Text(context.t(label)),
                     trailing: const Icon(Icons.chevron_right, size: 18),
@@ -260,10 +285,18 @@ class SettingsPage extends StatelessWidget {
       );
       return;
     }
+    // 社交中心是铺满内容页，不是对话框：独立使用本页时也要走普通页面路由，
+    // 否则 showDialog 会额外套一层居中白卡和灰色 barrier。
     unawaited(
-      showPaneDialog<void>(
-        context: context,
-        builder: (BuildContext context) => SocialHubPage(session: session),
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (BuildContext routeContext) => Scaffold(
+            appBar: AppBar(title: Text(routeContext.t('社交中心'))),
+            body: SafeArea(
+              child: SocialHubPage(session: session, showHeader: false),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -274,12 +307,26 @@ class SettingsPage extends StatelessWidget {
         return 'social-hub';
       case '个人资料':
         return 'profile';
+      case '远程设备':
+        return 'remote-devices';
+      case '账号发现':
+        return 'device-discovery';
       case '账号与安全':
         return 'account';
+      case '账号管理':
+        return 'account-manager';
+      case '临时锁':
+        return 'app-lock';
+      case '退出应用':
+        return 'exit-app';
       case '多设备同步':
         return 'device-sync';
       case '远程控制':
         return 'remote-control';
+      case '消息通知':
+        return 'push-notifications';
+      case '权限管理':
+        return 'permissions';
       case '网络':
         return 'network';
       case '离线存储':
@@ -288,6 +335,8 @@ class SettingsPage extends StatelessWidget {
         return 'appearance';
       case '语言':
         return 'language';
+      case '开发者':
+        return 'developer';
       case '关于':
         return 'about';
       default:
@@ -337,12 +386,54 @@ class SettingsPage extends StatelessWidget {
       _openProfile(context);
       return;
     }
+    if (label == '远程设备') {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(context.t('请从应用「我的」页打开远程设备'))),
+      );
+      return;
+    }
+    if (label == '账号发现') {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(context.t('请从应用「我的」页打开账号发现'))),
+      );
+      return;
+    }
     if (label == '账号与安全') {
       showDialog<void>(
         context: context,
         builder: (BuildContext context) =>
             AccountSecurityDialog(backup: backup),
       );
+      return;
+    }
+    if (label == '账号管理' || label == '临时锁') {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(context.t('请从应用「我的」页打开账号管理'))),
+      );
+      return;
+    }
+    if (label == '退出应用') {
+      showPaneDialog<bool>(
+        context: context,
+        builder: (BuildContext context) => AlertDialog(
+          title: Text(context.t('退出应用')),
+          content: Text(context.t('确定要退出奈讯联吗？')),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(context.t('取消')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(context.t('确定')),
+            ),
+          ],
+        ),
+      ).then((bool? confirmed) {
+        if (confirmed == true) {
+          unawaited(exitProcess());
+        }
+      });
       return;
     }
     if (label == '多设备同步') {
@@ -358,6 +449,13 @@ class SettingsPage extends StatelessWidget {
         context: context,
         builder: (BuildContext context) => const RemoteSettingsPage(),
       );
+      return;
+    }
+    if (label == '权限管理') {
+      unawaited(showPaneDialog<void>(
+        context: context,
+        builder: (BuildContext context) => const PermissionsPane(),
+      ));
       return;
     }
     if (label == '网络') {
@@ -403,6 +501,16 @@ class SettingsPage extends StatelessWidget {
           coreInfo: coreInfo,
         ),
       );
+      return;
+    }
+    if (label == '开发者') {
+      unawaited(showPaneDialog<void>(
+        context: context,
+        builder: (BuildContext context) => DeveloperPane(
+          settings: settings,
+          push: push,
+        ),
+      ));
     }
   }
 }
@@ -413,6 +521,7 @@ class SettingsPage extends StatelessWidget {
 /// `EmbeddedSettingsPane`，复用既有交互与内核服务，无需弹框。
 WidgetBuilder settingsPaneBuilder({
   required String label,
+  PushController? push,
   required BackupService backup,
   required SettingsService settings,
   required DiagnosticsService diagnostics,
@@ -423,6 +532,7 @@ WidgetBuilder settingsPaneBuilder({
   required ReportSink reportSink,
   CoreInfo? coreInfo,
   CoreSession? session,
+  AccountManager? accountManager,
 }) {
   switch (label) {
     case '社交中心':
@@ -431,10 +541,26 @@ WidgetBuilder settingsPaneBuilder({
           : SocialHubPage(session: session, showHeader: false);
     case '账号与安全':
       return (BuildContext context) => AccountSecurityDialog(backup: backup);
+    case '账号管理':
+    case '临时锁':
+      return (BuildContext context) => accountManager == null
+          ? const SizedBox.shrink()
+          : AccountManagerPage(
+              manager: accountManager,
+              focusLock: label == '临时锁',
+            );
+    case '退出应用':
+      return (BuildContext context) => _ExitPane(manager: accountManager);
     case '多设备同步':
       return (BuildContext context) => SettingsSyncDialog(settings: settings);
     case '远程控制':
       return (BuildContext context) => const RemoteSettingsPage();
+    case '消息通知':
+      return (BuildContext context) => push == null
+          ? const SizedBox.shrink()
+          : PushSettingsPane(controller: push, showHeader: false);
+    case '权限管理':
+      return (BuildContext context) => const PermissionsPane(showHeader: false);
     case '网络':
       return (BuildContext context) => _NetworkDiagnosticsDialog(
             diagnostics: diagnostics,
@@ -453,6 +579,12 @@ WidgetBuilder settingsPaneBuilder({
     case '语言':
       return (BuildContext context) =>
           const LanguageDialog(closeOnSelect: false);
+    case '开发者':
+      return (BuildContext context) => DeveloperPane(
+            settings: settings,
+            push: push,
+            showHeader: false,
+          );
     case '关于':
       return (BuildContext context) => _AboutDialog(
             diagnostics: diagnostics,
@@ -461,6 +593,51 @@ WidgetBuilder settingsPaneBuilder({
           );
     default:
       return (BuildContext context) => const SizedBox.shrink();
+  }
+}
+
+/// 「退出应用」面板：桌面/移动端直接请求关闭进程，Web 端展示退出页。
+class _ExitPane extends StatelessWidget {
+  const _ExitPane({this.manager});
+
+  final AccountManager? manager;
+
+  Future<void> _exit() async {
+    await manager?.exitApp();
+    await exitProcess();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 360),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(Icons.exit_to_app, size: 48, color: scheme.primary),
+            const SizedBox(height: NexmemMetrics.space16),
+            Text(
+              context.t('退出应用'),
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: NexmemMetrics.space8),
+            Text(
+              context.t('退出后需要重新进入应用，本地账号数据会保留'),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: NexmemMetrics.space24),
+            FilledButton.icon(
+              key: const ValueKey<String>('exit-app-confirm'),
+              onPressed: () => unawaited(_exit()),
+              icon: const Icon(Icons.logout),
+              label: Text(context.t('退出应用')),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -960,6 +1137,10 @@ class _AboutDialog extends StatelessWidget {
                   context: context,
                   applicationName: 'Nexmem',
                   applicationVersion: appVersion,
+                  // 「关于」在窄屏是 SettingsPanePage，内部有独立 Navigator；
+                  // 默认 useRootNavigator=false 会把 LicensePage push 进该内层
+                  // 导航栈，与外层 AppBar 叠加成两个标题栏。用根导航器全屏覆盖。
+                  useRootNavigator: true,
                 ),
               ),
             ],
@@ -982,14 +1163,21 @@ Widget _row(String label, String value) {
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        SizedBox(
-          width: 88,
-          child: Text(label, style: const TextStyle(fontSize: 13)),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 88),
+          child: Text(
+            label,
+            maxLines: 2,
+            style: const TextStyle(fontSize: 13),
+          ),
         ),
+        const SizedBox(width: NexmemMetrics.space8),
         Expanded(
           child: Text(
             value,
             key: ValueKey<String>('diag-$label'),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 13),
           ),
         ),

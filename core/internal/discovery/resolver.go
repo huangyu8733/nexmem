@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -30,9 +31,10 @@ var PublicBootstraps = []string{
 // CascadingResolver 按优先级串联多个发现源，实现 dm.PeerResolver。
 // 命中顺序：本地地址簿 -> 已连接/mDNS -> 私有 DHT -> 公共 DHT。
 type CascadingResolver struct {
-	peerbook  *Peerbook
-	mdns      *MDNS
-	host      host.Host
+	peerbook   *Peerbook
+	mdns       *MDNS
+	lanBeacon  *LANBeacon
+	host       host.Host
 	privateDHT *dht.IpfsDHT
 	publicDHT  *dht.IpfsDHT
 	// Fallback 是原有的 directoryResolver（账号->设备->地址），可为 nil。
@@ -53,6 +55,11 @@ func NewCascadingResolver(h host.Host, book *Peerbook, md *MDNS, privateDHT, pub
 	}
 }
 
+// SetLANBeacon 注入同 WiFi 账号发现源（在内核启动信标后调用）。
+func (r *CascadingResolver) SetLANBeacon(b *LANBeacon) {
+	r.lanBeacon = b
+}
+
 // ResolvePeer 实现 dm.PeerResolver：依次尝试各发现源。
 func (r *CascadingResolver) ResolvePeer(ctx context.Context, accountPub []byte) (dm.Target, error) {
 	if len(accountPub) != 32 {
@@ -66,6 +73,25 @@ func (r *CascadingResolver) ResolvePeer(ctx context.Context, accountPub []byte) 
 		info := infos[0]
 		r.warmConnect(ctx, info)
 		return dm.Target{PeerID: info.ID, Addrs: info.Addrs, AccountPub: accountPub}, nil
+	}
+
+	// 1b) 同 WiFi 局域网发现：对端 UDP 广播的签名名片自带 accountID，
+	// 不依赖目录服务。同网段直连，命中后优先于公网 DHT。
+	wantAccount := strings.ToLower(hex.EncodeToString(accountPub))
+	if r.lanBeacon != nil {
+		for _, lp := range r.lanBeacon.Snapshot() {
+			if strings.ToLower(lp.AccountID) != wantAccount || lp.Addr == "" {
+				continue
+			}
+			info, err := peer.AddrInfoFromString(lp.Addr)
+			if err != nil || len(info.Addrs) == 0 {
+				continue
+			}
+			r.warmConnect(ctx, *info)
+			return dm.Target{
+				PeerID: info.ID, Addrs: info.Addrs, AccountPub: accountPub,
+			}, nil
+		}
 	}
 
 	// 2) 原有 directory + DHT 链路：得到账号对应的 PeerID 候选。

@@ -686,6 +686,13 @@ func messageItem(m store.Message) map[string]any {
 			if ref := a.GetBlobRef(); ref != "" {
 				entry["path"] = ref
 			}
+			// 群文件消息里的 BlobRef 是群盘对象键、Key 是附件 AES 密钥：
+			// 一并回传给本机客户端，供 file.downloadGroup 取回并解密群文件。
+			// 单聊发送端没有 BlobRef，不会输出这些字段。
+			if ref := a.GetBlobRef(); ref != "" && a.GetKey() != nil {
+				entry["blob_ref"] = ref
+				entry["key_b64"] = base64.StdEncoding.EncodeToString(a.GetKey())
+			}
 			list = append(list, entry)
 		}
 		item["attachments"] = list

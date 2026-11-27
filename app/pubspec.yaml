@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.1.0+1
+version: 1.1.1+1
 
 environment:
   sdk: ^3.14.0
@@ -46,10 +46,13 @@ dependencies:
   archive: ^4.7.1
   path_provider: ^2.1.6
   path: ^1.9.1
+  crypto: ^3.0.8
   # 媒体预览播放：图片用 image，视频/音频用原生播放器，
   # 不支持的格式由内置 ffmpeg 工具链转码后再播放。
   video_player: ^2.14.1
   audioplayers: ^6.8.1
+  mobile_scanner: ^7.5.0
+  webview_flutter: ^4.14.1
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -78,6 +81,10 @@ flutter:
   assets:
     - assets/nexmem_icon.svg
     - assets/nexmem_logo.svg
+    - assets/message_dingdong.wav
+    - assets/device_map_preview.html
+    # ip2region v4 离线 IPv4 库（Apache-2.0），随程序内置，启用归属地不需要联网下载。
+    - assets/ip2region_v4.xdb
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

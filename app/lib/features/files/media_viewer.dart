@@ -53,17 +53,22 @@ IconData mediaIcon(MediaKind kind) {
 
 /// 媒体预览弹窗：图片支持缩放，视频/音频使用原生播放器，
 /// 原生解码失败时可按「ffmpeg 转码播放」用随包工具链转换后再播。
+///
+/// [sourceUri] 非空时走在线播放（Web 的鉴权 `/download?disposition=inline`），
+/// 图片用 `Image.network`、视频/音频用网络源；为空时保持原来的本地文件播放。
 class MediaViewerDialog extends StatefulWidget {
   const MediaViewerDialog({
     super.key,
     required this.path,
     this.mime = '',
     this.title,
+    this.sourceUri,
   });
 
   final String path;
   final String mime;
   final String? title;
+  final Uri? sourceUri;
 
   @override
   State<MediaViewerDialog> createState() => _MediaViewerDialogState();
@@ -94,7 +99,10 @@ class _MediaViewerDialogState extends State<MediaViewerDialog> {
 
   Future<void> _probeAndOpen() async {
     setState(() => _loading = true);
-    final MediaProbeInfo? info = await probeMedia(widget.path);
+    // 在线播放的 path 是网关服务端路径，本机探测无意义；本地文件才探测元信息。
+    final MediaProbeInfo? info = widget.sourceUri == null
+        ? await probeMedia(widget.path)
+        : null;
     if (!mounted) return;
     setState(() => _info = info);
     if (_kind == MediaKind.video) {
@@ -109,7 +117,9 @@ class _MediaViewerDialogState extends State<MediaViewerDialog> {
   Future<void> _openVideo(String path) async {
     await _video?.dispose();
     _positionSub?.cancel();
-    final VideoPlayerController controller = mediaVideoController(path);
+    final VideoPlayerController controller = widget.sourceUri == null
+        ? mediaVideoController(path)
+        : VideoPlayerController.networkUrl(widget.sourceUri!);
     try {
       await controller.initialize();
       if (!mounted) {
@@ -131,7 +141,9 @@ class _MediaViewerDialogState extends State<MediaViewerDialog> {
         _videoFailed = true;
         _videoReady = false;
         _loading = false;
-        _notice = '原生播放器无法解码该文件，可尝试 ffmpeg 转码播放';
+        _notice = widget.sourceUri == null
+            ? '原生播放器无法解码该文件，可尝试 ffmpeg 转码播放'
+            : '在线播放失败，请下载后使用本地播放器打开';
       });
     }
   }
@@ -151,7 +163,11 @@ class _MediaViewerDialogState extends State<MediaViewerDialog> {
 
   Future<void> _openAudio(String path) async {
     try {
-      await _audio.setSource(DeviceFileSource(path));
+      if (widget.sourceUri != null) {
+        await _audio.setSource(UrlSource(widget.sourceUri!.toString()));
+      } else {
+        await _audio.setSource(DeviceFileSource(path));
+      }
       _duration = await _audio.getDuration() ?? Duration.zero;
       _positionSub = _audio.onPositionChanged.listen((Duration d) {
         if (mounted) setState(() => _position = d);
@@ -168,7 +184,9 @@ class _MediaViewerDialogState extends State<MediaViewerDialog> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _notice = '原生播放器无法解码该文件，可尝试 ffmpeg 转码播放';
+        _notice = widget.sourceUri == null
+            ? '原生播放器无法解码该文件，可尝试 ffmpeg 转码播放'
+            : '在线播放失败，请下载后使用本地播放器打开';
       });
     }
   }
@@ -244,7 +262,7 @@ class _MediaViewerDialogState extends State<MediaViewerDialog> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _notice = 'ffmpeg 转码失败：$e';
+        _notice = 'ffmpeg 转码失败，文件可能使用了不支持的编码';
       });
     }
   }
@@ -293,7 +311,7 @@ class _MediaViewerDialogState extends State<MediaViewerDialog> {
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(
-                    _notice!,
+                    context.t(_notice!),
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.primary,
                       fontSize: 12,
@@ -305,8 +323,11 @@ class _MediaViewerDialogState extends State<MediaViewerDialog> {
         ),
       ),
       actions: <Widget>[
-        if ((_videoFailed && _kind == MediaKind.video) ||
-            (_kind == MediaKind.audio && _notice != null && _transcodedPath == null))
+        if (widget.sourceUri == null &&
+            ((_videoFailed && _kind == MediaKind.video) ||
+                (_kind == MediaKind.audio &&
+                    _notice != null &&
+                    _transcodedPath == null)))
           TextButton.icon(
             onPressed: _loading ? null : _transcode,
             icon: const Icon(Icons.movie_creation_outlined, size: 18),
@@ -332,11 +353,19 @@ class _MediaViewerDialogState extends State<MediaViewerDialog> {
         return ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 460),
           child: InteractiveViewer(
-            child: Image(
-              image: mediaImageProvider(widget.path),
-              fit: BoxFit.contain,
-              errorBuilder: (_, _, _) => _placeholder(Icons.broken_image_outlined),
-            ),
+            child: widget.sourceUri == null
+                ? Image(
+                    image: mediaImageProvider(widget.path),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) =>
+                        _placeholder(Icons.broken_image_outlined),
+                  )
+                : Image.network(
+                    widget.sourceUri!.toString(),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) =>
+                        _placeholder(Icons.broken_image_outlined),
+                  ),
           ),
         );
       case MediaKind.video:

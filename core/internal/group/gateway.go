@@ -70,6 +70,8 @@ func Bind(g *gateway.Gateway, gw *Gateway) error {
 		return errors.New("缺少群聊服务")
 	}
 	handlers := map[string]gateway.HandlerFunc{
+		"group.setLevelConfig":    gw.setLevelConfigHandler(),
+		"group.setMemberProfile":  gw.setMemberProfileHandler(),
 		"group.create":            gw.createHandler(),
 		"group.list":              gw.listHandler(),
 		"group.members":           gw.membersHandler(),
@@ -176,7 +178,13 @@ func (gw *Gateway) membersHandler() gateway.HandlerFunc {
 				"account":   encodeAccountID(m.AccountPub),
 				"role":      role,
 				"joined_at": m.JoinedAt,
+				"nickname":  m.Nickname,
+				"level_id":  m.LevelID,
 			})
+		}
+		levels := info.Levels
+		if levels == nil {
+			levels = []GroupLevel{}
 		}
 		return map[string]any{
 			"group_id":           encodeGroupID(info.GroupID),
@@ -186,6 +194,8 @@ func (gw *Gateway) membersHandler() gateway.HandlerFunc {
 			"storage_configured": info.StorageConfigured,
 			"announcement":       info.Announcement,
 			"allow_friend_add":   info.AllowFriendAdd,
+			"level_enabled":      info.LevelsEnabled,
+			"levels":             levels,
 			"members":            members,
 		}, nil
 	}
@@ -229,6 +239,7 @@ func (gw *Gateway) listHandler() gateway.HandlerFunc {
 				"storage_configured": info.StorageConfigured,
 				"announcement":       info.Announcement,
 				"allow_friend_add":   info.AllowFriendAdd,
+				"level_enabled":      info.LevelsEnabled,
 			})
 		}
 		return map[string]any{"items": items}, nil
@@ -541,6 +552,86 @@ func (gw *Gateway) setAllowFriendAddHandler() gateway.HandlerFunc {
 	}
 }
 
+// setLevelConfigHandler 处理 group.setLevelConfig：管理员开关群等级并配置等级列表。
+// 本机落库后广播控制帧；关闭等级时清空全部成员等级 ID。
+func (gw *Gateway) setLevelConfigHandler() gateway.HandlerFunc {
+	return func(ctx context.Context, params json.RawMessage) (any, *gateway.Error) {
+		var req struct {
+			GroupID string       `json:"group_id"`
+			Enabled *bool        `json:"enabled"`
+			Levels  []GroupLevel `json:"levels"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "group.setLevelConfig 参数不是合法 JSON: %v", err)
+		}
+		groupID, err := parseGroupID(req.GroupID)
+		if err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "群 ID 非法: %v", err)
+		}
+		if req.Enabled == nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "缺少必填参数 enabled")
+		}
+		if req.Levels == nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "缺少必填参数 levels")
+		}
+		cfg := LevelConfig{Enabled: *req.Enabled, Levels: req.Levels}
+		if err := ValidateLevelConfig(cfg); err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "%s", err.Error())
+		}
+		svc, gerr := gw.service()
+		if gerr != nil {
+			return nil, gerr
+		}
+		saved, err := svc.SetLevelConfig(ctx, groupID, cfg)
+		if err != nil {
+			return nil, mapGroupError("设置群等级失败", err)
+		}
+		return map[string]any{"enabled": saved.Enabled, "levels": saved.Levels}, nil
+	}
+}
+
+// setMemberProfileHandler 处理 group.setMemberProfile：成员改自己称呼或管理员改任意成员资料。
+// 省略字段表示不变，空串表示清除；改动通过控制帧同步给成员。
+func (gw *Gateway) setMemberProfileHandler() gateway.HandlerFunc {
+	return func(ctx context.Context, params json.RawMessage) (any, *gateway.Error) {
+		var req struct {
+			GroupID  string  `json:"group_id"`
+			Account  string  `json:"account"`
+			Nickname *string `json:"nickname"`
+			LevelID  *string `json:"level_id"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "group.setMemberProfile 参数不是合法 JSON: %v", err)
+		}
+		groupID, err := parseGroupID(req.GroupID)
+		if err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "群 ID 非法: %v", err)
+		}
+		accountPub, err := contacts.ParseAccountID(req.Account)
+		if err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "成员账号非法: %v", err)
+		}
+		if req.Nickname != nil {
+			if err := ValidateNickname(*req.Nickname); err != nil {
+				return nil, gateway.NewError(gateway.CodeInvalidArg, "%s", err.Error())
+			}
+		}
+		svc, gerr := gw.service()
+		if gerr != nil {
+			return nil, gerr
+		}
+		profile, err := svc.SetMemberProfile(ctx, groupID, accountPub, req.Nickname, req.LevelID)
+		if err != nil {
+			return nil, mapGroupError("设置成员本群资料失败", err)
+		}
+		return map[string]any{
+			"account":  profile.Account,
+			"nickname": profile.Nickname,
+			"level_id": profile.LevelID,
+		}, nil
+	}
+}
+
 // setAliasHandler 处理 group.setAlias：任意成员设置或清除本机群备注（P6-27）。
 // 备注不上行、不广播，仅影响本机群名展示。
 func (gw *Gateway) setAliasHandler() gateway.HandlerFunc {
@@ -686,7 +777,7 @@ func (gw *Gateway) downloadFileHandler() gateway.HandlerFunc {
 		return map[string]any{
 			"path":   req.Path,
 			"size":   int64(len(plain)),
-			"sha256": base64.StdEncoding.EncodeToString(sum[:]),
+			"sha256": hex.EncodeToString(sum[:]),
 		}, nil
 	}
 }
@@ -730,6 +821,15 @@ func mapGroupError(prefix string, err error) *gateway.Error {
 		errors.Is(err, ErrGroupEmpty),
 		errors.Is(err, ErrAnnouncementTooLong),
 		errors.Is(err, ErrAliasTooLong),
+		errors.Is(err, ErrLevelConfigInvalid),
+		errors.Is(err, ErrLevelConfigTooMany),
+		errors.Is(err, ErrLevelIDInvalid),
+		errors.Is(err, ErrLevelIDDuplicate),
+		errors.Is(err, ErrLevelNameTooLong),
+		errors.Is(err, ErrLevelIconInvalid),
+		errors.Is(err, ErrLevelIconTooLarge),
+		errors.Is(err, ErrLevelNotFound),
+		errors.Is(err, ErrNicknameTooLong),
 		errors.Is(err, ErrMemberTargetMissing):
 		return gateway.NewError(gateway.CodeInvalidArg, "%s: %v", prefix, err)
 	case errors.Is(err, ErrStorageWrite):

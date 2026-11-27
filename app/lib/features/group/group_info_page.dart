@@ -9,6 +9,8 @@ import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 import '../contacts/contact.dart';
 import '../contacts/contact_service.dart';
+import 'group_invite_dialogs.dart';
+import 'group_profile_dialogs.dart';
 import 'group_service.dart';
 import 'group_storage.dart';
 
@@ -28,6 +30,7 @@ class GroupInfoPage extends StatefulWidget {
     this.announcementRevision,
     this.onAllowFriendAddChanged,
     this.allowFriendAddRevision,
+    this.profileRevision,
   });
 
   /// base64url 群 ID（会话 ID 去掉 `group:` 前缀）。
@@ -58,6 +61,9 @@ class GroupInfoPage extends StatefulWidget {
   /// 成员收到管理员广播的加好友开关变更事件时递增，本页监听后刷新设置展示。
   final ValueListenable<int>? allowFriendAddRevision;
 
+  /// 群等级配置或成员资料（本群称呼/等级）变更版本；收到内核控制帧后递增。
+  final ValueListenable<int>? profileRevision;
+
   @override
   State<GroupInfoPage> createState() => _GroupInfoPageState();
 }
@@ -69,14 +75,17 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
   String? _error;
   late final int _initialRevision;
   late final int _initialAllowFriendRevision;
+  late final int _initialProfileRevision;
 
   @override
   void initState() {
     super.initState();
     _initialRevision = widget.announcementRevision?.value ?? 0;
     _initialAllowFriendRevision = widget.allowFriendAddRevision?.value ?? 0;
+    _initialProfileRevision = widget.profileRevision?.value ?? 0;
     widget.announcementRevision?.addListener(_onAnnouncementChanged);
     widget.allowFriendAddRevision?.addListener(_onAllowFriendAddChanged);
+    widget.profileRevision?.addListener(_onProfileChanged);
     unawaited(_load());
   }
 
@@ -84,6 +93,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
   void dispose() {
     widget.announcementRevision?.removeListener(_onAnnouncementChanged);
     widget.allowFriendAddRevision?.removeListener(_onAllowFriendAddChanged);
+    widget.profileRevision?.removeListener(_onProfileChanged);
     super.dispose();
   }
 
@@ -103,6 +113,17 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     final int? revision = widget.allowFriendAddRevision?.value;
     if (revision == null ||
         revision == _initialAllowFriendRevision ||
+        !mounted) {
+      return;
+    }
+    unawaited(_load());
+  }
+
+  /// 等级配置或成员资料控制帧到达后重新拉取群资料。
+  void _onProfileChanged() {
+    final int? revision = widget.profileRevision?.value;
+    if (revision == null ||
+        revision == _initialProfileRevision ||
         !mounted) {
       return;
     }
@@ -151,7 +172,9 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     return self.isNotEmpty && normalizeAccountHex(member.account) == self;
   }
 
-  /// 邀请通讯录中的非成员入群（仅管理员）。
+  /// 拉人进群（仅管理员）：好友多选 / 指定账号 / 批量导入 `账号|备注`。
+  ///
+  /// 逐个邀请并在带备注时写入本群称呼；单个失败不影响其余账号，最后汇总。
   Future<void> _invite() async {
     final ContactService? contacts = widget.contacts;
     final GroupInfo? info = _info;
@@ -177,40 +200,50 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     if (!mounted) {
       return;
     }
-    if (candidates.isEmpty) {
-      _toast(context.t('通讯录里没有可邀请的联系人'));
-      return;
-    }
-    final Contact? picked = await showDialog<Contact>(
-      context: context,
-      builder: (BuildContext context) => SimpleDialog(
-        key: const ValueKey<String>('group-invite-dialog'),
-        title: Text(context.t('邀请成员')),
-        children: <Widget>[
-          for (final Contact contact in candidates)
-            SimpleDialogOption(
-              key: ValueKey<String>('group-invite-contact-${contact.id}'),
-              onPressed: () => Navigator.of(context).pop(contact),
-              child: Text(contact.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-        ],
-      ),
+    final List<GroupInviteEntry>? picked = await showGroupInviteDialog(
+      context,
+      friends: candidates,
+      existingHex: existing,
     );
-    if (picked == null || !mounted) {
+    if (picked == null || picked.isEmpty || !mounted) {
       return;
     }
-    final String account =
-        picked.peer.isNotEmpty ? picked.peer : picked.id;
+
     setState(() => _busy = true);
+    int invited = 0;
+    int failed = 0;
+    int nicknamed = 0;
     try {
-      final int version = await widget.service.invite(widget.groupId, account);
+      for (final GroupInviteEntry entry in picked) {
+        try {
+          await widget.service.invite(widget.groupId, entry.account);
+          invited++;
+          if (entry.nickname.isNotEmpty) {
+            try {
+              await widget.service.setMemberProfile(
+                widget.groupId,
+                entry.account,
+                nickname: entry.nickname,
+              );
+              nicknamed++;
+            } on Object catch (_) {
+              // 邀请已成功，仅本群称呼写入失败，单独计入失败数。
+              failed++;
+            }
+          }
+        } on Object catch (_) {
+          failed++;
+        }
+      }
       if (!mounted) {
         return;
       }
-      _toast(context.t('已邀请 {0}，密钥版本 v{1}', [picked.name, version]));
+      _toast(
+        failed == 0
+            ? context.t('已邀请 {0} 人，设置本群称呼 {1} 人', [invited, nicknamed])
+            : context.t('已邀请 {0} 人，{1} 人失败', [invited, failed]),
+      );
       await _load();
-    } on NexmemException catch (error) {
-      _toast(error.message.isEmpty ? error.code : error.message);
     } finally {
       if (mounted) {
         setState(() => _busy = false);
@@ -242,6 +275,48 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
         setState(() => _busy = false);
       }
     }
+  }
+
+  Future<void> _openLevelSettings(GroupInfo info) async {
+    if (!_isAdmin(info)) {
+      return;
+    }
+    final GroupLevels? saved = await showGroupLevelDialog(
+      context,
+      service: widget.service,
+      groupId: widget.groupId,
+      initial: GroupLevels(
+        enabled: info.levelEnabled,
+        items: info.levels,
+      ),
+    );
+    if (saved == null || !mounted) {
+      return;
+    }
+    _toast(context.t('操作成功'));
+    await _load();
+  }
+
+  Future<void> _editMemberProfile(GroupInfo info, GroupMember member) async {
+    final bool isSelf = _isSelf(member);
+    final bool isAdmin = _isAdmin(info);
+    if (!isSelf && !isAdmin) {
+      return;
+    }
+    final GroupMemberProfile? saved = await showMemberProfileDialog(
+      context,
+      service: widget.service,
+      groupId: widget.groupId,
+      member: member,
+      isSelf: isSelf,
+      isAdmin: isAdmin,
+      levels: GroupLevels(enabled: info.levelEnabled, items: info.levels),
+    );
+    if (saved == null || !mounted) {
+      return;
+    }
+    _toast(context.t('操作成功'));
+    await _load();
   }
 
   /// 把成员移出群并轮换密钥（仅管理员）。
@@ -431,15 +506,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
         return;
       }
       setState(() {
-        _info = GroupInfo(
-          groupId: info.groupId,
-          title: info.title,
-          keyVersion: info.keyVersion,
-          storageConfigured: info.storageConfigured,
-          announcement: saved,
-          alias: info.alias,
-          members: info.members,
-        );
+        _info = info.copyWith(announcement: saved);
       });
       _toast(saved.isEmpty ? context.t('群公告已清除') : context.t('群公告已更新'));
     } on NexmemException catch (error) {
@@ -471,15 +538,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
         return;
       }
       setState(() {
-        _info = GroupInfo(
-          groupId: info.groupId,
-          title: info.title,
-          keyVersion: info.keyVersion,
-          storageConfigured: info.storageConfigured,
-          announcement: info.announcement,
-          alias: saved,
-          members: info.members,
-        );
+        _info = info.copyWith(alias: saved);
       });
       widget.onAliasChanged?.call(saved);
       _toast(saved.isEmpty ? context.t('群备注已清除') : context.t('群备注已更新'));
@@ -603,29 +662,39 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
                 ? NexmemColors.success
                 : NexmemColors.warning,
           ),
-          title: Text(context.t('群盘（离线消息存储）')),
+          title: Text(
+            context.t('群盘（离线消息存储）'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
           subtitle: Text(
             info.storageConfigured
                 ? context.t('已配置，成员离线时可从群盘补齐')
                 : context.t('未配置，成员离线消息不可补'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 12),
           ),
           trailing: isAdmin
-              ? Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    if (info.storageConfigured)
+              ? FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      if (info.storageConfigured)
+                        TextButton(
+                          key: const ValueKey<String>('group-storage-remove'),
+                          onPressed: _busy ? null : _removeStorage,
+                          child: Text(context.t('移除')),
+                        ),
                       TextButton(
-                        key: const ValueKey<String>('group-storage-remove'),
-                        onPressed: _busy ? null : _removeStorage,
-                        child: Text(context.t('移除')),
+                        key: const ValueKey<String>('group-storage-config'),
+                        onPressed: _busy ? null : _configureStorage,
+                        child: Text(info.storageConfigured ? context.t('重新配置') : context.t('配置')),
                       ),
-                    TextButton(
-                      key: const ValueKey<String>('group-storage-config'),
-                      onPressed: _busy ? null : _configureStorage,
-                      child: Text(info.storageConfigured ? context.t('重新配置') : context.t('配置')),
-                    ),
-                  ],
+                    ],
+                  ),
                 )
               : null,
         ),
@@ -711,6 +780,25 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
           ),
         ),
         const Divider(height: 1),
+        ListTile(
+          key: const ValueKey<String>('group-level-settings-tile'),
+          leading: const Icon(Icons.military_tech_outlined),
+          title: Text(context.t('群等级设置')),
+          subtitle: Text(
+            info.levelEnabled
+                ? context.t('已开启 · {0} 个等级', [info.levels.length])
+                : context.t('未开启'),
+            style: const TextStyle(fontSize: 12),
+          ),
+          trailing: isAdmin
+              ? TextButton(
+                  key: const ValueKey<String>('group-level-settings-edit'),
+                  onPressed: _busy ? null : () => _openLevelSettings(info),
+                  child: Text(context.t('设置')),
+                )
+              : null,
+        ),
+        const Divider(height: 1),
         Padding(
           padding: const EdgeInsets.symmetric(
             horizontal: NexmemMetrics.space16,
@@ -742,6 +830,9 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
           _MemberTile(
             key: ValueKey<String>('group-member-${member.account}'),
             member: member,
+            level: info.levelOf(member.levelId),
+            canEdit: _busy ? false : (isAdmin || _isSelf(member)),
+            onEdit: () => _editMemberProfile(info, member),
             canRemove: isAdmin && !member.isAdmin && !_isSelf(member),
             onRemove: _busy ? null : () => _removeMember(member),
           ),
@@ -783,11 +874,19 @@ class _MemberTile extends StatelessWidget {
   const _MemberTile({
     super.key,
     required this.member,
+    this.level,
+    this.canEdit = false,
+    this.onEdit,
     this.canRemove = false,
     this.onRemove,
   });
 
   final GroupMember member;
+  final GroupLevel? level;
+
+  /// 本人或管理员可编辑本群称呼与等级。
+  final bool canEdit;
+  final VoidCallback? onEdit;
 
   /// 当前账号是管理员且该成员可被移出时为 true。
   final bool canRemove;
@@ -818,14 +917,66 @@ class _MemberTile extends StatelessWidget {
             ),
             const SizedBox(width: NexmemMetrics.space12),
             Expanded(
-              child: Text(
-                member.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodyMedium
-                    ?.copyWith(fontSize: 15),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  Text(
+                    member.displayLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(fontSize: 15),
+                  ),
+                  if (member.nickname.isNotEmpty)
+                    Text(
+                      member.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 11,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.5),
+                      ),
+                    ),
+                ],
               ),
             ),
+            if (level != null) ...<Widget>[
+              const SizedBox(width: NexmemMetrics.space8),
+              Tooltip(
+                message: level!.name,
+                child: level!.iconBytes == null
+                    ? Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: NexmemColors.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          level!.name,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: NexmemColors.primary,
+                          ),
+                        ),
+                      )
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: Image.memory(
+                          level!.iconBytes!,
+                          width: 24,
+                          height: 24,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+              ),
+            ],
             if (member.isAdmin)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -838,8 +989,17 @@ class _MemberTile extends StatelessWidget {
                   style: const TextStyle(fontSize: 11, color: NexmemColors.primary),
                 ),
               ),
+            if (canEdit) ...<Widget>[
+              const SizedBox(width: NexmemMetrics.space4),
+              IconButton(
+                key: ValueKey<String>('group-member-edit-${member.account}'),
+                tooltip: context.t('设置本群称呼'),
+                icon: const Icon(Icons.edit_outlined, size: 18),
+                onPressed: onEdit,
+              ),
+            ],
             if (canRemove) ...<Widget>[
-              const SizedBox(width: NexmemMetrics.space8),
+              const SizedBox(width: NexmemMetrics.space4),
               TextButton(
                 key: ValueKey<String>('group-remove-${member.account}'),
                 onPressed: onRemove,

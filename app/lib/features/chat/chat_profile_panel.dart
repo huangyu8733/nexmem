@@ -30,6 +30,9 @@ class ChatProfilePanel extends StatefulWidget {
     this.onMentionMember,
     this.onAddFriend,
     this.allowFriendAddRevision,
+    this.displayName,
+    this.remark = '',
+    this.onSetRemark,
   });
 
   final ConversationItem conversation;
@@ -51,6 +54,15 @@ class ChatProfilePanel extends StatefulWidget {
 
   /// 群加好友开关变更版本号；内核事件或管理员本机切换后递增，面板重新拉取成员表。
   final ValueListenable<int>? allowFriendAddRevision;
+
+  /// 单聊显示名（备注 > 昵称 > 账号）；为空时回退到会话 title。
+  final String? displayName;
+
+  /// 单聊当前备注，供资料面板直接编辑。
+  final String remark;
+
+  /// 单聊设置备注回调，参数为新备注文本；群聊或不适用时为 null。
+  final ValueChanged<String>? onSetRemark;
 
   @override
   State<ChatProfilePanel> createState() => _ChatProfilePanelState();
@@ -180,27 +192,31 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final ConversationItem conversation = widget.conversation;
     final String account = conversation.peer;
+    final String name = widget.displayName?.trim().isNotEmpty ?? false
+        ? widget.displayName!.trim()
+        : (conversation.title.trim().isNotEmpty
+            ? conversation.title.trim()
+            : shortAccountLabel(account.isEmpty ? conversation.id : account));
     return ListView(
       padding: const EdgeInsets.all(NexmemMetrics.space16),
       children: <Widget>[
         Center(
-          child: CircleAvatar(
-            radius: 32,
-            backgroundColor: NexmemColors.primary.withValues(alpha: 0.12),
-            child: Text(
-              _initial(conversation.title),
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w600,
-                color: NexmemColors.primary,
-              ),
-            ),
+          child: AppAvatar(
+            seed: conversation.id,
+            label: name,
+            size: 64,
+            showPresence: true,
+            presence: switch (conversation.presence) {
+              PresenceStatus.online => AvatarPresence.online,
+              PresenceStatus.relay => AvatarPresence.relay,
+              PresenceStatus.offline => AvatarPresence.offline,
+            },
           ),
         ),
         const SizedBox(height: NexmemMetrics.space12),
         Center(
           child: Text(
-            conversation.title,
+            name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.titleMedium
@@ -231,6 +247,16 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
           label: context.t('在线状态'),
           value: _presenceLabel(context, conversation.presence),
         ),
+        if (widget.onSetRemark != null) ...<Widget>[
+          const SizedBox(height: NexmemMetrics.space12),
+          _InfoRow(
+            label: context.t('备注'),
+            value: widget.remark.isEmpty
+                ? context.t('未设置')
+                : widget.remark,
+            onEdit: () => _openRemark(context),
+          ),
+        ],
         const SizedBox(height: NexmemMetrics.space24),
         Container(
           padding: const EdgeInsets.all(NexmemMetrics.space12),
@@ -431,12 +457,41 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
     messenger.showSnackBar(SnackBar(content: Text(copied)));
   }
 
-  static String _initial(String title) {
-    final String trimmed = title.trim();
-    if (trimmed.isEmpty) {
-      return '?';
+  /// 打开备注编辑弹窗，保存后由壳层落库并回填会话标题。
+  Future<void> _openRemark(BuildContext context) async {
+    final TextEditingController controller =
+        TextEditingController(text: widget.remark);
+    final String? next = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: Text(context.t('设置备注')),
+        content: TextField(
+          key: const ValueKey<String>('chat-profile-remark-field'),
+          controller: controller,
+          autofocus: true,
+          maxLines: 1,
+          decoration: InputDecoration(
+            labelText: context.t('备注'),
+            helperText: context.t('仅本机可见，不会发送给对方'),
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(context.t('取消')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: Text(context.t('保存')),
+          ),
+        ],
+      ),
+    );
+    if (next == null) {
+      return;
     }
-    return trimmed.substring(0, 1).toUpperCase();
+    widget.onSetRemark?.call(next);
   }
 
   static String _presenceLabel(BuildContext context, PresenceStatus status) {
@@ -458,12 +513,14 @@ class _InfoRow extends StatelessWidget {
     required this.value,
     this.monospace = false,
     this.onCopy,
+    this.onEdit,
   });
 
   final String label;
   final String value;
   final bool monospace;
   final VoidCallback? onCopy;
+  final VoidCallback? onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -497,6 +554,13 @@ class _InfoRow extends StatelessWidget {
             visualDensity: VisualDensity.compact,
             icon: const Icon(Icons.copy, size: 16),
             onPressed: onCopy,
+          ),
+        if (onEdit != null)
+          IconButton(
+            tooltip: context.t('编辑'),
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.edit_outlined, size: 16),
+            onPressed: onEdit,
           ),
       ],
     );

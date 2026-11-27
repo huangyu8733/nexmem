@@ -222,6 +222,7 @@ RemoteControlService _service(
   _FakeMedia media,
   _FakeInjector injector, {
   bool enabled = true,
+  String passwordCredential = '',
 }) {
   RemotePrefs.instance
     ..enabled = enabled
@@ -229,6 +230,7 @@ RemoteControlService _service(
     ..allowInput = true
     ..allowClipboard = true
     ..allowFile = true
+    ..passwordCredential = passwordCredential
     ..loaded = true;
   return RemoteControlService(
     transport: transport,
@@ -256,11 +258,18 @@ List<RemoteSignal> _sent(_FakeTransport transport) {
   return result;
 }
 
-RemoteSignal _requestSignal({String sid = 'r-1'}) => RemoteSignal(
+RemoteSignal _requestSignal({
+  String sid = 'r-1',
+  String credential = '',
+  bool silent = false,
+}) =>
+    RemoteSignal(
       type: RemoteSignalType.request,
       sid: sid,
       name: '测试端',
       permissions: RemotePermissions.all,
+      credential: credential,
+      silent: silent,
     );
 
 void main() {
@@ -384,6 +393,74 @@ void main() {
     expect(sent.single.reason, '被控端未开启远程控制');
   });
 
+  test('被控端设置密码后拒绝无密码或错误密码的远控请求', () async {
+    final _FakeTransport transport = _FakeTransport();
+    final RemoteControlService service = _service(
+      transport,
+      _FakeMedia(),
+      _FakeInjector(),
+      passwordCredential: 'hash-abc',
+    );
+    await service.initialize();
+    addTearDown(service.dispose);
+
+    await service.handleSignal(
+      _peer,
+      _requestSignal(silent: true).toPayloadB64(),
+    );
+    expect(service.current, isNull);
+    expect(_sent(transport).single.reason, '远程控制密码错误');
+
+    transport.calls.clear();
+    await service.handleSignal(
+      _peer,
+      _requestSignal(sid: 'r-2', credential: 'wrong', silent: true)
+          .toPayloadB64(),
+    );
+    expect(service.current, isNull);
+    expect(_sent(transport).single.reason, '远程控制密码错误');
+  });
+
+  test('聊天发起的远控即使本机有密码也仍需确认', () async {
+    final _FakeTransport transport = _FakeTransport();
+    final RemoteControlService service = _service(
+      transport,
+      _FakeMedia(),
+      _FakeInjector(),
+      passwordCredential: 'hash-abc',
+    );
+    await service.initialize();
+    addTearDown(service.dispose);
+
+    await service.handleSignal(_peer, _requestSignal().toPayloadB64());
+    expect(service.current?.state, RemoteState.incoming);
+    expect(service.current?.isHost, isTrue);
+    expect(_sent(transport), isEmpty);
+  });
+
+  test('被控端收到正确密码校验值后静默接受台账远控', () async {
+    final _FakeTransport transport = _FakeTransport();
+    final RemoteControlService service = _service(
+      transport,
+      _FakeMedia(),
+      _FakeInjector(),
+      passwordCredential: 'hash-abc',
+    );
+    await service.initialize();
+    addTearDown(service.dispose);
+
+    await service.handleSignal(
+      _peer,
+      _requestSignal(credential: 'hash-abc', silent: true).toPayloadB64(),
+    );
+    expect(service.current?.isHost, isTrue);
+    expect(service.current?.state, RemoteState.connecting);
+    expect(
+      _sent(transport).any((RemoteSignal s) => s.type == RemoteSignalType.accept),
+      isTrue,
+    );
+  });
+
   test('控制端完成 offer/answer 后进入 active，并能发送输入', () async {
     final _FakeTransport transport = _FakeTransport();
     final _FakeMedia media = _FakeMedia();
@@ -456,6 +533,130 @@ void main() {
     ));
     expect(media.sentControls, hasLength(1));
     expect(media.sentPointers, hasLength(1));
+  });
+
+  test('ICE 失败收尾时向对端广播 end，避免状态漂移', () async {
+    final _FakeTransport transport = _FakeTransport();
+    final _FakeMedia media = _FakeMedia();
+    final RemoteControlService service =
+        _service(transport, media, _FakeInjector());
+    await service.initialize();
+    addTearDown(service.dispose);
+
+    await service.request(_peer, peerName: '对端');
+    final RemoteSignal request = _sent(transport).single;
+    await service.handleSignal(
+      _peer,
+      RemoteSignal(
+        type: RemoteSignalType.accept,
+        sid: request.sid,
+        token: 'token-1',
+        permissions: RemotePermissions.all,
+        displays: const <RemoteDisplay>[
+          RemoteDisplay(
+            id: '1',
+            name: '屏幕 1',
+            index: 0,
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+            primary: true,
+          ),
+        ],
+        displayId: '1',
+      ).toPayloadB64(),
+    );
+    await service.handleSignal(
+      _peer,
+      RemoteSignal(
+        type: RemoteSignalType.answer,
+        sid: request.sid,
+        token: 'token-1',
+        sdp: 'answer-sdp',
+      ).toPayloadB64(),
+    );
+    expect(service.current?.state, RemoteState.active);
+
+    // 媒体面 failed 先进入 reconnecting，两次重连耗尽后 _fail 必须通知对端。
+    final int before = _sent(transport).length;
+    media.emitState('RTCPeerConnectionStateFailed');
+    await Future<void>.delayed(Duration.zero);
+    expect(service.current?.state, RemoteState.reconnecting);
+    media.emitState('RTCPeerConnectionStateFailed');
+    await Future<void>.delayed(Duration.zero);
+    media.emitState('RTCPeerConnectionStateFailed');
+    await Future<void>.delayed(Duration.zero);
+    expect(service.current?.state, RemoteState.failed);
+    final List<RemoteSignal> after = _sent(transport);
+    expect(after.length, greaterThan(before));
+    expect(
+      after.any((RemoteSignal s) =>
+          s.type == RemoteSignalType.end && s.sid == request.sid),
+      isTrue,
+    );
+  });
+
+  test('ICE 重连成功后恢复暂停态，避免界面误显示控制中', () async {
+    final _FakeTransport transport = _FakeTransport();
+    final _FakeMedia media = _FakeMedia();
+    final RemoteControlService service =
+        _service(transport, media, _FakeInjector());
+    await service.initialize();
+    addTearDown(service.dispose);
+
+    await service.request(_peer, peerName: '对端');
+    final RemoteSignal request = _sent(transport).single;
+    await service.handleSignal(
+      _peer,
+      RemoteSignal(
+        type: RemoteSignalType.accept,
+        sid: request.sid,
+        token: 'token-1',
+        permissions: RemotePermissions.all,
+        displays: const <RemoteDisplay>[
+          RemoteDisplay(
+            id: '1',
+            name: '屏幕 1',
+            index: 0,
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+            primary: true,
+          ),
+        ],
+        displayId: '1',
+      ).toPayloadB64(),
+    );
+    await service.handleSignal(
+      _peer,
+      RemoteSignal(
+        type: RemoteSignalType.answer,
+        sid: request.sid,
+        token: 'token-1',
+        sdp: 'answer-sdp',
+      ).toPayloadB64(),
+    );
+    expect(service.current?.state, RemoteState.active);
+
+    await service.handleSignal(
+      _peer,
+      RemoteSignal(
+        type: RemoteSignalType.pause,
+        sid: request.sid,
+        token: 'token-1',
+      ).toPayloadB64(),
+    );
+    expect(service.current?.state, RemoteState.paused);
+
+    media.emitState('RTCIceConnectionStateDisconnected');
+    await Future<void>.delayed(Duration.zero);
+    expect(service.current?.state, RemoteState.reconnecting);
+
+    media.emitState('RTCIceConnectionStateConnected');
+    await Future<void>.delayed(Duration.zero);
+    expect(service.current?.state, RemoteState.paused);
   });
 
   test('Android 可作为被控端接受请求并启动采集', () async {

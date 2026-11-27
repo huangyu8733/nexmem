@@ -128,6 +128,11 @@ class ChatStore extends ChangeNotifier {
   }
 
   final List<ChatMessage> _messages = <ChatMessage>[];
+
+  /// 进度事件可能早于消息落库 / ID 替换（内核 msg_uuid 与乐观 ID 不同），
+  /// 先按 ID 暂存，消息出现时再回填，避免发送与接收两端进度丢失。
+  final Map<String, (int, int)> _pendingProgress = <String, (int, int)>{};
+
   final Random _random = Random.secure();
 
   List<ChatMessage> get messages => List<ChatMessage>.unmodifiable(_messages);
@@ -228,6 +233,8 @@ class ChatStore extends ChangeNotifier {
   void setTransferProgress(String id, int done, int total) {
     final int index = _indexOf(id);
     if (index < 0) {
+      // 接收端首条进度可能先于 message.new，发送端进度可能先于 ID 替换。
+      _pendingProgress[id] = (done, total);
       return;
     }
     final ChatMessage message = _messages[index];
@@ -253,11 +260,17 @@ class ChatStore extends ChangeNotifier {
     } else {
       final ChatMessage local = _messages[index];
       final bool sending = local.status == MessageStatus.sending;
+      final bool transferring = local.transferTotal > 0 &&
+          local.transferDone < local.transferTotal;
+      final bool incomingCompleted = message.transferTotal > 0 &&
+          message.transferDone >= message.transferTotal;
+      final bool keepLocal = !incomingCompleted && (sending || transferring);
       _messages[index] = message.copyWith(
         status: local.status,
-        // 传输中的文件进度只由 transfer.progress 推进，避免回包把进度清零。
-        transferDone: sending ? local.transferDone : message.transferDone,
-        transferTotal: sending ? local.transferTotal : message.transferTotal,
+        // 收发两端传输中的进度只由 transfer.progress 推进，避免回包清零；
+        // 但已完成状态的回包应当生效，否则进度条会一直卡在 99%。
+        transferDone: keepLocal ? local.transferDone : message.transferDone,
+        transferTotal: keepLocal ? local.transferTotal : message.transferTotal,
       );
     }
     notifyListeners();
@@ -374,8 +387,10 @@ class ChatStore extends ChangeNotifier {
         setPeerOfflineStorageDisabled(true);
       }
       _setStatus(currentId, MessageStatus.failed);
+      rethrow;
     } catch (_) {
       _setStatus(currentId, MessageStatus.failed);
+      rethrow;
     }
     return byId(currentId) ?? message;
   }
@@ -416,21 +431,28 @@ class ChatStore extends ChangeNotifier {
 
   /// 按 `sent_at` 升序插入；同 ID 覆盖，保证重复投递只留一条。
   void _insert(ChatMessage message) {
-    final int existing = _indexOf(message.id);
+    final (int, int)? pending = _pendingProgress.remove(message.id);
+    final ChatMessage incoming = pending == null
+        ? message
+        : message.copyWith(
+            transferDone: pending.$1,
+            transferTotal: pending.$2,
+          );
+    final int existing = _indexOf(incoming.id);
     if (existing >= 0) {
-      _messages[existing] = message;
+      _messages[existing] = incoming;
       return;
     }
     int low = 0;
     int high = _messages.length;
     while (low < high) {
       final int mid = (low + high) >> 1;
-      if (_messages[mid].sentAt.isAfter(message.sentAt)) {
+      if (_messages[mid].sentAt.isAfter(incoming.sentAt)) {
         high = mid;
       } else {
         low = mid + 1;
       }
     }
-    _messages.insert(low, message);
+    _messages.insert(low, incoming);
   }
 }

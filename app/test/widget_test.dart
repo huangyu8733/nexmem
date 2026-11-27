@@ -48,6 +48,29 @@ class _ProfileTransport implements CoreTransport {
   Future<void> close() async {}
 }
 
+/// 带一条「已发出的好友申请」的内核替身，用于验证社交中心列表排版。
+class _SocialShellTransport extends _ProfileTransport {
+  final List<Map<String, dynamic>> friends = <Map<String, dynamic>>[];
+
+  @override
+  Future<Map<String, dynamic>> call(
+    String method, {
+    Map<String, dynamic>? params,
+    Duration? timeout,
+  }) async {
+    switch (method) {
+      case 'friend.request.list':
+        return <String, dynamic>{'items': friends};
+      case 'group.join.list':
+        return <String, dynamic>{'items': <dynamic>[]};
+      case 'notification.list':
+        return <String, dynamic>{'items': <dynamic>[], 'unread': 0};
+      default:
+        return super.call(method, params: params, timeout: timeout);
+    }
+  }
+}
+
 Future<void> _pumpAt(WidgetTester tester, Size size) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
@@ -116,11 +139,12 @@ void main() {
     await tester.tap(find.text('我的'));
     await tester.pumpAndSettle();
     expect(find.text('个人资料'), findsOneWidget);
-    expect(find.text('账号与安全'), findsNothing);
+    expect(find.text('社交中心'), findsOneWidget);
+    expect(find.text('账号与安全'), findsOneWidget);
 
     await tester.tap(find.text('设置'));
     await tester.pumpAndSettle();
-    expect(find.text('账号与安全'), findsOneWidget);
+    expect(find.text('账号与安全'), findsNothing);
   });
 
   testWidgets('桌面点击「我的」时右栏展示个人详情而非空占位',
@@ -495,6 +519,104 @@ void main() {
       find.byKey(const ValueKey<String>('language-English')),
       findsOneWidget,
       reason: '选择语言后语言面板不应消失',
+    );
+  });
+
+  testWidgets('桌面「我的 → 社交中心」在右栏铺满展示，不出现模态浮层',
+      (WidgetTester tester) async {
+    final _SocialShellTransport transport = _SocialShellTransport();
+    transport.friends.add(<String, dynamic>{
+      'id': 'f1',
+      'from': 'a' * 64,
+      'to': 'b' * 64,
+      'message': '',
+      'status': 1,
+      'direction': 'out',
+      'created_at': 1,
+    });
+    await _pumpWithSessionAt(
+      tester,
+      const Size(1280, 800),
+      CoreSession(transport),
+    );
+
+    await tester.tap(find.byTooltip('我的'));
+    await tester.pumpAndSettle();
+    final int barriersBefore = find.byType(ModalBarrier).evaluate().length;
+    await tester.tap(find.byKey(const ValueKey<String>('settings-social-hub')));
+    await tester.pumpAndSettle();
+
+    // 社交中心内容直接铺在右栏：标题、页签、好友申请卡片都在列表内。
+    expect(find.text('社交中心'), findsWidgets);
+    expect(find.byType(TabBar), findsOneWidget);
+    expect(find.text('好友申请'), findsOneWidget);
+    expect(find.text('来自 {0}'), findsNothing);
+    expect(find.textContaining('发给 '), findsOneWidget);
+    expect(find.text('申请添加你为好友'), findsOneWidget);
+    expect(
+      find.ancestor(
+        of: find.text('申请添加你为好友'),
+        matching: find.byType(ListView),
+      ),
+      findsWidgets,
+      reason: '好友申请卡片应在列表流内，不能成为居中浮层',
+    );
+
+    // 打开面板不新增模态 barrier，也没有 Dialog 外壳遮住联系人与聊天区。
+    expect(find.byType(Dialog), findsNothing);
+    expect(
+      find.byType(ModalBarrier).evaluate().length,
+      barriersBefore,
+      reason: '打开社交中心不应叠加新的灰色遮罩',
+    );
+  });
+
+  testWidgets('窄屏「我的 → 社交中心」使用普通全屏页，不出现模态浮层',
+      (WidgetTester tester) async {
+    final _SocialShellTransport transport = _SocialShellTransport();
+    transport.friends.add(<String, dynamic>{
+      'id': 'f1',
+      'from': 'a' * 64,
+      'to': 'b' * 64,
+      'message': '',
+      'status': 1,
+      'direction': 'out',
+      'created_at': 1,
+    });
+    await _pumpWithSessionAt(
+      tester,
+      const Size(390, 844),
+      CoreSession(transport),
+    );
+
+    await tester.tap(find.text('我的'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('settings-social-hub')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('好友申请'), findsOneWidget);
+    expect(find.text('申请添加你为好友'), findsOneWidget);
+    expect(find.byType(Dialog), findsNothing);
+  });
+
+  testWidgets('桌面「我的 → 账号与安全」也在右栏内嵌展示',
+      (WidgetTester tester) async {
+    await _pumpWithSessionAt(
+      tester,
+      const Size(1280, 800),
+      CoreSession(_ProfileTransport()),
+    );
+
+    await tester.tap(find.byTooltip('我的'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('settings-account')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('账号与安全'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey<String>('profile-view-name')),
+      findsNothing,
+      reason: '点击账号与安全后不应仍停留在个人资料卡',
     );
   });
 }

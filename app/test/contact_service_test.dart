@@ -251,6 +251,10 @@ void main() {
     ));
     await tester.pump();
     await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('contact-friends-entry')),
+    );
+    await tester.pump();
 
     expect(service.calls, <String>['list']);
     expect(find.text('老王'), findsOneWidget);
@@ -264,6 +268,10 @@ void main() {
       home: Scaffold(body: ContactsPage(service: service)),
     ));
     await tester.pump();
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('contact-friends-entry')),
+    );
     await tester.pump();
     expect(find.byKey(const ValueKey<String>('contact-empty')), findsOneWidget);
 

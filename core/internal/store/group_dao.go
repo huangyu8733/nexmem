@@ -22,6 +22,10 @@ type Group struct {
 	Alias string
 	// AllowFriendAdd 是群设置：是否允许成员互相加好友（默认关闭）。
 	AllowFriendAdd bool
+	// LevelsEnabled 是群等级总开关（默认关闭）。
+	LevelsEnabled bool
+	// LevelsJSON 是群等级配置的 JSON 数组，落库前经字段级封装加密；空串表示未配置。
+	LevelsJSON string
 }
 
 // GroupMember 是 group_members 表的一行。
@@ -30,6 +34,10 @@ type GroupMember struct {
 	AccountPub []byte
 	Role       int
 	JoinedAt   int64
+	// Nickname 是群内可见的本群称呼；空串表示未设置。
+	Nickname string
+	// LevelID 是群等级配置中的等级 ID；空串表示未设置。
+	LevelID string
 }
 
 // PutGroup 写入或更新群记录。
@@ -49,10 +57,15 @@ func (d *DAO) PutGroup(ctx context.Context, g Group) error {
 	if err != nil {
 		return fmt.Errorf("加密群备注: %w", err)
 	}
+	levelsJSON, err := d.sealField(g.LevelsJSON)
+	if err != nil {
+		return fmt.Errorf("加密群等级配置: %w", err)
+	}
 	_, err = d.db.ExecContext(ctx, `
 		INSERT INTO groups
-			(group_id, title, my_role, key_version, group_key_enc, storage_cfg_enc, offline_enabled, announcement, alias)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(group_id, title, my_role, key_version, group_key_enc, storage_cfg_enc, offline_enabled, announcement, alias,
+			 levels_enabled, levels_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(group_id) DO UPDATE SET
 			title = excluded.title,
 			my_role = excluded.my_role,
@@ -67,10 +80,18 @@ func (d *DAO) PutGroup(ctx context.Context, g Group) error {
 			alias = CASE
 				WHEN excluded.alias <> '' THEN excluded.alias
 				ELSE groups.alias
+			END,
+			levels_enabled = CASE
+				WHEN excluded.levels_json <> '' THEN excluded.levels_enabled
+				ELSE groups.levels_enabled
+			END,
+			levels_json = CASE
+				WHEN excluded.levels_json <> '' THEN excluded.levels_json
+				ELSE groups.levels_json
 			END`,
 		g.GroupID, nullableText(title), g.MyRole, g.KeyVersion,
 		g.GroupKeyEnc, nullableBytes(g.StorageCfgEnc), boolToInt(g.OfflineEnabled),
-		announcement, alias)
+		announcement, alias, boolToInt(g.LevelsEnabled), levelsJSON)
 	if err != nil {
 		return fmt.Errorf("写入群 %x: %w", g.GroupID, err)
 	}
@@ -208,18 +229,83 @@ func (d *DAO) SetGroupAlias(ctx context.Context, groupID []byte, alias string) e
 	return nil
 }
 
+// SetGroupLevels 覆盖群等级配置（enabled 为总开关，levelsJSON 为等级数组 JSON；空串表示未配置）。
+// 群不存在返回 ErrNotFound。
+func (d *DAO) SetGroupLevels(ctx context.Context, groupID []byte, enabled bool, levelsJSON string) error {
+	sealed, err := d.sealField(levelsJSON)
+	if err != nil {
+		return fmt.Errorf("加密群等级配置: %w", err)
+	}
+	res, err := d.db.ExecContext(ctx,
+		`UPDATE groups SET levels_enabled = ?, levels_json = ? WHERE group_id = ?`,
+		boolToInt(enabled), sealed, groupID)
+	if err != nil {
+		return fmt.Errorf("写入群等级配置 %x: %w", groupID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetMemberProfile 覆盖成员的本群称呼与等级 ID（空串表示清除）；成员不存在返回 ErrNotFound。
+func (d *DAO) SetMemberProfile(ctx context.Context, groupID, account []byte, nickname, levelID string) error {
+	res, err := d.db.ExecContext(ctx, `
+		UPDATE group_members SET nickname = ?, level_id = ?
+		WHERE group_id = ? AND account_pub = ?`, nickname, levelID, groupID, account)
+	if err != nil {
+		return fmt.Errorf("写入成员本群资料 %x: %w", account, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// GetGroupMemberProfile 读取成员的本群称呼与等级 ID；成员不存在返回 ErrNotFound。
+func (d *DAO) GetGroupMemberProfile(ctx context.Context, groupID, account []byte) (nickname, levelID string, err error) {
+	err = d.db.QueryRowContext(ctx, `
+		SELECT IFNULL(nickname, ''), IFNULL(level_id, '')
+		FROM group_members WHERE group_id = ? AND account_pub = ?`, groupID, account).
+		Scan(&nickname, &levelID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", ErrNotFound
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("读取成员本群资料 %x: %w", account, err)
+	}
+	return nickname, levelID, nil
+}
+
+// ClearMemberLevels 清空群内全部成员的等级 ID；用于关闭群等级总开关。
+func (d *DAO) ClearMemberLevels(ctx context.Context, groupID []byte) error {
+	if _, err := d.db.ExecContext(ctx,
+		`UPDATE group_members SET level_id = '' WHERE group_id = ?`, groupID); err != nil {
+		return fmt.Errorf("清空成员等级 %x: %w", groupID, err)
+	}
+	return nil
+}
+
 // GetGroup 按 group_id 读取群，不存在返回 ErrNotFound。
 func (d *DAO) GetGroup(ctx context.Context, groupID []byte) (*Group, error) {
 	var g Group
-	var offline, allowFriend int
+	var offline, allowFriend, levelsEnabled int
 	err := d.db.QueryRowContext(ctx, `
 		SELECT group_id, IFNULL(title, ''), my_role, key_version,
 		       group_key_enc, storage_cfg_enc, offline_enabled, IFNULL(announcement, ''),
-		       IFNULL(alias, ''), allow_friend_add
+		       IFNULL(alias, ''), allow_friend_add, levels_enabled, IFNULL(levels_json, '')
 		FROM groups WHERE group_id = ?`, groupID).
 		Scan(&g.GroupID, &g.Title, &g.MyRole, &g.KeyVersion,
 			&g.GroupKeyEnc, &g.StorageCfgEnc, &offline, &g.Announcement, &g.Alias,
-			&allowFriend)
+			&allowFriend, &levelsEnabled, &g.LevelsJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -228,13 +314,14 @@ func (d *DAO) GetGroup(ctx context.Context, groupID []byte) (*Group, error) {
 	}
 	g.OfflineEnabled = offline != 0
 	g.AllowFriendAdd = allowFriend != 0
+	g.LevelsEnabled = levelsEnabled != 0
 	if err := d.decryptGroupFields(&g); err != nil {
 		return nil, err
 	}
 	return &g, nil
 }
 
-// decryptGroupFields 解封群的三个明文元数据字段（标题/公告/本机备注）。
+// decryptGroupFields 解封群的明文元数据字段（标题/公告/本机备注/等级配置 JSON）。
 func (d *DAO) decryptGroupFields(g *Group) error {
 	title, err := d.openField(g.Title)
 	if err != nil {
@@ -248,7 +335,11 @@ func (d *DAO) decryptGroupFields(g *Group) error {
 	if err != nil {
 		return fmt.Errorf("解封群备注: %w", err)
 	}
-	g.Title, g.Announcement, g.Alias = title, announcement, alias
+	levelsJSON, err := d.openField(g.LevelsJSON)
+	if err != nil {
+		return fmt.Errorf("解封群等级配置: %w", err)
+	}
+	g.Title, g.Announcement, g.Alias, g.LevelsJSON = title, announcement, alias, levelsJSON
 	return nil
 }
 
@@ -257,7 +348,7 @@ func (d *DAO) ListGroups(ctx context.Context) ([]Group, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT group_id, IFNULL(title, ''), my_role, key_version,
 		       group_key_enc, storage_cfg_enc, offline_enabled, IFNULL(announcement, ''),
-		       IFNULL(alias, ''), allow_friend_add
+		       IFNULL(alias, ''), allow_friend_add, levels_enabled, IFNULL(levels_json, '')
 		FROM groups ORDER BY title, group_id`)
 	if err != nil {
 		return nil, fmt.Errorf("查询群列表: %w", err)
@@ -267,14 +358,15 @@ func (d *DAO) ListGroups(ctx context.Context) ([]Group, error) {
 	var out []Group
 	for rows.Next() {
 		var g Group
-		var offline, allowFriend int
+		var offline, allowFriend, levelsEnabled int
 		if err := rows.Scan(&g.GroupID, &g.Title, &g.MyRole, &g.KeyVersion,
 			&g.GroupKeyEnc, &g.StorageCfgEnc, &offline, &g.Announcement, &g.Alias,
-			&allowFriend); err != nil {
+			&allowFriend, &levelsEnabled, &g.LevelsJSON); err != nil {
 			return nil, fmt.Errorf("扫描群: %w", err)
 		}
 		g.OfflineEnabled = offline != 0
 		g.AllowFriendAdd = allowFriend != 0
+		g.LevelsEnabled = levelsEnabled != 0
 		if err := d.decryptGroupFields(&g); err != nil {
 			return nil, err
 		}
@@ -315,6 +407,8 @@ func (d *DAO) DeleteGroup(ctx context.Context, groupID []byte) error {
 }
 
 // ReplaceMembers 整体替换群成员列表（事务内先删后插）。
+// 密钥轮换、成员表同步等内部调用只带角色信息，必须按 account 保留已有的
+// 本群称呼与等级 ID，否则一次轮换就会清空管理员设置的成员资料。
 func (d *DAO) ReplaceMembers(ctx context.Context, groupID []byte, members []GroupMember) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -322,18 +416,48 @@ func (d *DAO) ReplaceMembers(ctx context.Context, groupID []byte, members []Grou
 	}
 	defer tx.Rollback()
 
+	type profile struct {
+		nickname string
+		levelID  string
+	}
+	profiles := make(map[string]profile)
+	rows, err := tx.QueryContext(ctx, `
+		SELECT account_pub, IFNULL(nickname, ''), IFNULL(level_id, '')
+		FROM group_members WHERE group_id = ?`, groupID)
+	if err != nil {
+		return fmt.Errorf("读取群成员资料 %x: %w", groupID, err)
+	}
+	for rows.Next() {
+		var pub []byte
+		var p profile
+		if err := rows.Scan(&pub, &p.nickname, &p.levelID); err != nil {
+			rows.Close()
+			return fmt.Errorf("扫描群成员资料: %w", err)
+		}
+		profiles[string(pub)] = p
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("遍历群成员资料: %w", err)
+	}
+	rows.Close()
+
 	if _, err := tx.ExecContext(ctx, `DELETE FROM group_members WHERE group_id = ?`, groupID); err != nil {
 		return fmt.Errorf("清空群成员 %x: %w", groupID, err)
 	}
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO group_members (group_id, account_pub, role, joined_at)
-		VALUES (?, ?, ?, ?)`)
+		INSERT INTO group_members (group_id, account_pub, role, joined_at, nickname, level_id)
+		VALUES (?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, m := range members {
-		if _, err := stmt.ExecContext(ctx, groupID, m.AccountPub, m.Role, m.JoinedAt); err != nil {
+		nickname, levelID := m.Nickname, m.LevelID
+		if p, ok := profiles[string(m.AccountPub)]; ok {
+			nickname, levelID = p.nickname, p.levelID
+		}
+		if _, err := stmt.ExecContext(ctx, groupID, m.AccountPub, m.Role, m.JoinedAt, nickname, levelID); err != nil {
 			return fmt.Errorf("写入群成员 %x: %w", m.AccountPub, err)
 		}
 	}
@@ -343,7 +467,7 @@ func (d *DAO) ReplaceMembers(ctx context.Context, groupID []byte, members []Grou
 // ListMembers 返回群成员，按加入时间排序。
 func (d *DAO) ListMembers(ctx context.Context, groupID []byte) ([]GroupMember, error) {
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT group_id, account_pub, role, joined_at
+		SELECT group_id, account_pub, role, joined_at, IFNULL(nickname, ''), IFNULL(level_id, '')
 		FROM group_members WHERE group_id = ? ORDER BY joined_at, account_pub`, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("查询群成员 %x: %w", groupID, err)
@@ -353,7 +477,7 @@ func (d *DAO) ListMembers(ctx context.Context, groupID []byte) ([]GroupMember, e
 	var out []GroupMember
 	for rows.Next() {
 		var m GroupMember
-		if err := rows.Scan(&m.GroupID, &m.AccountPub, &m.Role, &m.JoinedAt); err != nil {
+		if err := rows.Scan(&m.GroupID, &m.AccountPub, &m.Role, &m.JoinedAt, &m.Nickname, &m.LevelID); err != nil {
 			return nil, fmt.Errorf("扫描群成员: %w", err)
 		}
 		out = append(out, m)

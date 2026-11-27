@@ -21,8 +21,11 @@ import 'device_list_page.dart';
 import '../group/group_list_page.dart';
 import '../group/group_service.dart';
 
-/// 通讯录（P1-18 / P2-06 / P4-13）：好友 / 群聊 / 我的设备分组，
-/// 好友按 A–Z 分组并带字母索引，「群聊」进入本机群列表。
+/// 通讯录（P1-18 / P2-06 / P4-13）：好友 / 群聊 / 我的设备分组。
+///
+/// 「好友」按 QQ 式交互：点击展开下方好友分组，分组可再展开/收起，
+/// 点击好友通过 [onOpenContactChat] 在右侧打开聊天；分组支持新建、
+/// 重命名、删除与移动好友，底层走内核 `contact.setGroup`。
 ///
 /// 传入 [service] 时从内核 `contact.list` 加载好友，并支持添加好友、备注与拉黑；
 /// 传入 [groups] 时「群聊」分组可进入 `group.list` 群列表；
@@ -40,6 +43,7 @@ class ContactsPage extends StatefulWidget {
     this.presence,
     this.onOpenPane,
     this.onContactsChanged,
+    this.onToggleFriends,
   });
 
   final List<Contact> friends;
@@ -72,22 +76,39 @@ class ContactsPage extends StatefulWidget {
   /// 好友列表加载完成后通知外层刷新右栏内容。
   final VoidCallback? onContactsChanged;
 
+  /// 点击「好友」展开/收起左栏分组时通知壳层：非聊天状态下右栏回到好友面板。
+  final VoidCallback? onToggleFriends;
+
   @override
   State<ContactsPage> createState() => ContactsPageState();
 }
 
 class ContactsPageState extends State<ContactsPage> {
-  final Map<String, GlobalKey> _sectionKeys = <String, GlobalKey>{};
   final TextEditingController _search = TextEditingController();
   late List<Contact> _friends = List<Contact>.of(widget.friends);
   bool _loading = false;
   String? _error;
+
+  /// QQ 式：点「好友」才在下方展开分组列表。
+  bool _friendsExpanded = false;
+
+  /// 收起的分组名（含本地化后的默认分组名）。
+  final Set<String> _collapsedGroups = <String>{};
+
+  /// QQ 式：点「群聊」才在下方展开群列表。
+  bool _groupsExpanded = false;
+  List<GroupSummary> _groupItems = const <GroupSummary>[];
+  bool _groupsLoading = false;
+  String? _groupsError;
 
   @override
   void initState() {
     super.initState();
     if (widget.service != null) {
       unawaited(_reload());
+    }
+    if (widget.groups != null) {
+      unawaited(_reloadGroups());
     }
   }
 
@@ -105,6 +126,9 @@ class ContactsPageState extends State<ContactsPage> {
       if (oldWidget.service != widget.service) {
         unawaited(_reload());
       }
+    }
+    if (oldWidget.groups != widget.groups) {
+      unawaited(_reloadGroups());
     }
   }
 
@@ -145,21 +169,39 @@ class ContactsPageState extends State<ContactsPage> {
     }
   }
 
-  GlobalKey _keyFor(String letter) => _sectionKeys.putIfAbsent(
-    letter,
-    () => GlobalKey(debugLabel: 'contact-$letter'),
-  );
+  /// 供壳层在建群/退群后刷新左栏群列表。
+  Future<void> reloadGroups() => _reloadGroups();
 
-  Future<void> _jumpTo(String letter) async {
-    final BuildContext? target = _keyFor(letter).currentContext;
-    if (target == null) {
+  Future<void> _reloadGroups() async {
+    final GroupService? service = widget.groups;
+    if (service == null) {
       return;
     }
-    await Scrollable.ensureVisible(
-      target,
-      duration: const Duration(milliseconds: 200),
-      alignment: 0.05,
-    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _groupsLoading = true;
+      _groupsError = null;
+    });
+    try {
+      final List<GroupSummary> items = await service.list();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _groupItems = items;
+        _groupsLoading = false;
+      });
+    } on NexmemException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _groupsLoading = false;
+        _groupsError = error.message.isEmpty ? error.code : error.message;
+      });
+    }
   }
 
   /// 供右栏好友资料页回写备注/分组等变更。
@@ -172,6 +214,256 @@ class ContactsPageState extends State<ContactsPage> {
       ];
     });
     widget.onContactsChanged?.call();
+  }
+
+  void _fail(String message) {
+    if (!mounted) {
+      return;
+    }
+    setState(() => _error = message);
+  }
+
+  /// 分组名与 groupFriends 的归类规则保持一致。
+  String _groupOf(Contact contact) {
+    final String name = contact.groupName.trim();
+    return name.isEmpty ? context.t('我的好友') : name;
+  }
+
+  /// 本地乐观更新，再逐条写内核；失败时回滚并展示错误。
+  Future<void> _setGroupFor(Iterable<Contact> targets, String group) async {
+    final List<Contact> list = targets.toList();
+    if (list.isEmpty) {
+      return;
+    }
+    final Map<String, String> changes = <String, String>{
+      for (final Contact contact in list) contact.id: group,
+    };
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _friends = <Contact>[
+        for (final Contact contact in _friends)
+          changes.containsKey(contact.id)
+              ? contact.copyWith(groupName: group)
+              : contact,
+      ];
+      _error = null;
+    });
+    widget.onContactsChanged?.call();
+    final ContactService? service = widget.service;
+    if (service == null) {
+      return;
+    }
+    try {
+      for (final Contact contact in list) {
+        await service.setGroup(contact.id, group);
+      }
+    } on NexmemException catch (error) {
+      _fail(error.message.isEmpty ? error.code : error.message);
+      await reload();
+    }
+  }
+
+  Future<void> _createGroup() async {
+    final String defaultGroup = context.t('我的好友');
+    final String tooLong = context.t('好友分组名最多 32 字');
+    final String emptyName = context.t('分组名不能为空');
+    final TextEditingController name = TextEditingController();
+    final Set<String> selected = <String>{};
+    final String? result = await showPaneDialog<String>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        title: Text(context.t('新建分组')),
+        content: StatefulBuilder(
+          builder: (BuildContext dialogCtx, StateSetter setDialogState) =>
+              ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 360),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  TextField(
+                    key: const ValueKey<String>('new-group-name-field'),
+                    controller: name,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: context.t('分组名称'),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: NexmemMetrics.space12),
+                  Text(context.t('选择要加入的好友')),
+                  const SizedBox(height: NexmemMetrics.space4),
+                  for (final Contact contact in _friends)
+                    CheckboxListTile(
+                      key: ValueKey<String>('new-group-contact-${contact.id}'),
+                      dense: true,
+                      title: Text(contact.name),
+                      value: selected.contains(contact.id),
+                      onChanged: (bool? checked) => setDialogState(() {
+                        if (checked == true) {
+                          selected.add(contact.id);
+                        } else {
+                          selected.remove(contact.id);
+                        }
+                      }),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(context.t('取消')),
+          ),
+          TextButton(
+            key: const ValueKey<String>('new-group-submit'),
+            onPressed: () => Navigator.of(ctx).pop(name.text.trim()),
+            child: Text(context.t('新建分组')),
+          ),
+        ],
+      ),
+    );
+    if (result == null || result.isEmpty) {
+      return;
+    }
+    if (result.runes.length > 32) {
+      _fail(tooLong);
+      return;
+    }
+    if (result == defaultGroup) {
+      _fail(emptyName);
+      return;
+    }
+    await _setGroupFor(
+      _friends.where((Contact contact) => selected.contains(contact.id)),
+      result,
+    );
+  }
+
+  Future<void> _renameGroup(String oldName) async {
+    final String tooLong = context.t('好友分组名最多 32 字');
+    final TextEditingController name =
+        TextEditingController(text: oldName);
+    final String? result = await showPaneDialog<String>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        title: Text(context.t('重命名分组')),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: TextField(
+            key: const ValueKey<String>('rename-group-name-field'),
+            controller: name,
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: context.t('分组名称'),
+              isDense: true,
+            ),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(context.t('取消')),
+          ),
+          TextButton(
+            key: const ValueKey<String>('rename-group-submit'),
+            onPressed: () => Navigator.of(ctx).pop(name.text.trim()),
+            child: Text(context.t('保存')),
+          ),
+        ],
+      ),
+    );
+    if (result == null || result.isEmpty || result == oldName) {
+      return;
+    }
+    if (result.runes.length > 32) {
+      _fail(tooLong);
+      return;
+    }
+    await _setGroupFor(
+      _friends.where((Contact contact) => _groupOf(contact) == oldName),
+      result,
+    );
+  }
+
+  Future<void> _deleteGroup(String name) async {
+    final bool? confirmed = await showPaneDialog<bool>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        title: Text(context.t('删除分组')),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Text(
+            context.t('删除分组会将成员移回默认分组，不会删除好友'),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(context.t('取消')),
+          ),
+          TextButton(
+            key: const ValueKey<String>('delete-group-submit'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(context.t('删除')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    await _setGroupFor(
+      _friends.where((Contact contact) => _groupOf(contact) == name),
+      '',
+    );
+    if (mounted) {
+      _collapsedGroups.remove(name);
+    }
+  }
+
+  Future<void> _moveFriend(Contact contact) async {
+    final String defaultGroup = context.t('我的好友');
+    final List<String> names = <String>{
+      defaultGroup,
+      for (final Contact item in _friends)
+        if (item.groupName.trim().isNotEmpty) item.groupName.trim(),
+    }.toList()
+      ..sort((String a, String b) {
+        if (a == defaultGroup) {
+          return -1;
+        }
+        if (b == defaultGroup) {
+          return 1;
+        }
+        return a.compareTo(b);
+      });
+    final String? target = await showPaneDialog<String>(
+      context: context,
+      builder: (BuildContext ctx) => SimpleDialog(
+        title: Text(context.t('移动好友')),
+        children: <Widget>[
+          for (final String group in names)
+            SimpleDialogOption(
+              key: ValueKey<String>('move-to-$group'),
+              onPressed: () => Navigator.of(ctx).pop(group),
+              child: Text(group),
+            ),
+        ],
+      ),
+    );
+    if (target == null) {
+      return;
+    }
+    await _setGroupFor(
+      <Contact>[contact],
+      target == defaultGroup ? '' : target,
+    );
   }
 
   /// 好友条目默认直接发起聊天；详情页仍可通过条目上的 info 按钮进入。
@@ -229,6 +521,8 @@ class ContactsPageState extends State<ContactsPage> {
     if (groups == null) {
       return;
     }
+    setState(() => _groupsExpanded = !_groupsExpanded);
+    unawaited(reloadGroups());
     final void Function(String, {Object? data})? onOpenPane = widget.onOpenPane;
     if (onOpenPane != null) {
       onOpenPane('群聊');
@@ -295,6 +589,12 @@ class ContactsPageState extends State<ContactsPage> {
   }
 
   List<Widget> get _actions => <Widget>[
+    IconButton(
+      key: const ValueKey<String>('contact-new-group-button'),
+      tooltip: context.t('新建分组'),
+      icon: const Icon(Icons.create_new_folder_outlined, size: 20),
+      onPressed: _createGroup,
+    ),
     if (widget.session != null)
       IconButton(
         key: const ValueKey<String>('contact-social-hub-button'),
@@ -326,23 +626,38 @@ class ContactsPageState extends State<ContactsPage> {
   ];
 
   /// 本地通讯录筛选：匹配备注名、分组与账号短串/完整账号。
-  List<(String, List<Contact>)> _filteredGroups() {
+  List<Contact> _filteredFriends() {
     final String query = _search.text.trim().toLowerCase();
     if (query.isEmpty) {
-      return groupContacts(_friends);
+      return _friends;
     }
-    final List<Contact> matches = _friends.where((Contact c) {
+    return _friends.where((Contact c) {
       return c.name.toLowerCase().contains(query) ||
           c.groupName.toLowerCase().contains(query) ||
           c.id.toLowerCase().contains(query) ||
           c.peer.toLowerCase().contains(query);
     }).toList();
-    return groupContacts(matches);
   }
 
   @override
   Widget build(BuildContext context) {
-    final List<(String, List<Contact>)> groups = _filteredGroups();
+    final String defaultGroup = context.t('我的好友');
+    final String query = _search.text.trim();
+    final List<(String, List<Contact>)> groups = groupFriends(
+      _filteredFriends(),
+      defaultGroup: defaultGroup,
+    );
+    final bool showFriends = _friendsExpanded || query.isNotEmpty;
+    final bool showGroups = _groupsExpanded || query.isNotEmpty;
+    final List<GroupSummary> visibleGroups = query.isEmpty
+        ? _groupItems
+        : _groupItems
+            .where(
+              (GroupSummary group) => group.displayTitle.toLowerCase().contains(
+                query.toLowerCase(),
+              ),
+            )
+            .toList();
     return Column(
       children: <Widget>[
         PaneHeader(title: context.t('联系人'), actions: _actions),
@@ -362,6 +677,7 @@ class ContactsPageState extends State<ContactsPage> {
               suffixIcon: _search.text.isEmpty
                   ? null
                   : IconButton(
+                      tooltip: context.t('清除'),
                       icon: const Icon(Icons.close, size: 16),
                       onPressed: () => setState(() => _search.clear()),
                     ),
@@ -378,69 +694,110 @@ class ContactsPageState extends State<ContactsPage> {
           const Expanded(child: Center(child: CircularProgressIndicator()))
         else
           Expanded(
-            child: Stack(
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: NexmemMetrics.space16),
               children: <Widget>[
-                ListView(
-                  padding: EdgeInsetsDirectional.only(
-                    end: groups.isEmpty ? 0 : NexmemMetrics.space24,
-                  ),
-                  children: <Widget>[
-                    _GroupEntry(
-                      key: const ValueKey<String>('contact-friends-entry'),
-                      icon: Icons.person_outline,
-                      title: context.t('好友'),
-                      onTap: widget.onOpenPane == null
-                          ? null
-                          : () => widget.onOpenPane!('好友'),
-                    ),
-                    _GroupEntry(
-                      key: const ValueKey<String>('contact-groups-entry'),
-                      icon: Icons.groups_outlined,
-                      title: context.t('群聊'),
-                      onTap: widget.groups == null ? null : _openGroups,
-                    ),
-                    _GroupEntry(
-                      key: const ValueKey<String>('contact-devices-entry'),
-                      icon: Icons.devices_outlined,
-                      title: context.t('我的设备'),
-                      onTap: widget.service == null ? null : _openMyDevices,
-                    ),
-                    if (groups.isNotEmpty) ...<Widget>[
-                      const Divider(height: 1),
-                      for (final (String letter, List<Contact> members)
-                          in groups) ...<Widget>[
-                        _SectionHeader(key: _keyFor(letter), letter: letter),
+                _GroupEntry(
+                  key: const ValueKey<String>('contact-friends-entry'),
+                  icon: Icons.person_outline,
+                  title: context.t('好友'),
+                  expanded: showFriends,
+                  onTap: () {
+                    setState(
+                      () => _friendsExpanded = !_friendsExpanded,
+                    );
+                    widget.onToggleFriends?.call();
+                  },
+                ),
+                if (showFriends) ...<Widget>[
+                  if (groups.isEmpty)
+                    const _EmptyFriends()
+                  else
+                    for (final (String name, List<Contact> members)
+                        in groups) ...<Widget>[
+                      _FriendGroupHeader(
+                        key: ValueKey<String>('contact-group-$name'),
+                        name: name,
+                        count: members.length,
+                        expanded:
+                            query.isNotEmpty || !_collapsedGroups.contains(name),
+                        canManage: name != defaultGroup,
+                        onToggle: () => setState(() {
+                          if (_collapsedGroups.contains(name)) {
+                            _collapsedGroups.remove(name);
+                          } else {
+                            _collapsedGroups.add(name);
+                          }
+                        }),
+                        onRename: () => unawaited(_renameGroup(name)),
+                        onDelete: () => unawaited(_deleteGroup(name)),
+                      ),
+                      if (query.isNotEmpty || !_collapsedGroups.contains(name))
                         for (final Contact contact in members)
                           _PresenceContactTile(
                             contact: contact,
                             presence: widget.presence,
                             onTap: () => _openChat(contact),
                             onInfo: () => _openDetail(contact),
+                            onMove: () => unawaited(_moveFriend(contact)),
                           ),
-                      ],
-                      const SizedBox(height: NexmemMetrics.space16),
-                    ] else if (widget.service != null && !_loading)
-                      const _EmptyFriends(),
-                  ],
+                    ],
+                ],
+                const Divider(height: 1),
+                _GroupEntry(
+                  key: const ValueKey<String>('contact-groups-entry'),
+                  icon: Icons.groups_outlined,
+                  title: context.t('群聊'),
+                  expanded: widget.groups == null ? null : showGroups,
+                  onTap: widget.groups == null ? null : _openGroups,
                 ),
-                if (groups.isNotEmpty)
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    bottom: 0,
-                    child: SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          for (final (String letter, List<Contact> _) in groups)
-                            _IndexLetter(
-                              letter: letter,
-                              onTap: () => _jumpTo(letter),
-                            ),
-                        ],
+                if (showGroups) ...<Widget>[
+                  if (_groupsError != null)
+                    _ErrorBar(message: _groupsError!, onRetry: _reloadGroups)
+                  else if (_groupsLoading && _groupItems.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(NexmemMetrics.space16),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else if (visibleGroups.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: NexmemMetrics.space24,
+                        vertical: NexmemMetrics.space16,
                       ),
-                    ),
-                  ),
+                      child: Text(
+                        context.t('还没有群聊，点右上角创建'),
+                        key: const ValueKey<String>('contact-group-empty'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.45),
+                        ),
+                      ),
+                    )
+                  else
+                    for (final GroupSummary group in visibleGroups)
+                      _GroupChatTile(
+                        key: ValueKey<String>(
+                          'contact-group-chat-${group.groupId}',
+                        ),
+                        group: group,
+                        onTap: () => widget.onOpenGroup?.call(
+                          group.groupId,
+                          group.displayTitle,
+                        ),
+                      ),
+                ],
+                const Divider(height: 1),
+                _GroupEntry(
+                  key: const ValueKey<String>('contact-devices-entry'),
+                  icon: Icons.devices_outlined,
+                  title: context.t('我的设备'),
+                  onTap: widget.service == null ? null : _openMyDevices,
+                ),
               ],
             ),
           ),
@@ -510,52 +867,198 @@ class _EmptyFriends extends StatelessWidget {
   }
 }
 
+/// 左栏群聊列表项：点条目直接打开右栏群会话。
+class _GroupChatTile extends StatelessWidget {
+  const _GroupChatTile({super.key, required this.group, this.onTap});
+
+  final GroupSummary group;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final String title = group.displayTitle;
+    return SizedBox(
+      height: NexmemMetrics.listItemHeight,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: NexmemMetrics.space12,
+          ),
+          child: Row(
+            children: <Widget>[
+              AppAvatar(
+                seed: group.groupId,
+                label: title,
+                icon: Icons.groups_outlined,
+                size: 40,
+              ),
+              const SizedBox(width: NexmemMetrics.space12),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyMedium
+                          ?.copyWith(fontSize: 15),
+                    ),
+                    Text(
+                      context.t('{0} 人 · {1}', [
+                        group.memberCount,
+                        group.isAdmin ? context.t('管理员') : context.t('成员'),
+                      ]),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 12,
+                        color: scheme.onSurface.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 18),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _GroupEntry extends StatelessWidget {
   const _GroupEntry({
     super.key,
     required this.icon,
     required this.title,
     this.onTap,
+    this.expanded,
   });
 
   final IconData icon;
   final String title;
   final VoidCallback? onTap;
 
+  /// 非空时显示可展开箭头（好友入口）；为空时保持原来的右箭头。
+  final bool? expanded;
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       height: NexmemMetrics.listItemHeight,
       child: ListTile(
+        // 外层 SizedBox 只固定高度；不设置 minTileHeight 时 ListTile 内部仍按
+        // 56 布局，多出的 4px 留在底部，图标/文字看起来偏上。
+        minTileHeight: NexmemMetrics.listItemHeight,
         leading: Icon(icon, size: 22),
         title: Text(title),
-        trailing: const Icon(Icons.chevron_right, size: 18),
+        trailing: Icon(
+          expanded == null
+              ? Icons.chevron_right
+              : (expanded! ? Icons.expand_more : Icons.chevron_right),
+          size: 18,
+        ),
         onTap: onTap,
       ),
     );
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({super.key, required this.letter});
+/// QQ 式好友分组头：点击展开/收起，右侧菜单管理分组。
+class _FriendGroupHeader extends StatelessWidget {
+  const _FriendGroupHeader({
+    super.key,
+    required this.name,
+    required this.count,
+    required this.expanded,
+    required this.canManage,
+    required this.onToggle,
+    this.onRename,
+    this.onDelete,
+  });
 
-  final String letter;
+  final String name;
+  final int count;
+  final bool expanded;
+  final bool canManage;
+  final VoidCallback onToggle;
+  final VoidCallback? onRename;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    return Container(
-      height: 28,
-      alignment: AlignmentDirectional.centerStart,
-      padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space12),
-      color: scheme.onSurface.withValues(alpha: 0.04),
-      child: Text(
-        letter,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: scheme.onSurface.withValues(alpha: 0.55),
-        ),
+    return SizedBox(
+      height: NexmemMetrics.listItemHeight,
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: InkWell(
+              onTap: onToggle,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: NexmemMetrics.space12,
+                ),
+                child: Row(
+                  children: <Widget>[
+                    Icon(
+                      expanded ? Icons.expand_more : Icons.chevron_right,
+                      size: 18,
+                      color: scheme.onSurface.withValues(alpha: 0.6),
+                    ),
+                    const SizedBox(width: NexmemMetrics.space8),
+                    Expanded(
+                      child: Text(
+                        '$name（$count）',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurface.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (canManage)
+            PopupMenuButton<String>(
+              key: ValueKey<String>('contact-group-menu-$name'),
+              tooltip: context.t('分组名称'),
+              icon: Icon(
+                Icons.more_horiz,
+                size: 18,
+                color: scheme.onSurface.withValues(alpha: 0.6),
+              ),
+              onSelected: (String value) {
+                if (value == 'rename') {
+                  onRename?.call();
+                } else if (value == 'delete') {
+                  onDelete?.call();
+                }
+              },
+              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                PopupMenuItem<String>(
+                  value: 'rename',
+                  child: Text(context.t('重命名分组')),
+                ),
+                PopupMenuItem<String>(
+                  value: 'delete',
+                  child: Text(context.t('删除分组')),
+                ),
+              ],
+            ),
+        ],
       ),
     );
   }
@@ -568,18 +1071,25 @@ class _PresenceContactTile extends StatelessWidget {
     this.presence,
     this.onTap,
     this.onInfo,
+    this.onMove,
   });
 
   final Contact contact;
   final ValueListenable<Map<String, bool>>? presence;
   final VoidCallback? onTap;
   final VoidCallback? onInfo;
+  final VoidCallback? onMove;
 
   @override
   Widget build(BuildContext context) {
     final ValueListenable<Map<String, bool>>? listenable = presence;
     if (listenable == null) {
-      return _ContactTile(contact: contact, onTap: onTap, onInfo: onInfo);
+      return _ContactTile(
+        contact: contact,
+        onTap: onTap,
+        onInfo: onInfo,
+        onMove: onMove,
+      );
     }
     return ValueListenableBuilder<Map<String, bool>>(
       valueListenable: listenable,
@@ -589,6 +1099,7 @@ class _PresenceContactTile extends StatelessWidget {
           online: presence[contact.id],
           onTap: onTap,
           onInfo: onInfo,
+          onMove: onMove,
         );
       },
     );
@@ -600,12 +1111,14 @@ class _ContactTile extends StatelessWidget {
     required this.contact,
     this.onTap,
     this.onInfo,
+    this.onMove,
     this.online,
   });
 
   final Contact contact;
   final VoidCallback? onTap;
   final VoidCallback? onInfo;
+  final VoidCallback? onMove;
 
   /// 在线状态；null 表示未知，不显示状态点。
   final bool? online;
@@ -654,6 +1167,19 @@ class _ContactTile extends StatelessWidget {
                     ),
                   ),
                 ),
+              if (onMove != null)
+                SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: IconButton(
+                    key: ValueKey<String>('contact-move-${contact.id}'),
+                    tooltip: context.t('移动好友'),
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    icon: const Icon(Icons.drive_file_move_outline, size: 16),
+                    onPressed: onMove,
+                  ),
+                ),
               if (onInfo != null)
                 SizedBox(
                   width: 32,
@@ -668,32 +1194,6 @@ class _ContactTile extends StatelessWidget {
                   ),
                 ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _IndexLetter extends StatelessWidget {
-  const _IndexLetter({required this.letter, required this.onTap});
-
-  final String letter;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: Text(
-          letter,
-          style: const TextStyle(
-            fontSize: 10,
-            height: 1.1,
-            fontWeight: FontWeight.w600,
-            color: NexmemColors.primary,
           ),
         ),
       ),

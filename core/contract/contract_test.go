@@ -261,6 +261,62 @@ func registerContractDoubles(t *testing.T, g *gateway.Gateway) {
 	if err != nil {
 		t.Fatalf("注册契约处理器 group.setAllowFriendAdd: %v", err)
 	}
+	err = g.SetHandler("group.setLevelConfig",
+		func(_ context.Context, params json.RawMessage) (any, *gateway.Error) {
+			var req struct {
+				GroupID string             `json:"group_id"`
+				Enabled bool               `json:"enabled"`
+				Levels  []group.GroupLevel `json:"levels"`
+			}
+			if err := json.Unmarshal(params, &req); err != nil {
+				return nil, gateway.NewError(gateway.CodeInvalidArg,
+					"group.setLevelConfig 参数不是合法 JSON: %v", err)
+			}
+			cfg := group.LevelConfig{Enabled: req.Enabled, Levels: req.Levels}
+			if err := group.ValidateLevelConfig(cfg); err != nil {
+				return nil, gateway.NewError(gateway.CodeInvalidArg, "%v", err)
+			}
+			if req.GroupID == contractNonAdminGroupID {
+				return nil, gateway.NewError(gateway.CodeInvalidArg, "仅群管理员可设置群等级")
+			}
+			return map[string]any{"enabled": cfg.Enabled, "levels": cfg.Levels}, nil
+		})
+	if err != nil {
+		t.Fatalf("注册契约处理器 group.setLevelConfig: %v", err)
+	}
+	err = g.SetHandler("group.setMemberProfile",
+		func(_ context.Context, params json.RawMessage) (any, *gateway.Error) {
+			var req struct {
+				GroupID  string  `json:"group_id"`
+				Account  string  `json:"account"`
+				Nickname *string `json:"nickname"`
+				LevelID  *string `json:"level_id"`
+			}
+			if err := json.Unmarshal(params, &req); err != nil {
+				return nil, gateway.NewError(gateway.CodeInvalidArg,
+					"group.setMemberProfile 参数不是合法 JSON: %v", err)
+			}
+			if req.Nickname != nil {
+				if err := group.ValidateNickname(*req.Nickname); err != nil {
+					return nil, gateway.NewError(gateway.CodeInvalidArg, "%v", err)
+				}
+			}
+			nickname, levelID := "", ""
+			if req.Nickname != nil {
+				nickname = *req.Nickname
+			}
+			if req.LevelID != nil {
+				levelID = *req.LevelID
+			}
+			return map[string]any{
+				"account":  req.Account,
+				"nickname": nickname,
+				"level_id": levelID,
+			}, nil
+		})
+	if err != nil {
+		t.Fatalf("注册契约处理器 group.setMemberProfile: %v", err)
+	}
 	err = g.SetHandler("group.setAlias",
 		func(_ context.Context, params json.RawMessage) (any, *gateway.Error) {
 			var req struct {
@@ -353,6 +409,55 @@ func registerContractDoubles(t *testing.T, g *gateway.Gateway) {
 		})
 	if err != nil {
 		t.Fatalf("注册契约处理器 settings.importSnapshot: %v", err)
+	}
+	// fs.* 成功路径的契约层最小处理器：gateway.Handle 已统一校验必填参数、
+	// maxLength 与 minimum/maximum，这里只返回符合 result schema 的样例数据。
+	// 真实 P2P 发布/下载行为由 internal/fs 包单测覆盖。
+	fsShareID := strings.Repeat("a", 64)
+	fsSuccess := map[string]map[string]any{
+		"fs.publish": {
+			"share_id": fsShareID, "name": "资料包", "code": "nexmem://fs/placeholder",
+			"kind": "published", "file_count": 2, "total_size": 1024, "local": true,
+		},
+		"fs.list": {
+			"items": []any{},
+		},
+		"fs.get": {
+			"share_id": fsShareID, "code": "nexmem://fs/placeholder",
+			"files": []any{}, "owner": strings.Repeat("b", 64),
+		},
+		"fs.import": {
+			"share_id": fsShareID, "name": "资料包", "code": "nexmem://fs/placeholder",
+			"file_count": 2, "total_size": 1024,
+		},
+		"fs.send": {
+			"msg_uuid": "contract-fs-send",
+		},
+		"fs.remove": {},
+		"fs.download": {
+			"share_id": fsShareID, "dest": "/tmp/nexmem-download", "kind": "downloaded",
+		},
+	}
+	for method, data := range fsSuccess {
+		method, data := method, data
+		if err := g.SetHandler(method, func(_ context.Context, _ json.RawMessage) (any, *gateway.Error) {
+			return data, nil
+		}); err != nil {
+			t.Fatalf("注册契约处理器 %s: %v", method, err)
+		}
+	}
+	// net.discoverDevices 的契约层最小处理器：真实聚合由 coreapp 单测覆盖。
+	err = g.SetHandler("net.discoverDevices",
+		func(_ context.Context, _ json.RawMessage) (any, *gateway.Error) {
+			return map[string]any{
+				"items":  []any{},
+				"total":  0,
+				"offset": 0,
+				"limit":  200,
+			}, nil
+		})
+	if err != nil {
+		t.Fatalf("注册契约处理器 net.discoverDevices: %v", err)
 	}
 }
 

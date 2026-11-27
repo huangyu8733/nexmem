@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'package:nexmem_app/app/core_session.dart';
+import 'package:nexmem_app/features/settings/settings_page.dart';
 import 'package:nexmem_app/features/settings/settings_pane.dart';
 import 'package:nexmem_app/features/social/social_hub_page.dart';
 import 'package:nexmem_app/transport/transport.dart';
@@ -182,6 +183,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(transport.calls, contains('notification.clear'));
     expect(transport.notifs, isEmpty);
+  });
+
+  testWidgets('独立设置页点击社交中心打开普通页面，不套 Dialog 白卡',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsPage(
+            session: CoreSession(_SocialTransport()),
+            profileOnly: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('settings-social-hub')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.byType(TabBar), findsOneWidget);
+    expect(find.byType(AppBar), findsWidgets);
   });
 
   testWidgets('内嵌面板里的删除确认框使用不透明实底，不继承透明主题',

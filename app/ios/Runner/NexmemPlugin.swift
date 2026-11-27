@@ -48,6 +48,8 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
             result(nil)
         case "dataDir":
             result(NexmemCore.shared.dataDir)
+        case "localIp":
+            result(Self.localIPAddress())
         case "pickFile":
             pickFile(result)
         case "startService", "stopService":
@@ -65,6 +67,32 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
 
     private func arguments(_ call: FlutterMethodCall) -> [String: Any] {
         return (call.arguments as? [String: Any]) ?? [:]
+    }
+
+    /// 返回当前 Wi-Fi(en0) 的 IPv4 地址。用于注入内核，在 iOS 上补全
+    /// 局域网发现广播地址（本地网络权限由系统弹窗授权）。
+    private static func localIPAddress() -> String? {
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return nil }
+        defer { freeifaddrs(ifaddr) }
+        var ptr: UnsafeMutablePointer<ifaddrs>? = first
+        while let current = ptr {
+            let iface = String(cString: current.pointee.ifa_name)
+            let addr = current.pointee.ifa_addr
+            if iface == "en0", let addr = addr, addr.pointee.sa_family == UInt8(AF_INET) {
+                var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                let ok = getnameinfo(
+                    addr, socklen_t(addr.pointee.sa_len),
+                    &hostname, socklen_t(hostname.count),
+                    nil, 0, NI_NUMERICHOST
+                )
+                if ok == 0 {
+                    return String(cString: hostname)
+                }
+            }
+            ptr = current.pointee.ifa_next
+        }
+        return nil
     }
 
     private func runAsync(_ result: @escaping FlutterResult, _ block: @escaping () throws -> String) {

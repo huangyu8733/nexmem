@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -31,8 +32,8 @@ func errorCode(t *testing.T, resp map[string]any) string {
 func TestMethodsHaveSchema(t *testing.T) {
 	g := New()
 	methods := g.Methods()
-	if len(methods) != 93 {
-		t.Fatalf("契约方法数 = %d，期望 93", len(methods))
+	if len(methods) != 97 {
+		t.Fatalf("契约方法数 = %d，期望 97", len(methods))
 	}
 	prev := ""
 	for _, m := range methods {
@@ -86,6 +87,56 @@ func TestInvalidParams(t *testing.T) {
 			resp := mustServe(t, g, raw)
 			if code := errorCode(t, resp); code != string(CodeInvalidArg) {
 				t.Fatalf("错误码 = %s，期望 INVALID_ARG", code)
+			}
+		})
+	}
+}
+
+// TestMessageTextMaxLength 校验聊天正文在契约层统一受限 4096 字符，
+// 与 settings value 的 4 KiB 上限思路一致，避免超长请求进入业务层。
+func TestMessageTextMaxLength(t *testing.T) {
+	g := New()
+	methods := []string{"dm.sendText", "dm.sendGroupText", "msg.edit"}
+	for _, method := range methods {
+		t.Run(method+"-overlong", func(t *testing.T) {
+			req := map[string]any{
+				"id":     1,
+				"method": method,
+				"params": map[string]any{
+					"peer":            "p",
+					"group_id":        "g",
+					"conversation_id": "c",
+					"msg_uuid":        "u",
+					"text":            strings.Repeat("字", 4097),
+				},
+			}
+			raw, err := json.Marshal(req)
+			if err != nil {
+				t.Fatalf("序列化请求: %v", err)
+			}
+			if code := errorCode(t, mustServe(t, g, string(raw))); code != string(CodeInvalidArg) {
+				t.Fatalf("超长正文错误码 = %s，期望 INVALID_ARG", code)
+			}
+		})
+		t.Run(method+"-boundary", func(t *testing.T) {
+			req := map[string]any{
+				"id":     1,
+				"method": method,
+				"params": map[string]any{
+					"peer":            "p",
+					"group_id":        "g",
+					"conversation_id": "c",
+					"msg_uuid":        "u",
+					"text":            strings.Repeat("字", 4096),
+				},
+			}
+			raw, err := json.Marshal(req)
+			if err != nil {
+				t.Fatalf("序列化请求: %v", err)
+			}
+			// 裸 Gateway 没有业务 handler，合法参数应走到 NOT_STARTED 而非 INVALID_ARG。
+			if code := errorCode(t, mustServe(t, g, string(raw))); code != string(CodeNotStarted) {
+				t.Fatalf("边界正文错误码 = %s，期望 NOT_STARTED", code)
 			}
 		})
 	}

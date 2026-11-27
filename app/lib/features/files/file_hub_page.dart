@@ -17,9 +17,16 @@ import 'transfer_store.dart';
 /// 设置页顶部的文件夹图标直接打开这里；传输页读取 [TransferStore] 中
 /// `fs.progress` 驱动的实时进度，下载页从本机已下载的共享里列出可预览文件。
 class FileHubPage extends StatefulWidget {
-  const FileHubPage({super.key, required this.session});
+  const FileHubPage({
+    super.key,
+    required this.session,
+    this.mediaSourceUri,
+  });
 
   final CoreSession session;
+
+  /// Web 端内核在网关进程内，预览需走鉴权 inline 链接。
+  final Uri? Function(String path)? mediaSourceUri;
 
   @override
   State<FileHubPage> createState() => _FileHubPageState();
@@ -93,11 +100,13 @@ class _FileHubPageState extends State<FileHubPage>
                 key: ValueKey<String>('file-share-page-$_revision'),
                 session: widget.session,
                 showHeader: false,
+                mediaSourceUri: widget.mediaSourceUri,
               ),
               _TransferTab(store: _store),
               _DownloadsTab(
                 key: ValueKey<String>('downloads-tab-$_revision'),
                 session: widget.session,
+                mediaSourceUri: widget.mediaSourceUri,
               ),
             ],
           ),
@@ -213,15 +222,19 @@ class _TransferTab extends StatelessWidget {
                   Icon(Icons.sync_outlined,
                       size: 18, color: Theme.of(context).colorScheme.primary),
                   const SizedBox(width: NexmemMetrics.space8),
-                  Text(
-                    context.t('进行中 {0} · 已完成 {1} · 失败 {2}', <String>[
-                      '$running',
-                      '$done',
-                      '$failed',
-                    ]),
-                    style: Theme.of(context).textTheme.bodySmall,
+                  // 窄屏下吸收剩余宽度并省略，避免把两个按钮挤出屏幕。
+                  Expanded(
+                    child: Text(
+                      context.t('进行中 {0} · 已完成 {1} · 失败 {2}', <String>[
+                        '$running',
+                        '$done',
+                        '$failed',
+                      ]),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   ),
-                  const Spacer(),
                   if (done > 0)
                     TextButton.icon(
                       onPressed: store.clearFinished,
@@ -271,6 +284,8 @@ class _TransferTab extends StatelessWidget {
                                       ? task.shareId.substring(
                                           0, task.shareId.length.clamp(0, 12))
                                       : task.name,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
                                   style: Theme.of(context).textTheme.titleSmall,
                                 ),
                               ),
@@ -335,9 +350,14 @@ class _TransferTab extends StatelessWidget {
 }
 
 class _DownloadsTab extends StatefulWidget {
-  const _DownloadsTab({super.key, required this.session});
+  const _DownloadsTab({
+    super.key,
+    required this.session,
+    this.mediaSourceUri,
+  });
 
   final CoreSession session;
+  final Uri? Function(String path)? mediaSourceUri;
 
   @override
   State<_DownloadsTab> createState() => _DownloadsTabState();
@@ -449,7 +469,7 @@ class _DownloadsTabState extends State<_DownloadsTab> {
         children: <Widget>[
           for (int i = 0; i < labels.length; i++)
             Padding(
-              padding: const EdgeInsets.only(right: NexmemMetrics.space8),
+              padding: const EdgeInsetsDirectional.only(end: NexmemMetrics.space8),
               child: ChoiceChip(
                 key: ValueKey<String>('download-filter-$i'),
                 label: Text(labels[i]),
@@ -564,6 +584,8 @@ class _DownloadsTabState extends State<_DownloadsTab> {
                                   ),
                                   title: Text(
                                     file.path,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(fontSize: 13),
                                   ),
                                   subtitle: Text(
@@ -585,12 +607,17 @@ class _DownloadsTabState extends State<_DownloadsTab> {
   }
 
   Future<void> _preview(FileShare share, FileShareEntry file) async {
+    final String path = p.join(share.localRoot, file.path);
+    final Uri? source = widget.mediaSourceUri == null
+        ? null
+        : widget.mediaSourceUri!(path);
     await showDialog<void>(
       context: context,
       builder: (BuildContext context) => MediaViewerDialog(
-        path: p.join(share.localRoot, file.path),
+        path: path,
         mime: file.mime,
         title: file.path,
+        sourceUri: source,
       ),
     );
   }

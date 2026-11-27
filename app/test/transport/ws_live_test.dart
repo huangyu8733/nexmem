@@ -40,7 +40,7 @@ void main() {
     await expectLater(
       transport.connect(),
       throwsA(
-        isA<NexmemException>().having((e) => e.code, 'code', 'NOT_ONLINE'),
+        isA<NexmemException>().having((e) => e.code, 'code', 'UNAUTHORIZED'),
       ),
     );
   }, skip: skipReason);

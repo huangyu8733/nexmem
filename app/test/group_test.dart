@@ -95,6 +95,10 @@ class _FakeGroups implements GroupService {
   final List<(String, String)> announcements = <(String, String)>[];
   final List<(String, bool)> allowFriendAddUpdates = <(String, bool)>[];
   final List<(String, String)> aliases = <(String, String)>[];
+  final List<(String, bool, List<GroupLevel>)> levelConfigs =
+      <(String, bool, List<GroupLevel>)>[];
+  final List<(String, String, String?, String?)> memberProfiles =
+      <(String, String, String?, String?)>[];
 
   @override
   Future<String> create({
@@ -275,6 +279,70 @@ class _FakeGroups implements GroupService {
     }
     return alias;
   }
+
+  @override
+  Future<GroupLevels> setLevelConfig(
+    String groupId, {
+    required bool enabled,
+    required List<GroupLevel> levels,
+  }) async {
+    levelConfigs.add((groupId, enabled, levels));
+    final GroupInfo? current = info;
+    if (current != null) {
+      info = GroupInfo(
+        groupId: current.groupId,
+        title: current.title,
+        keyVersion: current.keyVersion,
+        storageConfigured: current.storageConfigured,
+        announcement: current.announcement,
+        alias: current.alias,
+        allowFriendAdd: current.allowFriendAdd,
+        levelEnabled: enabled,
+        levels: levels,
+        members: current.members,
+      );
+    }
+    return GroupLevels(enabled: enabled, items: levels);
+  }
+
+  @override
+  Future<GroupMemberProfile> setMemberProfile(
+    String groupId,
+    String account, {
+    String? nickname,
+    String? levelId,
+  }) async {
+    memberProfiles.add((groupId, account, nickname, levelId));
+    final GroupInfo? current = info;
+    if (current != null) {
+      info = GroupInfo(
+        groupId: current.groupId,
+        title: current.title,
+        keyVersion: current.keyVersion,
+        storageConfigured: current.storageConfigured,
+        announcement: current.announcement,
+        alias: current.alias,
+        allowFriendAdd: current.allowFriendAdd,
+        levelEnabled: current.levelEnabled,
+        levels: current.levels,
+        members: <GroupMember>[
+          for (final GroupMember member in current.members)
+            if (member.account == account)
+              member.copyWith(
+                nickname: nickname ?? member.nickname,
+                levelId: levelId ?? member.levelId,
+              )
+            else
+              member,
+        ],
+      );
+    }
+    return GroupMemberProfile(
+      account: account,
+      nickname: nickname ?? '',
+      levelId: levelId ?? '',
+    );
+  }
 }
 
 Widget _wrap(Widget child) {
@@ -282,6 +350,18 @@ Widget _wrap(Widget child) {
     theme: NexmemTheme.light(),
     home: Scaffold(body: child),
   );
+}
+
+/// 群资料页新增等级设置入口后底部按钮可能落在视口外，测试里先滚动到列表底部。
+Future<void> _scrollGroupInfoToBottom(WidgetTester tester) async {
+  final Finder list = find.byType(ListView).first;
+  if (list.evaluate().isEmpty) {
+    return;
+  }
+  for (int i = 0; i < 6; i++) {
+    await tester.drag(list, const Offset(0, -400));
+    await tester.pumpAndSettle();
+  }
 }
 
 void main() {
@@ -1017,7 +1097,14 @@ void main() {
       find.byKey(const ValueKey<String>('group-invite-contact-carol-id')),
     );
     await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('group-invite-confirm')),
+    );
+    await tester.pumpAndSettle();
     expect(groups.invited.single, ('Z3JvdXA', 'carol-id'));
+    // 好友备注名作为本群称呼写入。
+    expect(groups.memberProfiles.single.$2, 'carol-id');
+    expect(groups.memberProfiles.single.$3, 'Carol');
     expect(find.text('群成员（3）'), findsOneWidget);
 
     // 移除：确认后成员数回到 2，管理员自己没有移除入口。
@@ -1025,6 +1112,7 @@ void main() {
       find.byKey(const ValueKey<String>('group-remove-admin-account')),
       findsNothing,
     );
+    await _scrollGroupInfoToBottom(tester);
     await tester.tap(
       find.byKey(const ValueKey<String>('group-remove-member-account')),
     );
@@ -1175,6 +1263,7 @@ void main() {
       find.byKey(const ValueKey<String>('group-storage-config')),
       findsNothing,
     );
+    await _scrollGroupInfoToBottom(tester);
     expect(
       find.byKey(const ValueKey<String>('group-leave-button')),
       findsOneWidget,
@@ -1230,6 +1319,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey<String>('open-group-info')));
     await tester.pumpAndSettle();
+    await _scrollGroupInfoToBottom(tester);
     await tester.tap(find.byKey(const ValueKey<String>('group-leave-button')));
     await tester.pumpAndSettle();
     expect(find.text('退出后将不再接收该群消息，本机历史消息保留。'), findsOneWidget);
@@ -1287,6 +1377,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey<String>('open-group-info')));
     await tester.pumpAndSettle();
+    await _scrollGroupInfoToBottom(tester);
     await tester.tap(
       find.byKey(const ValueKey<String>('group-dissolve-button')),
     );

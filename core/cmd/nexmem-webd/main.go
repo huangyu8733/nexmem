@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -33,6 +34,7 @@ func main() {
 	tlsCert := flag.String("tls-cert", envOr("NEXMEM_WEB_TLS_CERT", ""), "TLS 证书路径（PEM），与 -tls-key 同时提供时启用 HTTPS")
 	tlsKey := flag.String("tls-key", envOr("NEXMEM_WEB_TLS_KEY", ""), "TLS 私钥路径（PEM）")
 	static := flag.String("static", envOr("NEXMEM_WEB_STATIC", "web"), "Flutter Web 构建产物目录")
+	uploadDir := flag.String("upload-dir", envOr("NEXMEM_WEB_UPLOAD_DIR", ""), "浏览器选择文件/目录的上传落地目录（留空使用数据目录下的 web-uploads）")
 	origins := flag.String("origins", envOr("NEXMEM_WEB_ORIGINS", ""), "允许的 Origin 白名单，逗号分隔（留空只允许同源）")
 	dataDir := flag.String("data-dir", envOr("NEXMEM_DATA_DIR", ""), "内核数据目录；非空时随进程自动启动内核")
 	bootstraps := flag.String("bootstraps", envOr("NEXMEM_BOOTSTRAPS", ""), "DHT bootstrap 节点地址，逗号分隔")
@@ -59,12 +61,34 @@ func main() {
 		log.Printf("未提供令牌，本次使用：%s（重启后失效）", secret)
 	}
 
+	uploadRoot := strings.TrimSpace(*uploadDir)
+	if uploadRoot == "" {
+		if dir := strings.TrimSpace(*dataDir); dir != "" {
+			uploadRoot = filepath.Join(dir, "web-uploads")
+		} else {
+			uploadRoot = filepath.Join(os.TempDir(), "nexmem-web-uploads")
+		}
+	}
+
+	// /download 白名单：uploadDir 自动放行；群文件下载落到数据目录下专用
+	// 子目录，私聊接收文件落在 inbox，只放行这两个子目录而不是整个 data-dir，
+	// 避免私钥/数据库被下载。
+	downloadDirs := []string{}
+	if dir := strings.TrimSpace(*dataDir); dir != "" {
+		downloadDirs = append(downloadDirs,
+			filepath.Join(dir, "web-downloads"),
+			filepath.Join(dir, "inbox"),
+		)
+	}
+
 	gw := gateway.New()
 	srv, err := webd.New(webd.Config{
 		Token:          secret,
 		TokenFile:      strings.TrimSpace(*tokenFile),
 		Gateway:        gw,
 		StaticDir:      *static,
+		UploadDir:      uploadRoot,
+		DownloadDirs:   downloadDirs,
 		AllowedOrigins: splitList(*origins),
 		RequestTimeout: *timeout,
 	})

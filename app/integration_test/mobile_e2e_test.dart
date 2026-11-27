@@ -31,7 +31,12 @@ Future<CoreSession?> _openPlatformSession() {
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  final String? peerAccount = Platform.environment['NEXMEM_PEER_ACCOUNT'];
+  // flutter test/drive 运行在设备进程里，宿主 shell 的环境变量不会透传；
+  // 真机双端测试统一用 --dart-define 注入，对端仍可用设备环境变量覆盖。
+  const String peerFromDefine = String.fromEnvironment('NEXMEM_PEER_ACCOUNT');
+  final String? peerAccount = peerFromDefine.isNotEmpty
+      ? peerFromDefine
+      : Platform.environment['NEXMEM_PEER_ACCOUNT'];
   final String platform = Platform.isAndroid
       ? 'android'
       : Platform.isIOS
@@ -89,8 +94,8 @@ void main() {
       await session.transport.call(
         'contact.add',
         params: <String, dynamic>{
-          'account': peerAccount,
-          'remark': 'E2E 对端',
+          'peer': peerAccount,
+          'alias': 'E2E 对端',
         },
       );
       final String body = 'E2E 你好 ${DateTime.now().millisecondsSinceEpoch}';

@@ -6,10 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"unicode/utf8"
 )
 
 // schemaNode 是契约中使用到的 JSON Schema 子集。
-// 仅支持 type / required / properties / items / enum / minimum / maximum，
+// 支持 type / required / properties / items / enum / minimum / maximum / maxLength，
 // 足以覆盖参数校验，避免为此引入第三方 schema 库。
 type schemaNode struct {
 	Type       string                `json:"type"`
@@ -19,6 +20,7 @@ type schemaNode struct {
 	Enum       []json.RawMessage     `json:"enum,omitempty"`
 	Minimum    *float64              `json:"minimum,omitempty"`
 	Maximum    *float64              `json:"maximum,omitempty"`
+	MaxLength  *int                  `json:"maxLength,omitempty"`
 }
 
 func parseSchema(raw json.RawMessage) (schemaNode, error) {
@@ -45,7 +47,11 @@ func validateSchemaNode(n schemaNode, path string) error {
 		if n.Items != nil {
 			return validateSchemaNode(*n.Items, path+"[]")
 		}
-	case "string", "integer", "number", "boolean":
+	case "string":
+		if n.MaxLength != nil && *n.MaxLength < 0 {
+			return fmt.Errorf("%s 的 maxLength 不能为负数", path)
+		}
+	case "integer", "number", "boolean":
 	default:
 		return fmt.Errorf("%s 的 type %q 不受支持", path, n.Type)
 	}
@@ -97,6 +103,9 @@ func (n schemaNode) validate(raw json.RawMessage, path string) error {
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
 			return fmt.Errorf("%s 必须是字符串", path)
+		}
+		if n.MaxLength != nil && utf8.RuneCountInString(s) > *n.MaxLength {
+			return fmt.Errorf("%s 不能超过 %d 字符", path, *n.MaxLength)
 		}
 	case "boolean":
 		var b bool

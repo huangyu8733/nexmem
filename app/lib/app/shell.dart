@@ -4,6 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../features/account/account_manager.dart';
+import '../features/account/account_manager_page.dart';
+import '../features/account/app_exit.dart';
 import '../features/chat/chat_message.dart';
 import '../features/chat/chat_page.dart';
 import '../features/chat/chat_profile_panel.dart';
@@ -12,6 +15,7 @@ import '../features/chats/chats_page.dart';
 import '../features/chats/conversation.dart';
 import '../features/chats/conversation_store.dart';
 import '../features/chats/read_marker.dart';
+import '../features/contacts/add_friend_dialog.dart';
 import '../features/contacts/contact.dart';
 import '../features/contacts/contact_detail_page.dart';
 import '../features/contacts/contact_service.dart';
@@ -28,13 +32,25 @@ import '../features/rtc/call_service.dart';
 import '../features/rtc/call_video_view.dart';
 import '../features/rtc/rtc_media.dart';
 import '../features/remote/input/desktop_input_injector.dart';
+import '../features/remote/device_map_page.dart';
+import '../features/remote/ip_location.dart';
+import '../features/remote/ip_location_loader_io.dart'
+    if (dart.library.io) '../features/remote/ip_location_loader_io.dart'
+    if (dart.library.js_interop) '../features/remote/ip_location_loader_web.dart'
+    as ip_loader;
+import '../features/remote/local_location_controller.dart';
+import '../features/remote/remote_geo_controller.dart';
 import '../features/remote/remote_control_page.dart';
 import '../features/remote/remote_control_service.dart';
+import '../features/remote/remote_device_directory.dart';
+import '../features/remote/remote_devices_page.dart';
+import '../features/remote/remote_group_controller.dart';
 import '../features/remote/remote_host_banner.dart';
 import '../features/remote/remote_incoming_dialog.dart';
 import '../features/remote/remote_media.dart';
 import '../features/remote/remote_session.dart';
 import '../features/remote/remote_signal.dart';
+import '../features/remote/remote_storage.dart';
 import '../features/search/message_search.dart';
 import '../features/settings/backup.dart';
 import '../features/settings/diagnostics.dart';
@@ -42,13 +58,19 @@ import '../features/settings/profile_avatar.dart';
 import '../features/settings/profile_panel.dart';
 import '../features/settings/profile_view.dart';
 import '../features/settings/report.dart';
+import '../features/push/push_controller.dart';
+import '../features/push/push_platform.dart';
 import '../features/settings/settings_page.dart';
 import '../features/settings/settings_pane.dart';
 import '../features/settings/settings_service.dart';
 import '../features/settings/storage_config.dart';
+import '../features/social/social_hub_page.dart';
 import '../features/social/social_service.dart';
 import '../l10n/l10n.dart';
 import '../transport/transport.dart';
+import 'app_toast.dart';
+import 'call_notice_bar.dart';
+import 'message_notification_sound.dart';
 import 'pane_header.dart';
 import 'connection_status.dart';
 import 'core_session.dart';
@@ -74,6 +96,7 @@ class AppShell extends StatefulWidget {
     this.readMarker,
     this.themeMode = ThemeMode.system,
     this.onThemeModeChanged,
+    this.accountManager,
   });
 
   /// 内核会话；为空时保持离线占位（Widget 测试与未配置部署）。
@@ -90,6 +113,9 @@ class AppShell extends StatefulWidget {
 
   /// 设置页切换外观主题的回调。
   final ValueChanged<ThemeMode>? onThemeModeChanged;
+
+  /// 账号管理/临时锁：由应用入口持有，切换账号后整个壳会重建。
+  final AccountManager? accountManager;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -142,6 +168,10 @@ class _AppShellState extends State<AppShell> {
   /// 已打开的群资料页与聊天右侧面板监听后重新拉取群资料。
   final ValueNotifier<int> _allowFriendAddRevision = ValueNotifier<int>(0);
 
+  /// 群等级配置 / 成员本群称呼与等级变更版本：内核控制帧到达时递增，
+  /// 已打开的群资料页监听后重新拉取 `group.members`。
+  final ValueNotifier<int> _groupProfileRevision = ValueNotifier<int>(0);
+
   /// 在线状态轮询：每 20s 拉一次 `presence.list`，落到会话头像/头部与联系人列表。
   Timer? _presenceTimer;
   bool _presenceBusy = false;
@@ -152,6 +182,11 @@ class _AppShellState extends State<AppShell> {
 
   /// 会话数据由壳层持有，P1-16 传输层接通后在此写入内核推送。
   final ConversationStore _conversations = ConversationStore();
+
+  /// 单聊显示信息（对端 base64url → 显示名、备注）：由联系人列表回填，
+  /// 优先备注、其次昵称、最后账号短标签。加载会话与备注变更后刷新。
+  final Map<String, ({String displayName, String remark})> _peerDisplay =
+      <String, ({String displayName, String remark})>{};
 
   /// 会话页句柄：桌面快捷键（`Ctrl/Cmd + F/N`）直接复用页内入口。
   final GlobalKey<ChatsPageState> _chatsKey = GlobalKey<ChatsPageState>();
@@ -264,8 +299,18 @@ class _AppShellState extends State<AppShell> {
   CallService? _call;
   StreamSubscription<CallInfo>? _callChanges;
 
-  /// 当前通话快照，非空时叠加全屏通话页。
+  /// 当前通话快照，非空时在状态栏下方展示通话通知条。
   CallInfo? _callInfo;
+
+  /// 通话页是否展开：来电先显示通知条，点击后才进入全屏通话页；
+  /// 去电与通话中保持原有自动展开行为。
+  bool _callPageOpen = false;
+
+  /// 右上角小提示：替代底部 SnackBar，显示时朗读文案。
+  final AppToastController _toasts = AppToastController();
+
+  /// 入站消息「叮咚」提示音（QQ 风格），带节流避免群消息轰炸。
+  final MessageNotificationSound _messageSound = MessageNotificationSound();
 
   /// 对端显示名（来电/去电时从会话列表解析）。
   String _callPeerName = '';
@@ -303,13 +348,18 @@ class _AppShellState extends State<AppShell> {
       final CallInfo? previous = _callInfo;
       setState(() => _callInfo = info);
       if (info.state == CallState.incoming) {
+        // 来电先只出通知条，点击后再展开通话页。
+        _callPageOpen = false;
         _callRecordedFor = null;
         _callIsCaller = false;
         _callConversationId =
             _conversationIdForPeer(info.peer) ?? _callConversationId;
         _callHideTimer?.cancel();
         _callHideTimer = null;
-      } else if (info.state == CallState.connected) {
+      } else if (info.state == CallState.outgoing ||
+          info.state == CallState.connected) {
+        // 去电由用户主动发起，接通后也直接展示通话页。
+        _callPageOpen = true;
         _callHideTimer?.cancel();
         _callHideTimer = null;
         _callConversationId =
@@ -345,6 +395,17 @@ class _AppShellState extends State<AppShell> {
     return title;
   }
 
+  /// 通话通知条/通话页显示名：会话标题 → 备注名 → 账号短标签。
+  String _callDisplayName() {
+    final String name = _callPeerName.trim();
+    if (name.isNotEmpty) {
+      return name;
+    }
+    final String peer = _callInfo?.peer ?? '';
+    final String display = _peerDisplay[peer]?.displayName ?? '';
+    return display.isNotEmpty ? display : shortAccountLabel(peer);
+  }
+
   /// 通话结束：写会话通话记录、失败提示，并在 1.6s 后收起结束页。
   void _onCallEnded(CallInfo info, CallInfo? previous) {
     final String callKey = info.callId.isEmpty
@@ -353,7 +414,7 @@ class _AppShellState extends State<AppShell> {
     if (_callRecordedFor != callKey) {
       _callRecordedFor = callKey;
       final String? conversationId = _callConversationId;
-      final String? text = _callRecordText(info);
+      final String? text = _callRecordText(info, context);
       if (conversationId != null && text != null) {
         _appendCallRecord(conversationId, text);
       }
@@ -373,34 +434,40 @@ class _AppShellState extends State<AppShell> {
       if (!mounted || _callInfo?.state != CallState.ended) {
         return;
       }
-      setState(() => _callInfo = null);
+      setState(() {
+        _callInfo = null;
+        _callPageOpen = false;
+      });
     });
   }
 
   /// 组装通话记录文案；无需记录时返回 null。
-  String? _callRecordText(CallInfo info) {
-    final String kind = info.video ? '视频通话' : '语音通话';
+  String? _callRecordText(CallInfo info, BuildContext context) {
+    final String kind = context.t(info.video ? '视频通话' : '语音通话');
     final Duration elapsed = info.elapsed;
     if (info.startedAt != null && elapsed.inSeconds >= 1) {
       final String mm = elapsed.inMinutes.toString().padLeft(2, '0');
       final String ss = (elapsed.inSeconds % 60).toString().padLeft(2, '0');
-      return _callIsCaller ? '$kind $mm:$ss' : '通话时长 $mm:$ss';
+      return context.t(
+        '通话时长 {0}',
+        [_callIsCaller ? '$kind $mm:$ss' : '$mm:$ss'],
+      );
     }
     if (_callIsCaller) {
       return switch (info.endReason) {
-        CallEndReason.rejected => '对方已拒绝',
-        CallEndReason.noAnswer => '对方无应答',
-        CallEndReason.canceled => '已取消',
-        CallEndReason.failed => '呼叫失败',
-        CallEndReason.hangup => '$kind已结束',
+        CallEndReason.rejected => context.t('对方已拒绝'),
+        CallEndReason.noAnswer => context.t('对方无应答'),
+        CallEndReason.canceled => context.t('已取消'),
+        CallEndReason.failed => context.t('呼叫失败'),
+        CallEndReason.hangup => context.t('{0}已结束', [kind]),
         CallEndReason.none => null,
       };
     }
     return switch (info.endReason) {
-      CallEndReason.rejected => '已拒绝来电',
-      CallEndReason.canceled => '主叫已取消',
+      CallEndReason.rejected => context.t('已拒绝来电'),
+      CallEndReason.canceled => context.t('主叫已取消'),
       CallEndReason.failed || CallEndReason.hangup || CallEndReason.noAnswer =>
-        '未接来电（$kind）',
+        context.t('未接来电（{0}）', [kind]),
       CallEndReason.none => null,
     };
   }
@@ -441,6 +508,23 @@ class _AppShellState extends State<AppShell> {
   final Map<String, RemoteInfo> _remotePeerInfos = <String, RemoteInfo>{};
   String? _activeRemotePeer;
 
+  /// 群控：复用控制端服务表，勾选状态跨会话切换保持。
+  RemoteGroupController? _remoteGroup;
+
+  /// 「远程设备」台账：本机保存的设备、分类与备注。
+  late final RemoteDeviceDirectory _remoteDevices =
+      RemoteDeviceDirectory(createRemoteStorage());
+
+  /// 默认关闭的自动归属地：库下载与查询都在本机完成。
+  late final IpLocationService _ipLocation;
+  late final RemoteGeoController _remoteGeo;
+
+  /// 本机位置：用户主动填写，只用于估算发现设备距离。
+  late final LocalLocationController _localLocation;
+
+  /// 系统 / 浏览器消息通知：平台未接线时自动降级，不影响主流程。
+  late final PushController _push;
+
   bool _remoteStarting = false;
   bool _remoteFileDialogOpen = false;
 
@@ -453,6 +537,11 @@ class _AppShellState extends State<AppShell> {
     _remoteHost = _createRemoteService(session);
     unawaited(_remoteHost!.initialize());
     _remoteHostChanges = _remoteHost!.changes.listen(_onRemoteHostInfo);
+    _remoteGroup = RemoteGroupController(
+      services: _remotePeers.cast<String, RemoteGroupService>(),
+      deviceTypeOf: (String peer) =>
+          _remoteDevices.find(peer)?.type ?? RemoteDeviceType.other,
+    );
   }
 
   RemoteControlService _createRemoteService(CoreSession session) {
@@ -625,9 +714,18 @@ class _AppShellState extends State<AppShell> {
     _startRemotePeer(item.peer, item.title);
   }
 
-  void _startRemotePeer(String peer, String name) {
+  void _startRemotePeer(
+    String peer,
+    String name, {
+    String credential = '',
+    bool silent = false,
+  }) {
     if (peer.isEmpty) {
       _showMessage(context.t('会话缺少对端账号，无法发起远控'));
+      return;
+    }
+    if (silent && credential.isEmpty) {
+      _showMessage(context.t('请先为该远程设备设置控制密码'));
       return;
     }
     if (_callInfo != null && _callInfo!.state != CallState.ended) {
@@ -652,7 +750,12 @@ class _AppShellState extends State<AppShell> {
     setState(() => _activeRemotePeer = peer);
     _remoteStarting = true;
     unawaited(
-      remote.request(peer, peerName: name).whenComplete(() {
+      remote.request(
+        peer,
+        peerName: name,
+        credential: credential,
+        silent: silent,
+      ).whenComplete(() {
         if (mounted) {
           setState(() => _remoteStarting = false);
         }
@@ -702,10 +805,10 @@ class _AppShellState extends State<AppShell> {
   /// 发起通话：单聊直呼对端；群聊拉取成员后对每人各建一路 Mesh 会话。
   bool _callStarting = false;
 
+  /// 右上角小提示：显示文案并朗读，不再使用底部 SnackBar。
   void _showMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    _toasts.show(message);
   }
 
   void _startCall(ConversationItem item, bool video) {
@@ -777,6 +880,35 @@ class _AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     _webNoticeOpen = kIsWeb && !_webNotice.seen;
+    unawaited(_remoteDevices.load());
+    final ({IpLocationDownloader download, IpLocationBundledReader readBundled,
+      Future<Uint8List?> Function() readCache,
+      Future<void> Function(Uint8List bytes) writeCache}) loader =
+      ip_loader.makeIpLocationLoader();
+    _ipLocation = IpLocationService(
+      downloader: loader.download,
+      readBundled: loader.readBundled,
+      readCache: loader.readCache,
+      writeCache: loader.writeCache,
+    );
+    _remoteGeo = RemoteGeoController(
+      service: _ipLocation,
+      settings: widget.session?.settings ?? const UnavailableSettingsService(),
+      directory: _remoteDevices,
+    );
+    unawaited(_remoteGeo.load());
+    _localLocation = LocalLocationController(
+      settings: widget.session?.settings ?? const UnavailableSettingsService(),
+    );
+    unawaited(_localLocation.load());
+    _push = PushController(
+      platform: makePushPlatform(
+        settings: widget.session?.settings,
+      ),
+      settings: widget.session?.settings ?? const UnavailableSettingsService(),
+      pushService: widget.session?.push,
+      onOpenConversation: _openNotificationTarget,
+    );
     final CoreSession? session = widget.session;
     if (session == null) {
       return;
@@ -792,8 +924,23 @@ class _AppShellState extends State<AppShell> {
     unawaited(_boot(session));
   }
 
+  /// 通知点击：找到对应会话后复用 _open 的既有跳转逻辑。
+  void _openNotificationTarget(String conversationId) {
+    final ConversationItem? item = _conversations.byId(conversationId);
+    if (item == null) {
+      _showMessage(context.t('会话不存在或已被删除'));
+      return;
+    }
+    final bool desktop = !Navigator.of(context).mounted ||
+        MediaQuery.sizeOf(context).width >= 720;
+    _open(item, desktop);
+  }
+
   @override
   void dispose() {
+    _push.dispose();
+    _remoteGeo.dispose();
+    _localLocation.dispose();
     TransferStore.instance.detach();
     _presenceTimer?.cancel();
     _callHideTimer?.cancel();
@@ -811,6 +958,7 @@ class _AppShellState extends State<AppShell> {
       unawaited(service.dispose());
     }
     _remotePeers.clear();
+    _remoteGroup = null;
     for (final Timer timer in _typingTimers.values) {
       timer.cancel();
     }
@@ -822,10 +970,13 @@ class _AppShellState extends State<AppShell> {
       controller.dispose();
     }
     _conversations.dispose();
+    _toasts.dispose();
+    unawaited(_messageSound.dispose());
     _link.dispose();
     _presence.dispose();
     _announcementRevision.dispose();
     _allowFriendAddRevision.dispose();
+    _groupProfileRevision.dispose();
     super.dispose();
   }
 
@@ -834,11 +985,22 @@ class _AppShellState extends State<AppShell> {
     try {
       for (int attempt = 0; attempt < 3 && mounted; attempt++) {
         try {
-          await session.bootstrap();
+          // 上次活跃档案可能不是平台默认目录；未启动内核时用该目录启动。
+          await session.bootstrap(
+            startConfig: await widget.accountManager?.startupConfigForActive(),
+          );
+          // 内核就绪后回填当前账号 ID/数据目录，供多账号切换复用。
+          unawaited(widget.accountManager?.syncCurrentAccount());
           // 头像缓存初始化早于 core.start，彼时 settings.get 会失败；
           // 内核就绪后必须重新读取一次，否则左栏/「我的」页一直显示占位图标。
           unawaited(ProfileAvatarStore.instance.reload());
           await _reloadConversations();
+          // 联系人/群列表在页面 initState 时就会首次拉取；iOS 真机上
+          // gomobile 内核首次启动需生成主密钥，core.start 完成更慢，首次
+          // 拉取可能早于内核就绪并返回 NOT_STARTED，错误条一直挂着。
+          // 内核就绪后主动重拉一次，覆盖慢启动竞态。
+          unawaited(_contactsKey.currentState?.reload());
+          unawaited(_contactsKey.currentState?.reloadGroups());
           // 在线状态依赖会话列表里的对端账号，加载完成后启动轮询。
           _startPresencePolling(session);
           if (mounted) {
@@ -848,6 +1010,11 @@ class _AppShellState extends State<AppShell> {
           unawaited(_loadCoreInfo(session));
           return;
         } on NexmemException catch (error) {
+          if (error.code == 'UNAUTHORIZED' && mounted) {
+            _showMessage(
+              context.t('访问令牌无效或已轮换，请重新进入并填写 token'),
+            );
+          }
           if (!error.retryable || attempt == 2) {
             break;
           }
@@ -899,6 +1066,60 @@ class _AppShellState extends State<AppShell> {
       // 会话列表失败不阻断聊天页；状态条已由 state.changed / boot 反映。
       _logDegradation('加载会话列表', error, stack);
     }
+    await _reloadPeerDisplay();
+  }
+
+  /// 从通讯录回填单聊显示名：优先备注，其次昵称，最后账号短标签。
+  ///
+  /// 内核 `conversation.list` 的单聊 title 常为空，聊天头部与会话列表据此
+  /// 显示账号短串；这里用本机备注把展示名补齐，不改内核数据。
+  Future<void> _reloadPeerDisplay() async {
+    final CoreSession? session = widget.session;
+    if (session == null) {
+      return;
+    }
+    try {
+      final List<Contact> contacts = await session.contacts.list(limit: 1000);
+      final Map<String, ({String displayName, String remark})> next =
+          <String, ({String displayName, String remark})>{};
+      for (final Contact contact in contacts) {
+        final String peer = contact.peer.isNotEmpty
+            ? contact.peer
+            : normalizeAccountHex(contact.id);
+        final String remark = contact.note.trim();
+        final String nickname = contact.name.trim();
+        final String displayName = remark.isNotEmpty
+            ? remark
+            : (nickname.isNotEmpty
+                ? nickname
+                : shortAccountLabel(peer));
+        next[peer] = (displayName: displayName, remark: remark);
+      }
+      _peerDisplay
+        ..clear()
+        ..addAll(next);
+      for (final ConversationItem item in _conversations.sorted) {
+        if (item.isGroup || item.peer.isEmpty) {
+          continue;
+        }
+        final String? displayName = _peerDisplay[item.peer]?.displayName;
+        if (displayName != null && displayName != item.title) {
+          _conversations.upsert(item.copyWith(title: displayName));
+        }
+      }
+    } catch (error, stack) {
+      // 通讯录读取失败只影响展示名，不阻断会话列表。
+      _logDegradation('加载联系人显示名', error, stack);
+    }
+  }
+
+  ({String displayName, String remark})? _peerDisplayFor(
+    ConversationItem item,
+  ) {
+    if (item.isGroup || item.peer.isEmpty) {
+      return null;
+    }
+    return _peerDisplay[item.peer];
   }
 
   /// 启动在线状态轮询：首次立即刷新，之后每 20s 刷新一次。
@@ -1121,6 +1342,10 @@ class _AppShellState extends State<AppShell> {
     } else if (event.type == 'group.allowFriendAddChanged') {
       // 管理员广播了加好友开关变更，刷新已打开的群资料与成员面板。
       _allowFriendAddRevision.value++;
+    } else if (event.type == 'group.levelsChanged' ||
+        event.type == 'group.memberProfileChanged') {
+      // 等级配置或成员称呼/等级控制帧到达，刷新群资料与成员资料。
+      _groupProfileRevision.value++;
     } else if (event.type == 'conversation.changed') {
       unawaited(_reloadConversations());
     } else if (event.type == 'transfer.progress') {
@@ -1226,7 +1451,23 @@ class _AppShellState extends State<AppShell> {
 
   /// 新消息：刷新会话摘要；已打开的会话按 seq 增量补齐（P6-31）。
   Future<void> _onMessageNew(Map<String, dynamic> data) async {
+    // 入站消息（文本/语音/图片/文件）统一响一声 QQ 风格提示音；
+    // 自己发的消息（多端同步回来的 direction=out）不响。
+    if (data['direction'] == 'in') {
+      unawaited(_messageSound.notify());
+    }
     final Object? id = data['conversation_id'];
+    if (data['direction'] == 'in' && id is String && id.isNotEmpty) {
+      // 事件只有指针没有正文：通知不泄漏消息内容，点击后再拉取密文。
+      final ConversationItem? target = _conversations.byId(id);
+      unawaited(_push.onIncomingMessage(
+        conversationId: id,
+        title: target == null
+            ? context.t('新消息')
+            : _peerDisplayFor(target)?.displayName ?? target.title,
+        body: context.t('你有一条新消息，点击查看详情'),
+      ));
+    }
     final CoreSession? session = widget.session;
     if (id is! String || id.isEmpty || session == null) {
       return;
@@ -1376,6 +1617,7 @@ class _AppShellState extends State<AppShell> {
     _chats.remove(id)?.dispose();
     _conversations.remove(id);
     if (_selected?.id == id) {
+      _push.markConversationClosed(id);
       setState(() => _selected = null);
     }
   }
@@ -1421,6 +1663,8 @@ class _AppShellState extends State<AppShell> {
     bool desktop, {
     bool inlineInContacts = false,
   }) {
+    // 打开会话后同一会话的入站消息不再重复弹通知。
+    unawaited(_push.markConversationOpen(item.id));
     _conversations.markRead(item.id);
     unawaited(_ensureLoaded(item).then((_) => _markReadOnCore(item)));
     if (desktop) {
@@ -1447,12 +1691,22 @@ class _AppShellState extends State<AppShell> {
               conversation: item,
               store: _chatFor(item),
               presence: _presence,
-              onBack: () => Navigator.of(context).pop(),
+              displayName: _peerDisplayFor(item)?.displayName,
+              remark: _peerDisplayFor(item)?.remark ?? '',
+              onSetRemark: item.isGroup || item.peer.isEmpty
+                  ? null
+                  : (String value) => unawaited(_setPeerRemark(item, value)),
+              onBack: () {
+                _push.markConversationClosed(item.id);
+                Navigator.of(context).pop();
+              },
               onSent: (String text) => _conversations.touch(item.id, text),
               onOpenGroupInfo: item.isGroup ? () => _openGroupInfo(item) : null,
               onStartCall: (bool video) => _startCall(item, video),
               onStartRemote: item.isGroup ? null : () => _startRemote(item),
               onPickFile: widget.session?.pickFile,
+              // Web 端内核在网关进程内，媒体走鉴权 inline 链接在线播放。
+              mediaSourceUri: kIsWeb ? widget.session?.mediaSourceUri : null,
               onDeleteMessage: widget.session == null
                   ? null
                   : (String msgUuid) =>
@@ -1544,7 +1798,14 @@ class _AppShellState extends State<AppShell> {
     if (target == null || !mounted) {
       return false;
     }
-    await _chatFor(target).send(message.text, senderName: context.t('我'));
+    final String selfName = context.t('我');
+    final String failureTemplate = context.t('转发失败：{0}');
+    try {
+      await _chatFor(target).send(message.text, senderName: selfName);
+    } on Object catch (error) {
+      _showMessage(failureTemplate.replaceFirst('{0}', '$error'));
+      return false;
+    }
     _conversations.touch(target.id, message.text);
     return true;
   }
@@ -1559,6 +1820,62 @@ class _AppShellState extends State<AppShell> {
       return;
     }
     await session.recallMessage(conversation.id, message.id);
+  }
+
+  /// 下载群文件（A-02）：气泡提供入口，壳层解析落盘目录后调用内核
+  /// `file.downloadGroup`，返回绝对路径供气泡提示用户。
+  Future<String?> _downloadGroupFile(
+    ConversationItem conversation,
+    ChatMessage message,
+  ) async {
+    final CoreSession? session = widget.session;
+    final ChatAttachment? attachment = message.attachment;
+    if (session == null ||
+        attachment == null ||
+        !attachment.canDownloadGroupFile) {
+      return null;
+    }
+    // 异步前取本地化器，避免在 await 之后使用 BuildContext。
+    final l10n = context.l10n;
+    try {
+      final String target =
+          await session.groupFileDownloadPath(attachment.name);
+      final GroupFileDownload result = await session.downloadGroupFile(
+        conversationId: conversation.id,
+        attachment: attachment,
+        destPath: target,
+      );
+      // Web 端文件落在网关服务端，浏览器需经鉴权 /download 取回本地。
+      final Future<void> Function(String, String)? toBrowser =
+          session.downloadToBrowser;
+      if (toBrowser != null) {
+        await toBrowser(result.path, attachment.name);
+        return attachment.name;
+      }
+      return result.path;
+    } on Object catch (error) {
+      _showMessage(l10n.t('群文件下载失败：{0}', [error]));
+      return null;
+    }
+  }
+
+  /// 保存聊天附件到本机：群文件先经内核解密下载，其余直接用已落盘路径。
+  Future<String?> _saveChatAttachment(
+    ConversationItem conversation,
+    ChatMessage message,
+  ) async {
+    final CoreSession? session = widget.session;
+    final ChatAttachment? attachment = message.attachment;
+    if (session == null || attachment == null) {
+      return null;
+    }
+    if (conversation.isGroup && attachment.canDownloadGroupFile) {
+      return _downloadGroupFile(conversation, message);
+    }
+    if (attachment.path.trim().isEmpty || session.saveChatFile == null) {
+      return null;
+    }
+    return session.saveChatFile!(attachment.path, attachment.name);
   }
 
   /// 清空聊天记录（P6-13）：先让内核清空本机历史，成功后再同步列表摘要；
@@ -1596,14 +1913,10 @@ class _AppShellState extends State<AppShell> {
         return;
       }
       _conversations.upsert(item);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            error.message.isEmpty
-                ? context.t('删除会话失败（{0}）', [error.code])
-                : error.message,
-          ),
-        ),
+      _showMessage(
+        error.message.isEmpty
+            ? context.t('删除会话失败（{0}）', [error.code])
+            : error.message,
       );
       return;
     } catch (error, stack) {
@@ -1619,6 +1932,7 @@ class _AppShellState extends State<AppShell> {
     _lastSeq.remove(item.id);
     _chats.remove(item.id)?.dispose();
     if (_selected?.id == item.id) {
+      _push.markConversationClosed(item.id);
       setState(() => _selected = null);
     }
   }
@@ -1674,8 +1988,7 @@ class _AppShellState extends State<AppShell> {
     final String detail = error == null || error.message.isEmpty
         ? ''
         : '：${error.message}';
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('$action$detail')));
+    _showMessage('$action$detail');
   }
 
   /// 搜索命中：打开会话并向上翻页直到命中消息入列，再定位高亮（P6-07）。
@@ -1713,6 +2026,36 @@ class _AppShellState extends State<AppShell> {
     return store.byId(msgUuid) != null;
   }
 
+  /// 在聊天头部设置单聊备注，成功后本机回填显示名与会话标题。
+  Future<void> _setPeerRemark(ConversationItem item, String remark) async {
+    final CoreSession? session = widget.session;
+    if (session == null || item.isGroup || item.peer.isEmpty) {
+      return;
+    }
+    final String peer = item.peer;
+    final String displayName = remark.isNotEmpty
+        ? remark
+        : shortAccountLabel(peer);
+    final String oldTitle = item.title;
+    // 先更新界面，失败时回滚，保持与好友详情页一致的体验。
+    _peerDisplay[peer] = (displayName: displayName, remark: remark);
+    _conversations.upsert(item.copyWith(title: displayName));
+    try {
+      await session.contacts.setRemark(peer, remark);
+      unawaited(_contactsKey.currentState?.reload());
+      await _reloadPeerDisplay();
+    } on NexmemException catch (error) {
+      _peerDisplay[peer] = (
+        displayName: oldTitle,
+        remark: oldTitle == remark ? '' : oldTitle,
+      );
+      _conversations.upsert(item.copyWith(title: oldTitle));
+      if (mounted) {
+        _showMessage(error.message.isEmpty ? error.code : error.message);
+      }
+    }
+  }
+
   /// 从好友资料「发消息」打开单聊：会话 ID 与内核 `dm.ConversationID` 同构。
   void _openContact(
     Contact contact,
@@ -1721,8 +2064,7 @@ class _AppShellState extends State<AppShell> {
   }) {
     final String self = widget.session?.accountId ?? '';
     if (self.isEmpty || contact.peer.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(context.t('账号未就绪，暂时无法发起聊天'))));
+      _showMessage(context.t('账号未就绪，暂时无法发起聊天'));
       return;
     }
     final String id = dmConversationId(selfAccount: self, peer: contact.peer);
@@ -1768,6 +2110,7 @@ class _AppShellState extends State<AppShell> {
             announcementRevision: _announcementRevision,
             onAllowFriendAddChanged: (_) => _allowFriendAddRevision.value++,
             allowFriendAddRevision: _allowFriendAddRevision,
+            profileRevision: _groupProfileRevision,
           ),
         ),
       ),
@@ -1841,9 +2184,26 @@ class _AppShellState extends State<AppShell> {
       onOpenContactChat: (Contact contact) =>
           _openContact(contact, desktop, inlineInContacts: true),
       onOpenGroup: (String groupId, String title) =>
-          _createGroupConversation(groupId, title, desktop),
+          _createGroupConversation(
+            groupId,
+            title,
+            desktop,
+            inlineInContacts: true,
+          ),
       onOpenPane: _openContactsPane,
+      onToggleFriends: () {
+        // 点「好友」展开左栏分组：若右栏不是聊天/资料，则回到好友面板；
+        // 已经在聊天时保持当前会话，避免误关聊天框。
+        if (_contactsPane != '会话' && _contactsPane != '好友资料') {
+          setState(() {
+            _contactsPane = '好友';
+            _contactsPaneData = null;
+          });
+        }
+      },
       onContactsChanged: () {
+        // 好友备注变更后同步回填单聊显示名与会话标题（聊天头部/列表跟随）。
+        unawaited(_reloadPeerDisplay());
         if (mounted) {
           setState(() {});
         }
@@ -1870,6 +2230,8 @@ class _AppShellState extends State<AppShell> {
       settings: widget.session?.settings ?? const UnavailableSettingsService(),
       session: widget.session,
       coreInfo: _coreInfo,
+      accountManager: widget.accountManager,
+      push: _push,
       profileOnly: profileOnly,
       onOpenProfileView: () => _openProfileView(desktop),
       onOpenPane: (String label) => _openSettingsPane(label, desktop),
@@ -1890,6 +2252,7 @@ class _AppShellState extends State<AppShell> {
     return FileHubPage(
       key: const ValueKey<String>('file-hub'),
       session: session,
+      mediaSourceUri: kIsWeb ? session.mediaSourceUri : null,
     );
   }
 
@@ -1926,6 +2289,7 @@ class _AppShellState extends State<AppShell> {
       return;
     }
     if (_selected != null) {
+      _push.markConversationClosed(_selected!.id);
       setState(() => _selected = null);
       return;
     }
@@ -1963,9 +2327,15 @@ class _AppShellState extends State<AppShell> {
                         child: Column(
                           children: <Widget>[
                             ConnectionStatusBar(status: status),
-                            if (_webNoticeOpen)
-                              WebOnlineNoticeBanner(
-                                onDismiss: _dismissWebNotice,
+                            if (_callInfo != null)
+                              CallNoticeBar(
+                                info: _callInfo!,
+                                peerName: _callDisplayName(),
+                                ringing: !_callPageOpen,
+                                onOpen: _openCallPage,
+                                onReject: _callInfo!.state == CallState.incoming
+                                    ? () => unawaited(_call?.reject())
+                                    : null,
                               ),
                             if (_remoteHostInfo != null &&
                                 _remoteHostInfo!.isHost &&
@@ -1986,11 +2356,34 @@ class _AppShellState extends State<AppShell> {
                       ),
                       bottomNavigationBar: desktop ? null : _buildBottomTabs(),
                     ),
-                    if (_callInfo != null) _buildCallOverlay(),
+                    if (_callInfo != null && _callPageOpen)
+                      _buildCallOverlay(),
                     if ((_remoteHostInfo?.isIncoming ?? false) ||
                         (_activeRemotePeer != null &&
                             _remotePeerInfos[_activeRemotePeer] != null))
                       _buildRemoteOverlay(),
+                    if (_webNoticeOpen)
+                      Positioned(
+                        top: 36,
+                        right: NexmemMetrics.space12,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 420),
+                          child: Material(
+                            elevation: 3,
+                            borderRadius: BorderRadius.circular(12),
+                            clipBehavior: Clip.antiAlias,
+                            child: WebOnlineNoticeBanner(
+                              onDismiss: _dismissWebNotice,
+                            ),
+                          ),
+                        ),
+                      ),
+                    AppToastOverlay(
+                      controller: _toasts,
+                      top: _webNoticeOpen
+                          ? 96
+                          : (_callInfo != null ? 80 : 36),
+                    ),
                   ],
                 ),
               ),
@@ -2001,13 +2394,21 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
+  /// 点击状态栏下方的通话通知条：展开全屏通话页。
+  void _openCallPage() {
+    if (_callInfo == null) {
+      return;
+    }
+    setState(() => _callPageOpen = true);
+  }
+
   /// 全屏通话页（P6-28）。结束态由监听器延时收起，这里只负责渲染。
   Widget _buildCallOverlay() {
     final CallService call = _call!;
     final CallInfo info = _callInfo!;
     return CallPage(
       info: info,
-      peerName: _callPeerName,
+      peerName: _callDisplayName(),
       onAccept: () => unawaited(call.answer()),
       onReject: () => unawaited(call.reject()),
       onHangup: () => unawaited(call.endCall()),
@@ -2066,6 +2467,8 @@ class _AppShellState extends State<AppShell> {
           active: entry.key == peer,
         ),
     ];
+    final RemoteGroupController? group = _remoteGroup;
+    group?.sync();
     return RemoteControlPage(
       key: ValueKey<String>('remote-page-$peer'),
       info: info,
@@ -2075,6 +2478,8 @@ class _AppShellState extends State<AppShell> {
       onShowMessage: _showMessage,
       sessions: sessions,
       onSelectSession: _selectRemotePeer,
+      groupController: group,
+      onGroupChanged: () => setState(() {}),
     );
   }
 
@@ -2168,10 +2573,17 @@ class _AppShellState extends State<AppShell> {
   }) {
     final bool showProfile = _profileVisibleFor(current, allowProfile);
     final MentionInsertController mention = _mentionControllerFor(current);
+    final ({String displayName, String remark})? peerDisplay =
+        _peerDisplayFor(current);
     final Widget chat = ChatPage(
       conversation: current,
       store: _chatFor(current),
       presence: _presence,
+      displayName: peerDisplay?.displayName,
+      remark: peerDisplay?.remark ?? '',
+      onSetRemark: current.isGroup || current.peer.isEmpty
+          ? null
+          : (String value) => unawaited(_setPeerRemark(current, value)),
       onBack: onBack,
       onSent: (String text) => _conversations.touch(current.id, text),
       onOpenGroupInfo: current.isGroup ? () => _openGroupInfo(current) : null,
@@ -2182,6 +2594,19 @@ class _AppShellState extends State<AppShell> {
           : null,
       profileOpen: showProfile,
       onPickFile: widget.session?.pickFile,
+      // Web 端内核在网关进程内，媒体走鉴权 inline 链接在线播放。
+      mediaSourceUri: kIsWeb ? widget.session?.mediaSourceUri : null,
+      onDownloadGroupFile: widget.session == null
+          ? null
+          : (ConversationItem conversation, ChatMessage message) =>
+              _downloadGroupFile(conversation, message),
+      onSaveFile: widget.session == null
+          ? null
+          : (ChatMessage message) => _saveChatAttachment(current, message),
+      onReadFileBytes: widget.session?.readChatFileBytes == null
+          ? null
+          : (ChatMessage message) =>
+              widget.session!.readChatFileBytes!(message.attachment!.path),
       onDeleteMessage: widget.session == null
           ? null
           : (String msgUuid) =>
@@ -2219,6 +2644,11 @@ class _AppShellState extends State<AppShell> {
             conversation: current,
             groups: _groups,
             selfAccount: widget.session?.accountId ?? '',
+            displayName: peerDisplay?.displayName,
+            remark: peerDisplay?.remark ?? '',
+            onSetRemark: current.isGroup || current.peer.isEmpty
+                ? null
+                : (String value) => unawaited(_setPeerRemark(current, value)),
             onClose: () => setState(() => _profileOpenOverride = false),
             onOpenGroupInfo: current.isGroup
                 ? () => _openGroupInfo(current)
@@ -2271,6 +2701,9 @@ class _AppShellState extends State<AppShell> {
   /// 联系人页各入口：桌面在右栏展示对应内容，手机 push 全屏页。
   void _openContactsPane(String pane, {Object? data}) {
     final bool desktop = _desktopLayout;
+    if (pane == '群聊') {
+      unawaited(_contactsKey.currentState?.reloadGroups());
+    }
     if (desktop) {
       setState(() {
         _section = 1;
@@ -2331,13 +2764,15 @@ class _AppShellState extends State<AppShell> {
                 _desktopLayout,
                 inlineInContacts: _desktopLayout,
               ),
-          onGroupCreated: (String groupId, String title) =>
-              _createGroupConversation(
-                groupId,
-                title,
-                _desktopLayout,
-                inlineInContacts: _desktopLayout,
-              ),
+          onGroupCreated: (String groupId, String title) {
+            unawaited(_contactsKey.currentState?.reloadGroups());
+            _createGroupConversation(
+              groupId,
+              title,
+              _desktopLayout,
+              inlineInContacts: _desktopLayout,
+            );
+          },
         );
       case '好友资料':
         if (data is! Contact) {
@@ -2398,15 +2833,94 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  /// 退出应用：先停内核再请求关闭进程；Web 端展示可重新进入的退出页。
+  Future<void> _confirmExit() async {
+    final bool? confirmed = await showPaneDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: Text(context.t('退出应用')),
+        content: Text(context.t('确定要退出奈讯联吗？本地账号数据会保留')),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(context.t('取消')),
+          ),
+          FilledButton(
+            key: const ValueKey<String>('shell-exit-confirm'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(context.t('确定')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    await widget.accountManager?.exitApp();
+    await exitProcess();
+  }
+
   /// 设置列表项：桌面在右栏展示对应面板，手机 push 全屏页，均不再弹框。
   void _openSettingsPane(String label, bool desktop) {
-    // 「个人资料」属于「我的」，其余项属于「设置」。
-    final int section = label == '个人资料' ? _sectionProfile : _sectionSettings;
+    // 资料、远程设备、账号发现、社交中心与账号安全属于「我的」，其余项属于「设置」。
+    if (label == '退出应用') {
+      unawaited(_confirmExit());
+      return;
+    }
+    final int section = label == '个人资料' ||
+            label == '远程设备' ||
+            label == '账号发现' ||
+            label == '设备地图' ||
+            label == '社交中心' ||
+            label == '账号与安全' ||
+            label == '账号管理' ||
+            label == '临时锁'
+        ? _sectionProfile
+        : _sectionSettings;
     if (desktop) {
       setState(() {
         _section = section;
         _settingsPane = label;
       });
+      return;
+    }
+    // 远程设备页与账号发现页自带 Scaffold + AppBar，不能再套
+    // SettingsPanePage，否则窄屏下会出现两行重复的标题栏。
+    if (label == '远程设备') {
+      unawaited(
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (BuildContext context) =>
+                _buildRemoteDevicesPage(embedded: false),
+          ),
+        ),
+      );
+      return;
+    }
+    if (label == '账号发现') {
+      unawaited(
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (BuildContext context) =>
+                _buildDeviceDiscoveryPage(embedded: false),
+          ),
+        ),
+      );
+      return;
+    }
+    if (label == '设备地图') {
+      unawaited(
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (BuildContext context) => DeviceMapPage(
+              devices: _remoteDevices.devices,
+              settings:
+                  widget.session?.settings ?? const UnavailableSettingsService(),
+              embedded: false,
+            ),
+          ),
+        ),
+      );
       return;
     }
     final WidgetBuilder builder = label == '个人资料'
@@ -2439,7 +2953,96 @@ class _AppShellState extends State<AppShell> {
     reportSink: _reportSink,
     coreInfo: _coreInfo,
     session: widget.session,
+    accountManager: widget.accountManager,
+    push: _push,
   );
+
+  /// 「我的 → 远程设备」：纯台账管理页，只负责被控电脑/手机等设备的增删改与群控。
+  Widget _buildRemoteDevicesPage({required bool embedded}) {
+    final Map<String, RemoteInfo> sessions = Map<String, RemoteInfo>.from(
+      _remotePeerInfos,
+    );
+    return RemoteDevicesPage(
+      key: const ValueKey<String>('remote-devices-page'),
+      directory: _remoteDevices,
+      embedded: embedded,
+      actions: RemoteDevicesActions(
+        sessions: sessions,
+        onConnect: (String peer, String name) => _startRemotePeer(
+          peer,
+          name,
+          credential: _remoteDevices.find(peer)?.credential ?? '',
+          silent: true,
+        ),
+        onDisconnect: (String peer) {
+          // 台账里的「断开」必须真正结束会话；dismiss 只清终态 UI，
+          // 不会向对端发 end，对端会一直显示「正在控制本机」。
+          final RemoteControlService? remote = _remotePeers[peer];
+          if (remote != null) {
+            unawaited(remote.end());
+          }
+        },
+        groupController: _remoteGroup,
+        onGroupChanged: () {
+          if (mounted) {
+            setState(() {});
+          }
+        },
+      ),
+    );
+  }
+
+  /// 「我的 → 账号发现」：扫描、地图、自动归属地与距离都集中在这里。
+  Widget _buildDeviceDiscoveryPage({required bool embedded}) {
+    final CoreSession? session = widget.session;
+    final bool desktop = MediaQuery.sizeOf(context).width >= 900;
+    return DeviceDiscoverySheet(
+      key: const ValueKey<String>('device-discovery-page'),
+      directory: _remoteDevices,
+      embedded: embedded,
+      discover: session == null
+          ? ({required int limit, required int offset}) async =>
+              DeviceDiscoverPage(
+                items: const <DiscoveredDevice>[],
+                total: 0,
+                offset: offset,
+                limit: limit,
+              )
+          : ({required int limit, required int offset}) =>
+              session.discoverDevices(limit: limit, offset: offset),
+      geo: _remoteGeo,
+      localLocation: _localLocation,
+      onOpenMap: () => _openSettingsPane('设备地图', desktop),
+      onAddFriend: (DiscoveredDevice device) async {
+        final CoreSession? current = widget.session;
+        if (current == null || device.accountId.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(context.t(
+                current == null
+                    ? '内核尚未启动，社交功能暂不可用'
+                    : '该账号暂无可用的公钥标识',
+              ))),
+            );
+          }
+          return false;
+        }
+        final bool? sent = await showAddFriendDialogWithPreset(
+          context,
+          current.contacts,
+          account: device.accountId,
+          alias: device.displayName,
+          session: current,
+        );
+        return sent == true;
+      },
+      onAdded: () {
+        if (mounted) {
+          setState(() {});
+        }
+      },
+    );
+  }
 
   /// 「我的」右栏内容：默认只读资料，点「个人资料」进入编辑面板。
   Widget _buildProfilePane() {
@@ -2449,6 +3052,47 @@ class _AppShellState extends State<AppShell> {
       return ProfileDetailPanel(
         account: widget.session?.account,
         settings: settings,
+      );
+    }
+    if (_settingsPane == '远程设备') {
+      return _buildRemoteDevicesPage(embedded: true);
+    }
+    if (_settingsPane == '账号发现') {
+      return _buildDeviceDiscoveryPage(embedded: true);
+    }
+    if (_settingsPane == '设备地图') {
+      return DeviceMapPage(
+        key: const ValueKey<String>('device-map-pane'),
+        devices: _remoteDevices.devices,
+        settings: settings,
+      );
+    }
+    if (_settingsPane == '社交中心') {
+      // 社交中心本身就是铺满面板的 Column，直接嵌入右栏即可。
+      // 不能再走 EmbeddedSettingsPane 的 dialog route：那会引入模态 barrier，
+      // 让好友申请卡片看起来像浮在灰色遮罩上的独立弹窗。
+      final CoreSession? session = widget.session;
+      if (session == null) {
+        return Center(child: Text(context.t('内核尚未启动，社交功能暂不可用')));
+      }
+      return SocialHubPage(key: const ValueKey<String>('social-hub-pane'), session: session);
+    }
+    if (_settingsPane == '账号与安全') {
+      return _buildEmbeddedPane(_settingsPane!, withHeader: true);
+    }
+    if ((_settingsPane == '账号管理' || _settingsPane == '临时锁') &&
+        widget.accountManager != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          PaneHeader(title: context.t(_settingsPane!)),
+          Expanded(
+            child: AccountManagerPage(
+              manager: widget.accountManager!,
+              focusLock: _settingsPane == '临时锁',
+            ),
+          ),
+        ],
       );
     }
     return ProfileViewPanel(
@@ -2478,6 +3122,21 @@ class _AppShellState extends State<AppShell> {
             widget.session?.settings ?? const UnavailableSettingsService(),
       );
     }
+    if (label == '社交中心') {
+      // 与「我的」入口保持一致：社交中心直接铺满右栏，不走嵌入式 dialog route。
+      final CoreSession? session = widget.session;
+      if (session == null) {
+        return Center(child: Text(context.t('内核尚未启动，社交功能暂不可用')));
+      }
+      return SocialHubPage(key: const ValueKey<String>('social-hub-pane'), session: session);
+    }
+    return _buildEmbeddedPane(label, withHeader: false);
+  }
+
+  /// 把以 `Dialog` 形态实现的历史面板复用为右栏内嵌内容。
+  ///
+  /// [withHeader] 为 true 时补一条标题栏；内容本身已经带 PaneHeader 时传 false。
+  Widget _buildEmbeddedPane(String label, {required bool withHeader}) {
     final Widget pane = EmbeddedSettingsPane(
       key: ValueKey<String>('settings-pane-$label-$_settingsPaneRevision'),
       builder: _settingsPaneBuilder(label),
@@ -2487,17 +3146,16 @@ class _AppShellState extends State<AppShell> {
         }
       },
     );
-    if (label == '社交中心') {
-      // 内嵌版社交中心不带自己的 PaneHeader，统一由右栏/全屏页外层提供标题。
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          PaneHeader(title: context.t(label)),
-          Expanded(child: pane),
-        ],
-      );
+    if (!withHeader) {
+      return pane;
     }
-    return pane;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        PaneHeader(title: context.t(label)),
+        Expanded(child: pane),
+      ],
+    );
   }
 
   Widget _buildRail() {
@@ -2602,14 +3260,16 @@ class _RailButton extends StatelessWidget {
                 color: Colors.white.withValues(alpha: selected ? 1 : 0.82),
               ),
               if (selected)
-                Positioned(
-                  left: 0,
-                  child: Container(
+                const Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: SizedBox(
                     width: 3,
                     height: 20,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(2),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.all(Radius.circular(2)),
+                      ),
                     ),
                   ),
                 ),

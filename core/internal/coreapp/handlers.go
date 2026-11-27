@@ -42,6 +42,21 @@ func (a *App) stopHandler() gateway.HandlerFunc {
 	}
 }
 
+// dataDirHandler 实现 core.dataDir：返回当前内核数据目录，供客户端在
+// 多账号切换（core.stop + core.start 指定 data_dir）后恢复到原账号。
+func (a *App) dataDirHandler() gateway.HandlerFunc {
+	return func(_ context.Context, _ json.RawMessage) (any, *gateway.Error) {
+		a.mu.RLock()
+		dir := a.cfg.DataDir
+		started := a.started
+		a.mu.RUnlock()
+		if !started {
+			return nil, gateway.NewError(gateway.CodeNotStarted, "内核尚未启动")
+		}
+		return map[string]any{"data_dir": dir}, nil
+	}
+}
+
 // accountHandler 实现 account.me：返回当前账号与设备信息。
 func (a *App) accountHandler() gateway.HandlerFunc {
 	return func(_ context.Context, _ json.RawMessage) (any, *gateway.Error) {

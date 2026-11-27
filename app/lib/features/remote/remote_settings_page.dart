@@ -3,18 +3,33 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/pane_header.dart';
+import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import 'input/desktop_input_injector.dart';
 import 'remote_audit.dart';
 import 'remote_control_service.dart';
+import 'remote_password.dart';
+import 'remote_password_dialog.dart';
 import 'remote_prefs.dart';
 import 'remote_session.dart';
 import 'remote_storage.dart';
 
 class RemoteSettingsPage extends StatefulWidget {
-  const RemoteSettingsPage({super.key, this.embedded = true});
+  const RemoteSettingsPage({
+    super.key,
+    this.embedded = true,
+    this.injectorFactory,
+    this.storageFactory,
+  });
 
   final bool embedded;
+
+  /// 测试可注入假的注入器；生产环境为 null，按平台创建真实实现。
+  final DesktopInputInjector Function()? injectorFactory;
+
+  /// 测试可注入内存存储；生产环境为 null，按平台创建真实存储。
+  final RemoteStorage Function()? storageFactory;
 
   @override
   State<RemoteSettingsPage> createState() => _RemoteSettingsPageState();
@@ -22,11 +37,15 @@ class RemoteSettingsPage extends StatefulWidget {
 
 class _RemoteSettingsPageState extends State<RemoteSettingsPage> {
   final RemotePrefs _prefs = RemotePrefs.instance;
-  late final RemoteStorage _storage = createRemoteStorage();
+  late final RemoteStorage _storage =
+      (widget.storageFactory ?? createRemoteStorage)();
   late final RemoteAudit _audit = RemoteAudit(_storage);
-  late final DesktopInputInjector _injector = createDesktopInputInjector();
+  late final DesktopInputInjector _injector =
+      (widget.injectorFactory ?? createDesktopInputInjector)();
   InputPermissionStatus _status = InputPermissionStatus.unknown;
   bool _ready = false;
+  bool _checking = false;
+  bool _requesting = false;
 
   @override
   void initState() {
@@ -54,6 +73,128 @@ class _RemoteSettingsPageState extends State<RemoteSettingsPage> {
     }
   }
 
+  /// 开启被控前必须先有密码；已有密码则需要重新输入才能开启。
+  Future<void> _toggleEnabled(bool value) async {
+    if (!value) {
+      _prefs.enabled = false;
+      await _save();
+      return;
+    }
+    final bool firstTime = _prefs.passwordCredential.isEmpty;
+    final String title = context.t(firstTime ? '设置远程控制密码' : '输入远程控制密码');
+    final String label = context.t('开启远程控制');
+    final String message = context.t(
+      firstTime
+          ? '开启被远程控制前必须设置密码；只保存校验值，不保存明文。'
+          : '请输入已设置的远程控制密码以确认开启。',
+    );
+    final String? password = await showRemotePasswordDialog(
+      context: context,
+      title: title,
+      confirmLabel: label,
+      message: message,
+      expectedCredential: firstTime ? null : _prefs.passwordCredential,
+    );
+    if (password == null || !mounted) {
+      return;
+    }
+    if (firstTime) {
+      _prefs.passwordCredential = remotePasswordCredential(password);
+    }
+    _prefs.enabled = true;
+    await _save();
+  }
+
+  Future<void> _changePassword() async {
+    final bool hasPassword = _prefs.passwordCredential.isNotEmpty;
+    if (hasPassword) {
+      final String? verified = await showRemotePasswordDialog(
+        context: context,
+        title: context.t('输入当前远程控制密码'),
+        confirmLabel: context.t('下一步'),
+        expectedCredential: _prefs.passwordCredential,
+      );
+      if (verified == null || !mounted) {
+        return;
+      }
+    }
+    final String title = context.t(
+      hasPassword ? '设置新的远程控制密码' : '设置远程控制密码',
+    );
+    final String confirmLabel = context.t('保存');
+    final String message = context.t(
+      '只保存校验值，不保存明文；已有台账密码需要同步修改。',
+    );
+    final String updatedLabel = context.t('远程控制密码已更新');
+    final String? next = await showRemotePasswordDialog(
+      context: context,
+      title: title,
+      confirmLabel: confirmLabel,
+      message: message,
+    );
+    if (next == null || !mounted) {
+      return;
+    }
+    _prefs.passwordCredential = remotePasswordCredential(next);
+    await _save();
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(updatedLabel)),
+    );
+  }
+
+  /// 权限文案在 await 前取好，避免跨异步间隔使用 BuildContext。
+  Map<InputPermissionStatus, String> _statusLabels() =>
+      <InputPermissionStatus, String>{
+        for (final InputPermissionStatus status in InputPermissionStatus.values)
+          status: context.t(status.label),
+      };
+
+  /// 点击「检查权限」：即使状态没变也要给出 SnackBar 反馈，
+  /// 否则不支持注入的平台上按钮看起来像「点了没反应」。
+  Future<void> _checkPermissions() async {
+    if (_checking) {
+      return;
+    }
+    final String donePrefix = context.t('权限检查完成');
+    final Map<InputPermissionStatus, String> labels = _statusLabels();
+    setState(() => _checking = true);
+    final InputPermissionStatus status = await _injector.checkPermissions();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _status = status;
+      _checking = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$donePrefix：${labels[status]}')),
+    );
+  }
+
+  /// 点击「前往授权」：同样给出明确结果反馈。
+  Future<void> _requestPermissions() async {
+    if (_requesting) {
+      return;
+    }
+    final String donePrefix = context.t('授权请求已处理');
+    final Map<InputPermissionStatus, String> labels = _statusLabels();
+    setState(() => _requesting = true);
+    final InputPermissionStatus status = await _injector.requestPermissions();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _status = status;
+      _requesting = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$donePrefix：${labels[status]}')),
+    );
+  }
+
   @override
   void dispose() {
     unawaited(_injector.dispose());
@@ -63,28 +204,16 @@ class _RemoteSettingsPageState extends State<RemoteSettingsPage> {
   @override
   Widget build(BuildContext context) {
     if (!_ready) {
-      return const SizedBox(
-        width: 440,
-        height: 240,
-        child: Center(child: CircularProgressIndicator()),
-      );
+      // 不写死宽度：本页在手机端以全屏设置页打开，固定 440 会横向溢出。
+      return const Center(child: CircularProgressIndicator());
     }
     final ThemeData theme = Theme.of(context);
     final bool hostSupported = RemoteControlService.hostSupported;
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 460, maxHeight: 540),
-      child: ListView(
-        shrinkWrap: true,
-        children: <Widget>[
+    final Widget content = ListView(
+      padding: const EdgeInsets.all(NexmemMetrics.space16),
+      children: <Widget>[
           Text(
-            context.t('远程控制'),
-            style: theme.textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            context.t('允许联系人查看并操作本机屏幕；所有会话都需要你确认。'),
+            context.t('聊天发起的远控需要你确认；已保存的远程设备凭密码可静默控制。'),
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.outline,
             ),
@@ -105,26 +234,27 @@ class _RemoteSettingsPageState extends State<RemoteSettingsPage> {
             contentPadding: EdgeInsets.zero,
             value: _prefs.enabled,
             onChanged: hostSupported
-                ? (bool value) {
-                    _prefs.enabled = value;
-                    _save();
-                  }
+                ? (bool value) => unawaited(_toggleEnabled(value))
                 : null,
             title: Text(context.t('允许被远程控制')),
-            subtitle: Text(context.t('关闭后拒绝所有远控请求')),
+            subtitle: Text(context.t('开启前必须设置密码；关闭后拒绝所有远控请求')),
           ),
-          SwitchListTile(
-            key: const ValueKey<String>('remote-confirm'),
+          ListTile(
+            key: const ValueKey<String>('remote-password-change'),
             contentPadding: EdgeInsets.zero,
-            value: _prefs.requireConfirm,
-            onChanged: _prefs.enabled
-                ? (bool value) {
-                    _prefs.requireConfirm = value;
-                    _save();
-                  }
-                : null,
-            title: Text(context.t('每次请求都需要确认')),
-            subtitle: Text(context.t('关闭后按下方授权能力自动接受')),
+            leading: const Icon(Icons.lock_outline),
+            title: Text(context.t('远程控制密码')),
+            subtitle: Text(
+              context.t(_prefs.passwordCredential.isEmpty
+                  ? '未设置，无法开启被远程控制'
+                  : '已设置（仅保存校验值）'),
+            ),
+            trailing: TextButton(
+              onPressed: hostSupported ? () => unawaited(_changePassword()) : null,
+              child: Text(context.t(_prefs.passwordCredential.isEmpty
+                  ? '设置'
+                  : '修改')),
+            ),
           ),
           const Divider(),
           Text(
@@ -166,11 +296,11 @@ class _RemoteSettingsPageState extends State<RemoteSettingsPage> {
             title: Text(context.t('空闲自动断开')),
             trailing: DropdownButton<int>(
               value: _prefs.idleMinutes,
-              items: const <DropdownMenuItem<int>>[
-                DropdownMenuItem<int>(value: 5, child: Text('5 分钟')),
-                DropdownMenuItem<int>(value: 15, child: Text('15 分钟')),
-                DropdownMenuItem<int>(value: 30, child: Text('30 分钟')),
-                DropdownMenuItem<int>(value: 60, child: Text('60 分钟')),
+              items: <DropdownMenuItem<int>>[
+                DropdownMenuItem<int>(value: 5, child: Text(context.t('5 分钟'))),
+                DropdownMenuItem<int>(value: 15, child: Text(context.t('15 分钟'))),
+                DropdownMenuItem<int>(value: 30, child: Text(context.t('30 分钟'))),
+                DropdownMenuItem<int>(value: 60, child: Text(context.t('60 分钟'))),
               ],
               onChanged: (int? value) {
                 if (value == null) {
@@ -193,7 +323,7 @@ class _RemoteSettingsPageState extends State<RemoteSettingsPage> {
           ),
           const SizedBox(height: 4),
           Text(
-            _injector.permissionHint,
+            context.t(_injector.permissionHint),
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.outline,
             ),
@@ -203,26 +333,26 @@ class _RemoteSettingsPageState extends State<RemoteSettingsPage> {
             children: <Widget>[
               OutlinedButton(
                 key: const ValueKey<String>('remote-check-permission'),
-                onPressed: () async {
-                  final InputPermissionStatus status =
-                      await _injector.checkPermissions();
-                  if (mounted) {
-                    setState(() => _status = status);
-                  }
-                },
-                child: Text(context.t('检查权限')),
+                onPressed: _checking ? null : _checkPermissions,
+                child: _checking
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(context.t('检查权限')),
               ),
               const SizedBox(width: 8),
               FilledButton.tonal(
                 key: const ValueKey<String>('remote-request-permission'),
-                onPressed: () async {
-                  final InputPermissionStatus status =
-                      await _injector.requestPermissions();
-                  if (mounted) {
-                    setState(() => _status = status);
-                  }
-                },
-                child: Text(context.t('前往授权')),
+                onPressed: _requesting ? null : _requestPermissions,
+                child: _requesting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(context.t('前往授权')),
               ),
             ],
           ),
@@ -299,8 +429,26 @@ class _RemoteSettingsPageState extends State<RemoteSettingsPage> {
             ),
           ),
           const SizedBox(height: 8),
-        ],
-      ),
+      ],
+    );
+    if (widget.embedded) {
+      // 与设备列表、文件共享等页面一致：顶部标题栏 + 带内边距的列表。
+      // 外层 EmbeddedSettingsPane 是透明、铺满的 Dialog，这里用不透明
+      // 底色收住，避免底层列表透出；标题改由 PaneHeader 提供。
+      return Material(
+        color: theme.colorScheme.surface,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            PaneHeader(title: context.t('远程控制')),
+            Expanded(child: content),
+          ],
+        ),
+      );
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 460, maxHeight: 540),
+      child: content,
     );
   }
 

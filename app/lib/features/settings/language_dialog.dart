@@ -1,8 +1,8 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
 
-import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 
 /// 语言选择对话框：跟随系统 + 全部内置语种。
@@ -30,26 +30,35 @@ class LanguageDialog extends StatelessWidget {
     final Locale? current = controller.locale;
     return AlertDialog(
       title: Text(context.t('语言')),
-      content: responsiveDialogContent(
-        maxWidth: 320,
-        height: 420,
-        child: ListView(
-          children: <Widget>[
-            _LanguageTile(
-              label: context.t('跟随系统'),
-              selected: current == null,
-              onTap: () => _onSelect(context, controller, null),
-            ),
-            const Divider(height: 1),
-            for (final Locale locale in supportedLocales)
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 320,
+          maxHeight: 420,
+        ),
+        child: SizedBox(
+          width: double.maxFinite,
+          // 横屏/分屏等矮屏下随可用高度收缩，避免底部按钮被裁切。
+          height: math.min(420, MediaQuery.sizeOf(context).height - 160)
+              .clamp(120, 420)
+              .toDouble(),
+          child: ListView(
+            children: <Widget>[
               _LanguageTile(
-                label: localeDisplayName(locale),
-                selected: current != null &&
-                    current.languageCode == locale.languageCode &&
-                    (current.countryCode ?? '') == locale.countryCode,
-                onTap: () => _onSelect(context, controller, locale),
+                label: context.t('跟随系统'),
+                selected: current == null,
+                onTap: () => _onSelect(context, controller, null),
               ),
-          ],
+              const Divider(height: 1),
+              for (final Locale locale in supportedLocales)
+                _LanguageTile(
+                  label: localeDisplayName(locale),
+                  selected: current != null &&
+                      current.languageCode == locale.languageCode &&
+                      (current.countryCode ?? '') == locale.countryCode,
+                  onTap: () => _onSelect(context, controller, locale),
+                ),
+            ],
+          ),
         ),
       ),
       actions: <Widget>[

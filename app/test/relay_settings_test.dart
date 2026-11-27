@@ -86,8 +86,26 @@ void main() {
     expect(field.controller?.text, '$_relayA\n$_relayB');
   });
 
-  testWidgets('未保存过设置时中继默认关闭', (WidgetTester tester) async {
+  testWidgets('未保存过设置时中继默认开启并预填官方地址', (WidgetTester tester) async {
     final _FakeSettings service = _FakeSettings();
+    await tester.pumpWidget(_wrap(RelaySettingsDialog(service: service)));
+    await tester.pumpAndSettle();
+
+    final SwitchListTile toggle = tester.widget<SwitchListTile>(
+      find.byKey(const ValueKey<String>('relay-enabled')),
+    );
+    expect(toggle.value, isTrue);
+    final TextField field = tester.widget<TextField>(
+      find.byKey(const ValueKey<String>('relay-addrs')),
+    );
+    expect(field.controller?.text, defaultRelayAddrs.join('\n'));
+  });
+
+  testWidgets('用户显式关闭后不回落到默认开启', (WidgetTester tester) async {
+    final _FakeSettings service = _FakeSettings(<String, String>{
+      relayEnabledSettingKey: 'false',
+      relayAddrsSettingKey: '',
+    });
     await tester.pumpWidget(_wrap(RelaySettingsDialog(service: service)));
     await tester.pumpAndSettle();
 
@@ -97,13 +115,12 @@ void main() {
     expect(toggle.value, isFalse);
   });
 
-  testWidgets('开启中继并保存写入开关与去重后的地址', (WidgetTester tester) async {
+  testWidgets('保存中继写入开关与去重后的地址', (WidgetTester tester) async {
     final _FakeSettings service = _FakeSettings();
     await tester.pumpWidget(_wrap(RelaySettingsDialog(service: service)));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey<String>('relay-enabled')));
-    await tester.pump();
+    // 默认已开启，直接改地址保存即可。
     await tester.enterText(
       find.byKey(const ValueKey<String>('relay-addrs')),
       '$_relayA\n$_relayA\n\n$_relayB',
@@ -140,8 +157,8 @@ void main() {
     await tester.pumpWidget(_wrap(RelaySettingsDialog(service: service)));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey<String>('relay-enabled')));
-    await tester.pump();
+    // 默认开启且预填官方地址，清空地址后保存应被拦截。
+    await tester.enterText(find.byKey(const ValueKey<String>('relay-addrs')), '');
     await tester.tap(find.byKey(const ValueKey<String>('relay-save')));
     await tester.pumpAndSettle();
 
@@ -155,8 +172,7 @@ void main() {
     await tester.pumpWidget(_wrap(RelaySettingsDialog(service: service)));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey<String>('relay-enabled')));
-    await tester.pump();
+    // 默认开启，直接换成非法地址即可。
     await tester.enterText(
       find.byKey(const ValueKey<String>('relay-addrs')),
       '127.0.0.1:4001',

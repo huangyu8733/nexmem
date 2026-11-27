@@ -5,11 +5,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'package:nexmem_app/app/avatar.dart';
 import 'package:nexmem_app/app/theme.dart';
 import 'package:nexmem_app/features/chat/chat_message.dart';
 import 'package:nexmem_app/features/chat/chat_page.dart';
 import 'package:nexmem_app/features/chat/chat_store.dart';
 import 'package:nexmem_app/features/chat/local_image.dart';
+import 'package:nexmem_app/features/files/media_viewer.dart';
 import 'package:nexmem_app/features/chats/conversation.dart';
 import 'package:nexmem_app/features/group/group_storage.dart';
 import 'package:nexmem_app/transport/transport.dart';
@@ -199,6 +201,27 @@ void main() {
     expect(find.text('张三'), findsOneWidget);
     // 自己的消息不显示发送者昵称（头像首字仍为「我」）。
     expect(find.text('我'), findsOneWidget);
+  });
+
+  testWidgets('输入框与编辑框限制 4096 字符，与契约层一致', (WidgetTester tester) async {
+    final ChatStore store = ChatStore(
+      conversationId: 'alice',
+      sender: _FakeSender(() async {}),
+    );
+    addTearDown(store.dispose);
+
+    await tester.pumpWidget(
+      _wrap(ChatPage(conversation: _peerConversation, store: store)),
+    );
+    await tester.pumpAndSettle();
+
+    final TextField field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.maxLength, 4096);
+    expect(field.buildCounter, isNotNull);
+
+    await tester.enterText(find.byType(TextField), '字' * 5000);
+    await tester.pump();
+    expect(field.controller!.text.length, lessThanOrEqualTo(4096));
   });
 
   testWidgets('发送状态：发送中转圈 → 已发送单勾；失败红叹号点击重发', (WidgetTester tester) async {
@@ -742,8 +765,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await store.sendFile(
-      const ChatAttachment(name: 'a.bin', size: 10, path: r'D:\a.bin'),
+    await expectLater(
+      store.sendFile(
+        const ChatAttachment(name: 'a.bin', size: 10, path: r'D:\a.bin'),
+      ),
+      throwsStateError,
     );
     await tester.pumpAndSettle();
 
@@ -902,6 +928,39 @@ void main() {
     expect(sender.lastFile?['path'], r'D:\voice\voice.M4A');
     expect(sender.lastFile?['mime'], 'audio/mp4');
     expect(store.length, 1);
+  });
+
+  testWidgets('A-01 群聊语音工具经群文件通道发送', (WidgetTester tester) async {
+    final _FakeSender sender = _FakeSender(() async {});
+    final ChatStore store = ChatStore(
+      conversationId: 'group-1',
+      isGroup: true,
+      sender: sender,
+    );
+    addTearDown(store.dispose);
+
+    await tester.pumpWidget(
+      _wrap(
+        ChatPage(
+          conversation: _groupConversation,
+          store: store,
+          onPickFile: () async => const ChatAttachment(
+            name: 'group-voice.M4A',
+            size: 2048,
+            path: '/tmp/group-voice.M4A',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('语音'));
+    await tester.pumpAndSettle();
+
+    expect(sender.lastFile?['path'], '/tmp/group-voice.M4A');
+    expect(sender.lastFile?['mime'], 'audio/mp4');
+    expect(store.length, 1);
+    expect(find.text('群聊暂不支持发送语音'), findsNothing);
   });
 
   testWidgets('A-01 语音工具拒绝非音频文件且不发送', (WidgetTester tester) async {
@@ -1422,5 +1481,187 @@ void main() {
     store.setTyping(false);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey<String>('typing-indicator')), findsNothing);
+  });
+
+  testWidgets('聊天头部显示头像与备注名，点击可改备注', (
+    WidgetTester tester,
+  ) async {
+    final ChatStore store = ChatStore(conversationId: 'alice');
+    addTearDown(store.dispose);
+    String? saved;
+    await tester.pumpWidget(
+      _wrap(ChatPage(
+        conversation: _peerConversation,
+        store: store,
+        displayName: '备注名',
+        remark: '备注名',
+        onSetRemark: (String value) => saved = value,
+      )),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AppAvatar), findsWidgets);
+    expect(find.text('备注名'), findsWidgets);
+    expect(find.byKey(const ValueKey<String>('chat-header-identity')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey<String>('chat-header-identity')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('chat-header-remark-field')), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('chat-header-remark-field')),
+      '新备注',
+    );
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(saved, '新备注');
+  });
+
+  testWidgets('无标题单聊回退显示账号短标签', (WidgetTester tester) async {
+    final ChatStore store = ChatStore(conversationId: 'alice');
+    addTearDown(store.dispose);
+    final ConversationItem noTitle = ConversationItem(
+      id: 'dm-1',
+      title: '',
+      peer: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+    );
+    await tester.pumpWidget(
+      _wrap(ChatPage(conversation: noTitle, store: store)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('abcdef…'), findsWidgets);
+  });
+
+  testWidgets('语音与视频气泡可点击打开媒体预览', (WidgetTester tester) async {
+    final List<String> previewed = <String>[];
+    final ChatMessage audio = ChatMessage(
+      id: 'a1',
+      conversationId: 'alice',
+      text: 'voice.m4a',
+      sentAt: DateTime(2026, 11, 19, 10, 0),
+      isMine: true,
+      attachment: const ChatAttachment(
+        name: 'voice.m4a',
+        size: 12345,
+        mime: 'audio/mp4',
+        path: '/tmp/voice.m4a',
+      ),
+    );
+    final ChatMessage video = ChatMessage(
+      id: 'v1',
+      conversationId: 'alice',
+      text: 'clip.mp4',
+      sentAt: DateTime(2026, 11, 19, 10, 1),
+      isMine: false,
+      attachment: const ChatAttachment(
+        name: 'clip.mp4',
+        size: 98765,
+        mime: 'video/mp4',
+        path: '/tmp/clip.mp4',
+      ),
+    );
+
+    await tester.pumpWidget(_wrap(Column(
+      children: <Widget>[
+        MessageBubble(
+          message: audio,
+          onPreviewMedia: (ChatMessage m) async => previewed.add(m.id),
+        ),
+        MessageBubble(
+          message: video,
+          onPreviewMedia: (ChatMessage m) async => previewed.add(m.id),
+        ),
+      ],
+    )));
+
+    expect(find.byKey(const ValueKey<String>('chat-media-preview-a1')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('chat-media-preview-v1')),
+        findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey<String>('chat-media-preview-a1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('chat-media-preview-v1')));
+    await tester.pumpAndSettle();
+
+    expect(previewed, <String>['a1', 'v1']);
+  });
+
+  testWidgets('图片气泡点击打开媒体预览弹窗', (WidgetTester tester) async {
+    await tester.pumpWidget(_wrap(MessageBubble(
+      message: ChatMessage(
+        id: 'i1',
+        conversationId: 'alice',
+        text: 'photo.png',
+        sentAt: DateTime(2026, 11, 19, 10, 0),
+        isMine: true,
+        attachment: const ChatAttachment(
+          name: 'photo.png',
+          size: 2048,
+          mime: 'image/png',
+          path: '/tmp/photo.png',
+        ),
+      ),
+    )));
+
+    await tester.tap(find.byKey(const ValueKey<String>('chat-image-preview-i1')));
+    await tester.pump();
+    expect(find.byType(MediaViewerDialog), findsOneWidget);
+  });
+
+  testWidgets('注入媒体播放源后图片气泡打开在线预览', (WidgetTester tester) async {
+    final Uri source = Uri.parse(
+      'https://example.com/download?token=tk&path=photo.png&disposition=inline',
+    );
+    await tester.pumpWidget(_wrap(MessageBubble(
+      message: ChatMessage(
+        id: 'i2',
+        conversationId: 'alice',
+        text: 'photo.png',
+        sentAt: DateTime(2026, 11, 19, 10, 0),
+        isMine: true,
+        attachment: const ChatAttachment(
+          name: 'photo.png',
+          size: 2048,
+          mime: 'image/png',
+          path: '/data/inbox/photo.png',
+        ),
+      ),
+      mediaSourceUri: (String path) => source,
+    )));
+
+    await tester.tap(find.byKey(const ValueKey<String>('chat-image-preview-i2')));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byType(MediaViewerDialog), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (Widget widget) =>
+            widget is Image && widget.image.runtimeType.toString() == 'NetworkImage',
+      ),
+      findsWidgets,
+    );
+  });
+
+  testWidgets('普通文件气泡仍只复制路径，不显示媒体预览入口',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(_wrap(MessageBubble(
+      message: ChatMessage(
+        id: 'f1',
+        conversationId: 'alice',
+        text: '报告.pdf',
+        sentAt: DateTime(2026, 11, 19, 10, 0),
+        isMine: true,
+        attachment: const ChatAttachment(
+          name: '报告.pdf',
+          size: 2048,
+          mime: 'application/pdf',
+          path: '/tmp/报告.pdf',
+        ),
+      ),
+    )));
+
+    expect(find.byKey(const ValueKey<String>('chat-media-preview-f1')),
+        findsNothing);
+    expect(find.text('报告.pdf'), findsOneWidget);
   });
 }

@@ -28,6 +28,41 @@ const (
 // settingKeyPattern 限制键字符集：小写字母/数字，允许 . 与 _ 分隔。
 var settingKeyPattern = regexp.MustCompile(`^[a-z0-9]+(?:[._][a-z0-9]+)*$`)
 
+// snapshotKeyPrefixes 是允许进入设置快照的界面偏好前缀。
+//
+// kv 表同时承载内核内部状态（net.peerbook、fs.shares、头像分片等），
+// 快照绝不能整表导入覆盖这些键，否则恢复设置会破坏身份与文件共享数据。
+var snapshotKeyPrefixes = []string{
+	"ui.",
+	"profile.",
+	"push.",
+	"developer.",
+	"device.",
+	"startup.",
+}
+
+// snapshotExactKeys 是不在上述前缀内、但属于用户设置的兼容键。
+var snapshotExactKeys = map[string]bool{
+	"relay.enabled":          true,
+	"net.relay_enabled":      true,
+	"net.relay_addrs":        true,
+	"net.mdns_enabled":       true,
+	"net.public_dht_enabled": true,
+}
+
+// snapshotSettingKey 判断一个 kv 键是否属于可搬运的界面设置。
+func snapshotSettingKey(key string) bool {
+	if snapshotExactKeys[key] {
+		return true
+	}
+	for _, prefix := range snapshotKeyPrefixes {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 type settingParams struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
@@ -103,6 +138,9 @@ func (a *App) settingsExportHandler() gateway.HandlerFunc {
 		}
 		entries := make([]settingsync.Entry, 0, len(pairs))
 		for _, p := range pairs {
+			if !snapshotSettingKey(p.Key) {
+				continue
+			}
 			entries = append(entries, settingsync.Entry{Key: p.Key, Value: string(p.Value)})
 		}
 		snapshot, err := settingsync.Produce(entries)
@@ -146,6 +184,15 @@ func (a *App) settingsImportHandler() gateway.HandlerFunc {
 		}
 		applied := 0
 		for _, e := range entries {
+			if !snapshotSettingKey(e.Key) {
+				continue
+			}
+			if _, err := normalizeSettingKey(e.Key); err != nil {
+				return nil, gateway.NewError(gateway.CodeInvalidArg, "快照包含非法设置键: %s", e.Key)
+			}
+			if len(e.Value) > maxSettingValueBytes {
+				return nil, gateway.NewError(gateway.CodeInvalidArg, "快照设置 %s 超出长度上限", e.Key)
+			}
 			if err := dao.SetKV(ctx, e.Key, []byte(e.Value)); err != nil {
 				return nil, gateway.NewError(gateway.CodeDBError, "导入设置 %s 失败: %v", e.Key, err)
 			}

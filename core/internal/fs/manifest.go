@@ -66,7 +66,9 @@ type Manifest struct {
 
 // canonical 返回参与 ID 计算的确定性 JSON。ID 只覆盖内容本身（不含发布者、
 // 时间戳与签名），因此不同节点发布同一份内容会得到相同 ID，可互为种子。
-// Owner 由签名保护（签名用 Owner 的公钥验证），CreatedAt 仅为展示元数据。
+// Owner 不参与 ID 是内容寻址的刻意设计，但下载时必须核对种子清单的 Owner
+// 与本机记录一致（见 openSessions），否则同 ID 可被不同账号偷换发布者。
+// CreatedAt 仅为展示元数据。
 func (m *Manifest) canonical() ([]byte, error) {
 	v := struct {
 		Version   int         `json:"v"`
@@ -129,10 +131,12 @@ func (m *Manifest) Verify() (string, error) {
 		if !safeRelativePath(f.Path) {
 			return "", ErrPathUnsafe
 		}
-		if _, err := base64.StdEncoding.DecodeString(f.Key); err != nil {
+		key, err := base64.StdEncoding.DecodeString(f.Key)
+		if err != nil || len(key) != 32 {
 			return "", ErrInvalidManifest
 		}
-		if _, err := hex.DecodeString(f.SHA256); err != nil {
+		sum, err := hex.DecodeString(f.SHA256)
+		if err != nil || len(sum) != sha256.Size {
 			return "", ErrInvalidManifest
 		}
 		seen[f.Path] = true

@@ -58,6 +58,8 @@ class RemoteSignal {
     required this.type,
     required this.sid,
     this.token = '',
+    this.credential = '',
+    this.silent = false,
     this.sdp = '',
     this.mid,
     this.index = 0,
@@ -82,6 +84,12 @@ class RemoteSignal {
 
   /// 被控端在 accept 时签发，后续信令必须携带。
   final String token;
+
+  /// request 携带的远控密码校验值；不是明文密码。
+  final String credential;
+
+  /// 台账设备 + 密码的静默远控；聊天发起的请求不带此标记，必须对方确认。
+  final bool silent;
 
   /// offer / answer 的 SDP，或 candidate 的候选值。
   final String sdp;
@@ -135,6 +143,8 @@ class RemoteSignal {
       'type': type.wireValue,
       'sid': sid,
       if (token.isNotEmpty) 'token': token,
+      if (credential.isNotEmpty) 'credential': credential,
+      if (silent) 'silent': true,
       if (sdp.isNotEmpty) 'sdp': sdp,
       if (mid != null) 'mid': mid,
       if (index != 0) 'index': index,
@@ -211,6 +221,8 @@ class RemoteSignal {
       type: type,
       sid: sid,
       token: _string(decoded['token']),
+      credential: _string(decoded['credential']),
+      silent: decoded['silent'] == true,
       sdp: _string(decoded['sdp']),
       mid: decoded['mid'] is String ? decoded['mid'] as String : null,
       index: (decoded['index'] as num?)?.toInt() ?? 0,

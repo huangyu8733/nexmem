@@ -1,6 +1,7 @@
 package coreapp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/nexmem/core/gateway"
@@ -14,6 +15,9 @@ func TestSettingsSnapshotRoundTrip(t *testing.T) {
 
 	call(t, gw, "settings.set", map[string]any{"key": "ui.theme_mode", "value": "dark"})
 	call(t, gw, "settings.set", map[string]any{"key": "relay.enabled", "value": "true"})
+	// 内核内部 KV 不得进入设置快照。
+	call(t, gw, "settings.set", map[string]any{"key": "net.peerbook", "value": "secret"})
+	call(t, gw, "settings.set", map[string]any{"key": "fs.shares", "value": "secret"})
 
 	exported := call(t, gw, "settings.exportSnapshot", map[string]any{}).(map[string]any)
 	snapshot, _ := exported["snapshot"].(string)
@@ -21,7 +25,12 @@ func TestSettingsSnapshotRoundTrip(t *testing.T) {
 		t.Fatal("导出快照为空")
 	}
 	if exported["count"] != 2 {
-		t.Fatalf("导出条目数 = %v，期望 2", exported["count"])
+		t.Fatalf("导出条目数 = %v，期望 2（内部 KV 不应导出）", exported["count"])
+	}
+	for _, internal := range []string{"peerbook", "fs.shares"} {
+		if strings.Contains(snapshot, internal) {
+			t.Fatalf("快照包含内部键 %s: %s", internal, snapshot)
+		}
 	}
 
 	// dry_run：仅校验不写入，applied=0。

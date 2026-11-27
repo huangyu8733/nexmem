@@ -475,6 +475,28 @@
       }
     },
     {
+      "id": "core.dataDir.params-not-object",
+      "request": {
+        "id": 104,
+        "method": "core.dataDir",
+        "params": [
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "params 必须是 JSON 对象",
+          "retryable": false
+        }
+      }
+    },
+    {
       "id": "conversation.list.limit-too-small",
       "request": {
         "id": 22,
@@ -2108,6 +2130,376 @@
           "message": "仅群管理员可设置加好友权限",
           "retryable": false
         }
+      }
+    },
+    {
+      "id": "group.setLevelConfig.missing-levels",
+      "request": {
+        "id": 105,
+        "method": "group.setLevelConfig",
+        "params": {
+          "group_id": "00112233445566778899aabbccddeeff",
+          "enabled": true
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 levels",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.setLevelConfig.too-many",
+      "request": {
+        "id": 106,
+        "method": "group.setLevelConfig",
+        "params": {
+          "group_id": "00112233445566778899aabbccddeeff",
+          "enabled": true,
+          "levels": [
+            {
+              "id": "lv0",
+              "name": "等级",
+              "icon_b64": ""
+            },
+            {
+              "id": "lv1",
+              "name": "等级",
+              "icon_b64": ""
+            },
+            {
+              "id": "lv2",
+              "name": "等级",
+              "icon_b64": ""
+            },
+            {
+              "id": "lv3",
+              "name": "等级",
+              "icon_b64": ""
+            },
+            {
+              "id": "lv4",
+              "name": "等级",
+              "icon_b64": ""
+            },
+            {
+              "id": "lv5",
+              "name": "等级",
+              "icon_b64": ""
+            },
+            {
+              "id": "lv6",
+              "name": "等级",
+              "icon_b64": ""
+            },
+            {
+              "id": "lv7",
+              "name": "等级",
+              "icon_b64": ""
+            },
+            {
+              "id": "lv8",
+              "name": "等级",
+              "icon_b64": ""
+            },
+            {
+              "id": "lv9",
+              "name": "等级",
+              "icon_b64": ""
+            },
+            {
+              "id": "lv10",
+              "name": "等级",
+              "icon_b64": ""
+            },
+            {
+              "id": "lv11",
+              "name": "等级",
+              "icon_b64": ""
+            },
+            {
+              "id": "lv12",
+              "name": "等级",
+              "icon_b64": ""
+            }
+          ]
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "群等级最多 12 项",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.setMemberProfile.missing-account",
+      "request": {
+        "id": 107,
+        "method": "group.setMemberProfile",
+        "params": {
+          "group_id": "00112233445566778899aabbccddeeff"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 account",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.setMemberProfile.nickname-too-long",
+      "request": {
+        "id": 108,
+        "method": "group.setMemberProfile",
+        "params": {
+          "group_id": "00112233445566778899aabbccddeeff",
+          "account": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "nickname": "称称称称称称称称称称称称称称称称称称称称称称称称称"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "本群称呼最多 24 字",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "fs.publish.ok",
+      "request": {
+        "id": 109,
+        "method": "fs.publish",
+        "params": {
+          "path": "/tmp/nexmem-share",
+          "name": "资料包"
+        }
+      },
+      "expect": {
+        "ok": true
+      },
+      "response": {
+        "ok": true,
+        "data": {
+          "share_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "资料包",
+          "code": "nexmem://fs/placeholder",
+          "kind": "published",
+          "file_count": 2,
+          "total_size": 1024,
+          "local": true
+        }
+      },
+      "data_required": ["share_id", "code", "file_count", "total_size"],
+      "data_types": {
+        "share_id": "string",
+        "name": "string",
+        "code": "string",
+        "kind": "string",
+        "file_count": "int",
+        "total_size": "int",
+        "local": "bool"
+      }
+    },
+    {
+      "id": "fs.list.ok",
+      "request": {
+        "id": 110,
+        "method": "fs.list",
+        "params": {}
+      },
+      "expect": {
+        "ok": true
+      },
+      "response": {
+        "ok": true,
+        "data": {
+          "items": []
+        }
+      },
+      "data_required": ["items"],
+      "data_types": {
+        "items": "array"
+      }
+    },
+    {
+      "id": "fs.get.ok",
+      "request": {
+        "id": 111,
+        "method": "fs.get",
+        "params": {
+          "share_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expect": {
+        "ok": true
+      },
+      "response": {
+        "ok": true,
+        "data": {
+          "share_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "code": "nexmem://fs/placeholder",
+          "files": [],
+          "owner": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "data_required": ["share_id", "code", "files", "owner"],
+      "data_types": {
+        "share_id": "string",
+        "code": "string",
+        "files": "array",
+        "owner": "string"
+      }
+    },
+    {
+      "id": "fs.import.ok",
+      "request": {
+        "id": 112,
+        "method": "fs.import",
+        "params": {
+          "code": "nexmem://fs/placeholder"
+        }
+      },
+      "expect": {
+        "ok": true
+      },
+      "response": {
+        "ok": true,
+        "data": {
+          "share_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "资料包",
+          "code": "nexmem://fs/placeholder",
+          "file_count": 2,
+          "total_size": 1024
+        }
+      },
+      "data_required": ["share_id", "code"],
+      "data_types": {
+        "share_id": "string",
+        "code": "string",
+        "file_count": "int",
+        "total_size": "int"
+      }
+    },
+    {
+      "id": "fs.send.ok",
+      "request": {
+        "id": 113,
+        "method": "fs.send",
+        "params": {
+          "share_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "peer": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "expect": {
+        "ok": true
+      },
+      "response": {
+        "ok": true,
+        "data": {
+          "msg_uuid": "contract-fs-send"
+        }
+      },
+      "data_required": ["msg_uuid"],
+      "data_types": {
+        "msg_uuid": "string"
+      }
+    },
+    {
+      "id": "fs.remove.ok",
+      "request": {
+        "id": 114,
+        "method": "fs.remove",
+        "params": {
+          "share_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expect": {
+        "ok": true
+      },
+      "response": {
+        "ok": true,
+        "data": {}
+      }
+    },
+    {
+      "id": "fs.download.ok",
+      "request": {
+        "id": 115,
+        "method": "fs.download",
+        "params": {
+          "share_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "dest": "/tmp/nexmem-download"
+        }
+      },
+      "expect": {
+        "ok": true
+      },
+      "response": {
+        "ok": true,
+        "data": {
+          "share_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "dest": "/tmp/nexmem-download",
+          "kind": "downloaded"
+        }
+      },
+      "data_required": ["share_id", "dest", "kind"],
+      "data_types": {
+        "share_id": "string",
+        "dest": "string",
+        "kind": "string"
+      }
+    },
+    {
+      "id": "net.discoverDevices.ok",
+      "request": {
+        "id": 116,
+        "method": "net.discoverDevices",
+        "params": {
+          "limit": 50,
+          "offset": 0
+        }
+      },
+      "expect": {
+        "ok": true
+      },
+      "response": {
+        "ok": true,
+        "data": {
+          "items": [],
+          "total": 0,
+          "offset": 0,
+          "limit": 200
+        }
+      },
+      "data_required": ["items", "total", "offset", "limit"],
+      "data_types": {
+        "items": "array",
+        "total": "int",
+        "offset": "int",
+        "limit": "int"
       }
     }
   ]

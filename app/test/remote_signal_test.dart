@@ -25,6 +25,8 @@ void main() {
       sid: 'r-abc',
       name: '张三',
       permissions: RemotePermissions.all,
+      credential: 'credential-hash',
+      silent: true,
     );
     final String payload = signal.toPayloadB64();
     expect(RemoteSignal.peekIsRemote(payload), isTrue);
@@ -35,6 +37,8 @@ void main() {
     expect(decoded.permissions.input, isTrue);
     expect(decoded.permissions.clipboard, isTrue);
     expect(decoded.permissions.file, isTrue);
+    expect(decoded.credential, 'credential-hash');
+    expect(decoded.silent, isTrue);
   });
 
   test('accept 信令携带 token、屏幕与画质', () {

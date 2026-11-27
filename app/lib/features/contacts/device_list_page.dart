@@ -164,7 +164,7 @@ class DeviceTile extends StatelessWidget {
     final List<String> lines = <String>[
       if (device.deviceId.isNotEmpty)
         context.t('设备 {0}', [_shortPeer(device.deviceId)]),
-      deviceActiveLabel(device.issuedAt),
+      deviceActiveLabel(device.issuedAt, context.l10n),
     ];
     return ListTile(
       dense: dense,
@@ -224,24 +224,33 @@ class DeviceTile extends StatelessWidget {
 }
 
 /// 「最近活跃」文案：证书签发时间按距离现在的时间段展示。
-String deviceActiveLabel(DateTime? at) {
+String deviceActiveLabel(DateTime? at, [AppLocalizations? l10n]) {
+  String t(String key, [List<Object?> args = const <Object?>[]]) {
+    final String? translated = l10n?.t(key, args);
+    if (translated != null) return translated;
+    String text = key;
+    for (int i = 0; i < args.length; i++) {
+      text = text.replaceAll('{$i}', '${args[i]}');
+    }
+    return text;
+  }
   if (at == null) {
-    return '最近活跃未知';
+    return t('最近活跃未知');
   }
   final Duration diff = DateTime.now().difference(at);
   if (diff.isNegative || diff.inMinutes < 1) {
-    return '刚刚活跃';
+    return t('刚刚活跃');
   }
   if (diff.inHours < 1) {
-    return '${diff.inMinutes} 分钟前活跃';
+    return t('{0} 分钟前活跃', <Object?>[diff.inMinutes]);
   }
   if (diff.inDays < 1) {
-    return '${diff.inHours} 小时前活跃';
+    return t('{0} 小时前活跃', <Object?>[diff.inHours]);
   }
   if (diff.inDays < 30) {
-    return '${diff.inDays} 天前活跃';
+    return t('{0} 天前活跃', <Object?>[diff.inDays]);
   }
-  return '${_dateLabel(at)} 活跃';
+  return t('{0} 活跃', <Object?>[_dateLabel(at)]);
 }
 
 String _dateLabel(DateTime at) {

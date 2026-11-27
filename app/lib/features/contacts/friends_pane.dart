@@ -6,9 +6,9 @@ import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import 'contact.dart';
 
-/// 右栏 / 全屏页复用的好友列表面板：按 A–Z 分组展示好友。
+/// 右栏 / 全屏页复用的好友列表面板：按本地好友分组展示好友。
 ///
-/// 与 [ContactsPage] 共用同一份好友数据，但去掉分组入口与字母索引，
+/// 与 [ContactsPage] 共用同一份好友数据与分组规则，但去掉左侧分组入口，
 /// 只保留好友列表本身，作为右侧内容区展示。
 class FriendsPane extends StatelessWidget {
   const FriendsPane({
@@ -30,7 +30,10 @@ class FriendsPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final List<(String, List<Contact>)> groups = groupContacts(friends);
+    final List<(String, List<Contact>)> groups = groupFriends(
+      friends,
+      defaultGroup: context.t('我的好友'),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -68,8 +71,8 @@ class FriendsPane extends StatelessWidget {
                 )
               : ListView(
                   children: <Widget>[
-                    for (final (String letter, List<Contact> members) in groups) ...<Widget>[
-                      _SectionHeader(letter: letter),
+                    for (final (String name, List<Contact> members) in groups) ...<Widget>[
+                      _FriendGroupHeader(name: name, count: members.length),
                       for (final Contact contact in members)
                         _FriendTile(
                           contact: contact,
@@ -89,21 +92,23 @@ class FriendsPane extends StatelessWidget {
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.letter});
+class _FriendGroupHeader extends StatelessWidget {
+  const _FriendGroupHeader({required this.name, required this.count});
 
-  final String letter;
+  final String name;
+  final int count;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return Container(
+      key: ValueKey<String>('pane-group-$name'),
       height: 28,
       alignment: AlignmentDirectional.centerStart,
       padding: const EdgeInsets.symmetric(horizontal: NexmemMetrics.space12),
       color: scheme.onSurface.withValues(alpha: 0.04),
       child: Text(
-        letter,
+        '$name（$count）',
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
               fontSize: 12,
               fontWeight: FontWeight.w600,

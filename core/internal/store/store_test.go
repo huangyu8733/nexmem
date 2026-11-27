@@ -21,8 +21,8 @@ func TestMigrateCreatesSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 10 {
-		t.Fatalf("schema 版本应为 10, 实际 %d", v)
+	if v != 11 {
+		t.Fatalf("schema 版本应为 11, 实际 %d", v)
 	}
 
 	want := []string{
@@ -64,8 +64,8 @@ func TestMigrateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 10 {
-		t.Fatalf("重复迁移后版本应保持 10, 实际 %d", v)
+	if v != 11 {
+		t.Fatalf("重复迁移后版本应保持 11, 实际 %d", v)
 	}
 
 	var n int
@@ -102,8 +102,8 @@ func TestMigrateAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 10 {
-		t.Fatalf("重开后版本应为 10, 实际 %d", v)
+	if v != 11 {
+		t.Fatalf("重开后版本应为 11, 实际 %d", v)
 	}
 }
 

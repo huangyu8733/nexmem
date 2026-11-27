@@ -152,6 +152,18 @@ class AndroidTransport implements CoreTransport {
     }
   }
 
+  /// 当前 Wi-Fi 局域网 IP，用于注入内核补全 mDNS 广播地址。
+  /// Android 上 Go 的 net.Interfaces() 常被 SELinux 拦截，需原生层提供。
+  Future<String?> localIp() async {
+    try {
+      return await _channel.invokeMethod<String>('localIp');
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
   /// 拉起系统文件选择器并返回本机副本（P2-08）。
   ///
   /// 原生侧把 `content://` 复制到应用缓存目录后回传绝对路径；用户取消返回 null。
@@ -345,7 +357,9 @@ class AndroidTransport implements CoreTransport {
 ///
 /// 数据目录取 `Context.filesDir`，与桌面 `APPDATA` 等价的私有目录；
 /// 插件缺失或目录不可用时返回 null，应用以离线空态启动。
-Future<CoreSession?> openAndroidSession() async {
+Future<CoreSession?> openAndroidSession({
+  Map<String, String>? environment,
+}) async {
   final AndroidTransport transport = AndroidTransport();
   try {
     await transport.connect();
@@ -359,10 +373,22 @@ Future<CoreSession?> openAndroidSession() async {
     await transport.close();
     return null;
   }
+  // 读取原生局域网 IP 注入内核：Android 上 Go 的 net.Interfaces() 常被
+  // SELinux 拦截，libp2p 无法展开 /ip4/0.0.0.0，mDNS 无从广播。
+  final String? localIp = await transport.localIp();
+  final Map<String, dynamic> config = androidStartConfig(
+    dataDir,
+    environment: environment,
+  );
+  if (localIp != null && localIp.isNotEmpty) {
+    config['lan_addrs'] = <String>[localIp];
+  }
   unawaited(transport.startForegroundService());
   return CoreSession(
     transport,
-    startConfig: androidStartConfig(dataDir),
+    startConfig: config,
+    // 重装后 filesDir 可能变化，需重定位失效的账号数据目录。
+    rebaseStaleDataDir: true,
     pickFile: transport.pickFile,
     pickDirectory: transport.pickDirectory,
   );
@@ -373,14 +399,17 @@ Future<CoreSession?> openAndroidSession() async {
 /// 数据目录由原生侧提供；引导节点、索引服务与中继地址来自 `--dart-define`
 /// 注入（也可用同名环境变量），便于本机/局域网联调或统一公网部署时把移动端
 /// 指向自建的基础设施。未注入时保持空配置，行为与发布版一致（离线空态）。
-Map<String, dynamic> androidStartConfig(String dataDir) {
+Map<String, dynamic> androidStartConfig(
+  String dataDir, {
+  Map<String, String>? environment,
+}) {
   const String bootstrapsDefine = String.fromEnvironment('NEXMEM_BOOTSTRAPS');
   const String directoryDefine = String.fromEnvironment('NEXMEM_DIRECTORY_URL');
   const String relayAddrsDefine = String.fromEnvironment('NEXMEM_RELAY_ADDRS');
   const String mdnsDefine = String.fromEnvironment('NEXMEM_MDNS');
   const String publicDhtDefine = String.fromEnvironment('NEXMEM_PUBLIC_DHT');
   const String manualAddrsDefine = String.fromEnvironment('NEXMEM_MANUAL_ADDRS');
-  final Map<String, String> env = Platform.environment;
+  final Map<String, String> env = environment ?? Platform.environment;
   return androidCoreStartConfig(
     dataDir: dataDir,
     bootstraps: bootstrapsDefine.isNotEmpty

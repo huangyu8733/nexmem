@@ -27,6 +27,7 @@ class _FakeTransport implements CoreTransport {
   final Map<String, _Handler> handlers;
   final List<String> methods = <String>[];
   final List<Map<String, dynamic>?> params = <Map<String, dynamic>?>[];
+  final List<Duration?> timeouts = <Duration?>[];
   final StreamController<CoreEvent> _events =
       StreamController<CoreEvent>.broadcast(sync: true);
 
@@ -44,6 +45,7 @@ class _FakeTransport implements CoreTransport {
   }) async {
     methods.add(method);
     this.params.add(params);
+    timeouts.add(timeout);
     final _Handler? handler = handlers[method];
     if (handler == null) {
       throw NexmemException('NOT_STARTED', '$method 未装配');
@@ -445,6 +447,10 @@ void main() {
       'kernel-file',
     );
 
+    // 大文件 P2P 分片传输不能用文本消息的 20s 通用超时，否则客户端先把
+    // 气泡标失败、内核随后成功时又因 msg_uuid 不同无法回填状态。
+    expect(transport.timeouts.last, const Duration(minutes: 5));
+
     // A-02：群聊文件走 dm.sendGroupFile，密文写群盘、元数据随群消息广播。
     const ConversationItem group = ConversationItem(
       id: 'group:gid',
@@ -627,7 +633,11 @@ void main() {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 844);
     addTearDown(tester.view.reset);
-    await tester.pumpWidget(NexmemApp(session: session));
+    // 本测试聚焦会话/消息链路，未装配 contact.list/group.list，
+    // 关闭启动检测门避免误判「服务未就绪」。
+    await tester.pumpWidget(
+      NexmemApp(session: session, enableStartupCheck: false),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('项目群'), findsOneWidget);
@@ -754,7 +764,11 @@ void main() {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 844);
     addTearDown(tester.view.reset);
-    await tester.pumpWidget(NexmemApp(session: session));
+    // 本测试聚焦会话/消息链路，未装配 contact.list/group.list，
+    // 关闭启动检测门避免误判「服务未就绪」。
+    await tester.pumpWidget(
+      NexmemApp(session: session, enableStartupCheck: false),
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('张三'));

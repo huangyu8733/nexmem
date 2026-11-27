@@ -26,6 +26,7 @@ Future<bool?> showAddFriendDialogWithPreset(
   ContactService service, {
   required String account,
   required String alias,
+  CoreSession? session,
 }) {
   return showDialog<bool>(
     context: context,
@@ -33,6 +34,7 @@ Future<bool?> showAddFriendDialogWithPreset(
       service: service,
       initialAccount: account,
       initialAlias: alias,
+      session: session,
     ),
   );
 }

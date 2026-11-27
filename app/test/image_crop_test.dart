@@ -111,4 +111,116 @@ void main() {
     expect(decoded, isNotNull);
     expect(decoded!.width, decoded.height);
   });
+
+  test('图片坐标裁剪框直接反算原图像素', () {
+    expect(
+      localCropToSourceRect(
+        cropRect: const Rect.fromLTWH(50, 50, 100, 100),
+        displaySize: const Size(200, 200),
+        sourceSize: const Size(400, 400),
+      ),
+      const Rect.fromLTWH(100, 100, 200, 200),
+    );
+  });
+
+  Future<void> openCrop(
+    WidgetTester tester, {
+    required bool square,
+  }) async {
+    final Uint8List sample = img.encodePng(img.Image(width: 320, height: 200));
+    await tester.pumpWidget(MaterialApp(
+      home: Builder(
+        builder: (BuildContext context) => ElevatedButton(
+          onPressed: () => showImageCropPage(
+            context: context,
+            bytes: sample,
+            fileName: square ? 'avatar.png' : 'promo.png',
+            square: square,
+          ),
+          child: const Text('open crop'),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open crop'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('裁剪框随图片缩放联动且手柄保持可点击尺寸', (WidgetTester tester) async {
+    await openCrop(tester, square: false);
+
+    final Rect stage = tester.getRect(
+      find.byKey(const ValueKey<String>('image-crop-stage')),
+    );
+    final Offset handleBefore = tester.getCenter(
+      find.byKey(const ValueKey<String>('image-crop-handle-topLeft')),
+    );
+    expect(
+      tester.getRect(
+        find.byKey(const ValueKey<String>('image-crop-handle-topLeft')),
+      ).width,
+      greaterThanOrEqualTo(24),
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('image-crop-zoom-in')));
+    await tester.pump();
+    final Offset handleAfter = tester.getCenter(
+      find.byKey(const ValueKey<String>('image-crop-handle-topLeft')),
+    );
+    expect(
+      (handleAfter - stage.center).distance,
+      greaterThan((handleBefore - stage.center).distance + 1),
+    );
+  });
+
+  testWidgets('拖动裁剪框不会移出图片范围', (WidgetTester tester) async {
+    await openCrop(tester, square: true);
+
+    final Rect image = tester.getRect(
+      find.byKey(const ValueKey<String>('image-crop-image')),
+    );
+    await tester.drag(
+      find.byKey(const ValueKey<String>('image-crop-frame')),
+      const Offset(600, 600),
+    );
+    await tester.pump();
+
+    final Rect handle = tester.getRect(
+      find.byKey(const ValueKey<String>('image-crop-handle-bottomRight')),
+    );
+    expect(handle.right, lessThanOrEqualTo(image.right + 13));
+    expect(handle.bottom, lessThanOrEqualTo(image.bottom + 13));
+  });
+
+  testWidgets('推广图可切换比例，拖图模式可切换裁剪框交互', (WidgetTester tester) async {
+    await openCrop(tester, square: false);
+
+    await tester.tap(find.byKey(const ValueKey<String>('image-crop-aspect')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1:1').last);
+    await tester.pumpAndSettle();
+
+    final Text label = tester.widget<Text>(
+      find.byKey(const ValueKey<String>('image-crop-size-label')),
+    );
+    final List<String> parts = label.data!.split('×');
+    expect(parts.length, 2);
+    expect(parts[0], parts[1]);
+
+    expect(
+      find.byKey(const ValueKey<String>('image-crop-frame')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('image-crop-pan-mode')));
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey<String>('image-crop-frame')),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('image-crop-pan-mode')));
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey<String>('image-crop-frame')),
+      findsOneWidget,
+    );
+  });
 }

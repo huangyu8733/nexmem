@@ -99,6 +99,54 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
         multicastLock = null
     }
 
+    /**
+     * 返回当前 Wi-Fi 的局域网 IP（点分十进制）。
+     *
+     * Go runtime 在部分 MIUI 设备上因 SELinux 拒绝 netlink，net.Interfaces()
+     * 会报 "route ip+net: netlinkrib: permission denied"，libp2p 无法把
+     * /ip4/0.0.0.0 展开成局域网地址，mDNS 因此没有可广播地址。这里用系统
+     * WifiManager 拿到 IP 注入内核，修复同一 WiFi 下的账号发现。
+     */
+    private fun localIpAddress(): String? {
+        // 首选 Java NetworkInterface：不依赖定位权限，能拿到 wlan0 的单播 IP。
+        try {
+            val ifaces = java.net.NetworkInterface.getNetworkInterfaces()
+            while (ifaces.hasMoreElements()) {
+                val iface = ifaces.nextElement()
+                if (!iface.isUp || iface.isVirtual || iface.isLoopback) continue
+                val name = iface.name ?: ""
+                // 优先 Wi-Fi 网卡，避免返回蜂窝网络 IP。
+                if (!name.startsWith("wlan", ignoreCase = true)) continue
+                val addrs = iface.inetAddresses
+                while (addrs.hasMoreElements()) {
+                    val addr = addrs.nextElement()
+                    if (addr is java.net.Inet4Address && !addr.isLoopbackAddress &&
+                        !addr.isLinkLocalAddress
+                    ) {
+                        return addr.hostAddress
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+        }
+        // 兜底：WifiManager（Android 10+ 需定位权限）。
+        val ctx = context ?: return null
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                ctx, android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            return null
+        }
+        val wifi = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            ?: return null
+        val ip = wifi.connectionInfo.ipAddress
+        if (ip == 0) return null
+        return String.format(
+            java.util.Locale.US, "%d.%d.%d.%d",
+            ip and 0xff, (ip shr 8) and 0xff, (ip shr 16) and 0xff, (ip shr 24) and 0xff
+        )
+    }
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "call" -> runAsync(result) { ctx ->
@@ -114,6 +162,7 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
                 result.success(null)
             }
             "dataDir" -> result.success(context?.filesDir?.absolutePath)
+            "localIp" -> result.success(localIpAddress())
             "pickFile" -> pickFile(result)
             "pickDirectory" -> pickDirectory(result)
             "openPath" -> openPath(call.argument<String>("path"), result)

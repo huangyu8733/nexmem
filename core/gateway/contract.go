@@ -150,6 +150,16 @@ func eventSpecs() []EventSpec {
 			Data:        json.RawMessage(`{"type":"object","properties":{"group_id":{"type":"string"},"enabled":{"type":"boolean"}},"required":["group_id","enabled"]}`),
 		},
 		{
+			Type:        "group.levelsChanged",
+			Description: "管理员更新群等级配置（含开关），成员按 group_id 通过 group.members 刷新本机等级列表（不产生气泡）",
+			Data:        json.RawMessage(`{"type":"object","properties":{"group_id":{"type":"string"}},"required":["group_id"]}`),
+		},
+		{
+			Type:        "group.memberProfileChanged",
+			Description: "群成员本群称呼或等级变化，UI 按 group_id/account 刷新成员展示（不产生气泡）",
+			Data:        json.RawMessage(`{"type":"object","properties":{"group_id":{"type":"string"},"account":{"type":"string"},"nickname":{"type":"string"},"level_id":{"type":"string"}},"required":["group_id","account","nickname","level_id"]}`),
+		},
+		{
 			Type:        "friend.request.new",
 			Description: "收到新的好友申请，UI 刷新申请列表与角标",
 			Data:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"peer":{"type":"string"},"message":{"type":"string"}},"required":["id","peer"]}`),

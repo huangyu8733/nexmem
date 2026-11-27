@@ -133,6 +133,9 @@ func (s *Server) handleWake(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			resp.Removed++
+		case errors.Is(err, push.ErrNotConfigured):
+			// 凭证尚未配置：不能当成坏令牌删除，换配置后仍可恢复。
+			resp.Failed++
 		default:
 			resp.Failed++
 		}

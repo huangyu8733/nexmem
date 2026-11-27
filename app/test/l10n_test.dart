@@ -82,6 +82,90 @@ void main() {
         }
       }
     });
+
+    test('六语词条数量覆盖全部界面文案', () {
+      for (final String language in languages) {
+        expect(
+          translationKeys(language).length,
+          greaterThanOrEqualTo(1000),
+          reason: '$language 词条数不足',
+        );
+      }
+    });
+
+    test('所有译文的占位符与原文一致且非空', () {
+      final RegExp placeholder = RegExp(r'\{\d+\}');
+      for (final String key in translationKeys('en')) {
+        final List<String> expected = placeholder
+            .allMatches(key)
+            .map((Match m) => m.group(0)!)
+            .toList()
+          ..sort();
+        for (final String language in languages) {
+          final String? value = translationValue(language, key);
+          expect(value, isNotNull, reason: '$language 缺少 $key 的译文');
+          expect(value!.trim(), isNotEmpty, reason: '$language 的 $key 译文为空');
+          final List<String> actual = placeholder
+              .allMatches(value)
+              .map((Match m) => m.group(0)!)
+              .toList()
+            ..sort();
+          expect(actual, expected, reason: '$language 的 $key 占位符不一致');
+        }
+      }
+    });
+
+    test('远控、发现与最新版本新增文案六语齐全', () {
+      for (final String key in <String>[
+        '远程控制密码',
+        '聊天发起的远控需要你确认；已保存的远程设备凭密码可静默控制。',
+        '账号发现',
+        '加好友',
+        '该账号暂无可用的公钥标识',
+        '没有发现可添加的账号；可检查 mDNS 与地址簿设置',
+        '本机未获取到局域网地址，无法被同网段设备发现',
+        '局域网发现未开启，请在设置中打开',
+        '局域网发现启动失败：{0}',
+        '系统 mDNS 不可用，已启用原生局域网广播发现（等待同网段设备）',
+        '局域网广播失败：{0}',
+        'mDNS 已开启，但局域网内没有发现其他节点',
+        '已发现 {0} 个节点，但不是可添加的账号',
+        '同一 WiFi 下双方都要打开账号发现，iOS 还需在系统设置允许本地网络权限',
+        '诊断网卡：{0}',
+        '诊断监听地址：{0}',
+        '启用自动归属地',
+        '允许被远程控制',
+        '搜索设备名称 / 账号 / IP / 备注',
+        '{0} 正在远程控制本机',
+        '邀请你进行{0}通话',
+        '通话时长 {0}',
+        '未接来电（{0}）',
+        '点按标注查看设备；缩放时密集点会自动聚合。',
+        '使用系统定位',
+        '当前设备不支持系统定位',
+        '{0} 分钟前活跃',
+        '{0} 天后销毁',
+      ]) {
+        for (final String language in languages) {
+          expect(
+            translationHasKey(language, key),
+            isTrue,
+            reason: '$language 缺少 key: $key',
+          );
+        }
+      }
+    });
+
+    test('繁体中文表不再残留常见简体写法', () {
+      for (final String key in <String>[
+        '日志缓冲',
+        '可附脱敏诊断日志',
+        '附带脱敏诊断日志',
+        '导出脱敏日志用于排障',
+      ]) {
+        expect(translationValue('zh_TW', key), isNot(contains('日志')));
+      }
+    });
   });
 
   group('翻译回退链', () {

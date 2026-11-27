@@ -13,10 +13,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,10 +36,15 @@ const (
 	DefaultMaxMessageSize = 64 << 10
 	// DefaultRequestTimeout 是单条请求的处理上限。
 	DefaultRequestTimeout = 30 * time.Second
+	// DefaultMaxUploadSize 是浏览器单次选择上传的总字节上限。
+	DefaultMaxUploadSize = 256 << 20
 	// sendQueue 是单个连接的待发送队列长度；持续堆积说明客户端失联，直接断开。
-	sendQueue = 64
+	// 断线重放最多 512 条事件，队列需容纳一轮重放，避免握手即误判断连。
+	sendQueue = 1024
 	// writeWait 是单帧写超时。
 	writeWait = 10 * time.Second
+	// replayWait 是重放入队的最长等待时间；写入由 writeLoop 统一收敛。
+	replayWait = 30 * time.Second
 )
 
 // 配置错误。
@@ -58,10 +66,18 @@ type Config struct {
 	Gateway *gateway.Gateway
 	// StaticDir 是 Flutter Web 产物目录；为空时只暴露 /ws 与 /healthz。
 	StaticDir string
+	// UploadDir 是浏览器选择文件/目录后上传的落地目录；留空使用系统临时目录。
+	UploadDir string
+	// DownloadDirs 是 /download 端点额外放行的目录白名单（如内核群文件下载目录）。
+	// UploadDir 始终自动放行；本列表用于放行内核写入的其它目录。留空时只放行 UploadDir。
+	// 端点会做绝对路径校验与符号链接逃逸防护，仅允许下载白名单目录内的普通文件。
+	DownloadDirs []string
 	// AllowedOrigins 非空时按完整 Origin 白名单校验；为空时只允许同源与不带 Origin 的客户端。
 	AllowedOrigins []string
 	// MaxMessageSize 留空使用 DefaultMaxMessageSize。
 	MaxMessageSize int64
+	// MaxUploadSize 留空使用 DefaultMaxUploadSize。
+	MaxUploadSize int64
 	// RequestTimeout 留空使用 DefaultRequestTimeout。
 	RequestTimeout time.Duration
 	// EventBufferSize 是事件重放缓冲容量，留空使用 DefaultEventBufferSize。
@@ -70,14 +86,17 @@ type Config struct {
 
 // Server 是 WebSocket 网关，允许多个浏览器连接同时使用。
 type Server struct {
-	token     atomic.Value // []byte，支持运行期热轮换
-	tokenFile string
-	gw        *gateway.Gateway
-	maxSize   int64
-	timeout   time.Duration
-	origins   []string
-	static    string
-	upgrade   websocket.Upgrader
+	token        atomic.Value // []byte，支持运行期热轮换
+	tokenFile    string
+	gw           *gateway.Gateway
+	maxSize      int64
+	timeout      time.Duration
+	origins      []string
+	static       string
+	uploadDir    string
+	downloadDirs []string // 已 Abs+Clean 的白名单根目录（含 uploadDir）
+	maxUpload    int64
+	upgrade      websocket.Upgrader
 
 	mu     sync.Mutex
 	conns  map[*session]struct{}
@@ -103,15 +122,44 @@ func New(cfg Config) (*Server, error) {
 	if timeout <= 0 {
 		timeout = DefaultRequestTimeout
 	}
+	uploadDir := strings.TrimSpace(cfg.UploadDir)
+	if uploadDir == "" {
+		uploadDir = filepath.Join(os.TempDir(), "nexmem-web-uploads")
+	}
+	if err := os.MkdirAll(uploadDir, 0o700); err != nil {
+		return nil, fmt.Errorf("创建上传目录 %s: %w", uploadDir, err)
+	}
+	maxUpload := cfg.MaxUploadSize
+	if maxUpload <= 0 {
+		maxUpload = DefaultMaxUploadSize
+	}
+	// 下载白名单：uploadDir 始终放行，叠加调用方显式配置的目录；
+	// 全部 Abs+Clean 后去重，供 /download 做逃逸校验。
+	downloadDirs := make([]string, 0, len(cfg.DownloadDirs)+1)
+	seenDir := make(map[string]struct{}, len(cfg.DownloadDirs)+1)
+	for _, dir := range append([]string{uploadDir}, cfg.DownloadDirs...) {
+		abs, err := filepath.Abs(strings.TrimSpace(dir))
+		if err != nil || abs == "" {
+			continue
+		}
+		if _, dup := seenDir[abs]; dup {
+			continue
+		}
+		seenDir[abs] = struct{}{}
+		downloadDirs = append(downloadDirs, abs)
+	}
 	s := &Server{
-		gw:        cfg.Gateway,
-		maxSize:   maxSize,
-		timeout:   timeout,
-		origins:   append([]string(nil), cfg.AllowedOrigins...),
-		static:    cfg.StaticDir,
-		tokenFile: strings.TrimSpace(cfg.TokenFile),
-		conns:     make(map[*session]struct{}),
-		buf:       newEventBuffer(cfg.EventBufferSize),
+		gw:           cfg.Gateway,
+		maxSize:      maxSize,
+		timeout:      timeout,
+		origins:      append([]string(nil), cfg.AllowedOrigins...),
+		static:       cfg.StaticDir,
+		uploadDir:    uploadDir,
+		downloadDirs: downloadDirs,
+		maxUpload:    maxUpload,
+		tokenFile:    strings.TrimSpace(cfg.TokenFile),
+		conns:        make(map[*session]struct{}),
+		buf:          newEventBuffer(cfg.EventBufferSize),
 	}
 	s.token.Store([]byte(token))
 	s.upgrade = websocket.Upgrader{
@@ -142,11 +190,14 @@ func resolveToken(cfg Config) (string, error) {
 	return token, nil
 }
 
-// Handler 返回 HTTP 路由：/ws 为 WebSocket 通道，/healthz 为存活探测，
-// 其余路径在配置了 StaticDir 时提供静态资源与单页回退。
+// Handler 返回 HTTP 路由：/ws 为 WebSocket 通道，/auth 为轻量令牌探测，
+// /healthz 为存活探测，其余路径在配置了 StaticDir 时提供静态资源与单页回退。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWS)
+	mux.HandleFunc("/auth", s.handleAuth)
+	mux.HandleFunc("/upload", s.handleUpload)
+	mux.HandleFunc("/download", s.handleDownload)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	if s.static != "" {
 		mux.Handle("/", s.staticHandler())
@@ -219,6 +270,260 @@ func (s *Server) Close() {
 	for _, c := range sessions {
 		c.close()
 	}
+}
+
+// handleAuth 给浏览器提供握手前的令牌探测：200 表示令牌有效，401 表示
+// 令牌无效或已轮换。WebSocket 握手失败在浏览器里拿不到 HTTP 状态码，
+// 客户端据此把「token 错误」与「网络离线」区分开，避免无意义重连。
+func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="nexmem"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(`{"authorized":true}`))
+}
+
+// handleUpload 接收浏览器文件选择器上传的字节，落到网关本机目录后返回
+// 内核可读的绝对路径。浏览器拿不到服务端路径，必须通过这一步 bridging。
+func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="nexmem"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxUpload)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		http.Error(w, "invalid multipart body", http.StatusBadRequest)
+		return
+	}
+
+	root, err := os.MkdirTemp(s.uploadDir, "pick-")
+	if err != nil {
+		http.Error(w, "创建上传目录失败", http.StatusInternalServerError)
+		return
+	}
+	fail := func(status int, message string) {
+		_ = os.RemoveAll(root)
+		http.Error(w, message, status)
+	}
+	writeJSON := func(payload map[string]any) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(payload)
+	}
+
+	if r.FormValue("mode") == "dir" {
+		headers := r.MultipartForm.File["files"]
+		if len(headers) == 0 {
+			fail(http.StatusBadRequest, "目录上传为空")
+			return
+		}
+		relValues := r.MultipartForm.Value["relative_path"]
+		relFiles := r.MultipartForm.File["relative_path"]
+		relativeAt := func(index int) string {
+			if index < len(relValues) {
+				return relValues[index]
+			}
+			if index < len(relFiles) {
+				file, err := relFiles[index].Open()
+				if err != nil {
+					return ""
+				}
+				raw, err := io.ReadAll(file)
+				_ = file.Close()
+				if err != nil {
+					return ""
+				}
+				return string(raw)
+			}
+			return ""
+		}
+		var total int64
+		for i, header := range headers {
+			rel := relativeAt(i)
+			safe, ok := safeRelativePath(rel)
+			if !ok {
+				fail(http.StatusBadRequest, "非法相对路径")
+				return
+			}
+			if safe == "" {
+				safe = filepath.Base(header.Filename)
+			}
+			target := filepath.Join(root, filepath.FromSlash(safe))
+			file, err := header.Open()
+			if err != nil {
+				fail(http.StatusBadRequest, "读取上传文件失败")
+				return
+			}
+			err = writeUploadedFile(target, file)
+			_ = file.Close()
+			if err != nil {
+				fail(http.StatusInternalServerError, "写入上传文件失败")
+				return
+			}
+			total += header.Size
+		}
+		writeJSON(map[string]any{
+			"path": root,
+			"name": filepath.Base(root),
+			"size": total,
+		})
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		fail(http.StatusBadRequest, "缺少上传文件")
+		return
+	}
+	defer file.Close()
+	name := filepath.Base(header.Filename)
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		name = "upload.bin"
+	}
+	target := filepath.Join(root, name)
+	if err := writeUploadedFile(target, file); err != nil {
+		fail(http.StatusInternalServerError, "写入上传文件失败")
+		return
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		fail(http.StatusInternalServerError, "读取上传文件信息失败")
+		return
+	}
+	writeJSON(map[string]any{
+		"path": target,
+		"name": name,
+		"size": info.Size(),
+	})
+}
+
+// handleDownload 把白名单目录内的文件交给浏览器下载或在线播放。
+//
+// Web 端内核在网关进程内运行，群文件下载只能落到服务端路径；浏览器拿不到
+// 该路径，必须经本端点按 token 鉴权后取回字节。安全约束：
+//   - 令牌鉴权与 /ws、/upload 一致，支持 ?token / Authorization / X-Nexmem-Token；
+//   - 路径必须落在 downloadDirs 白名单内，且用 EvalSymlinks 解析后仍落在白名单，
+//     防止符号链接逃逸到私钥、数据库等敏感文件；
+//   - 仅允许普通文件，拒绝目录、设备文件；
+//   - Content-Disposition 默认为 attachment 触发保存；聊天媒体在线播放显式传
+//     disposition=inline，文件名仍经 mime.FormatMediaType 转义，避免响应头注入；
+//   - 仍由 http.ServeFile 输出字节，天然支持 Range / If-Range / HEAD，便于浏览器
+//     流式播放与拖动进度，不把整文件读进内存。
+func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="nexmem"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	requested := strings.TrimSpace(r.URL.Query().Get("path"))
+	if requested == "" {
+		http.Error(w, "缺少 path 参数", http.StatusBadRequest)
+		return
+	}
+	realPath, ok := s.resolveDownloadPath(requested)
+	if !ok {
+		http.Error(w, "文件不在允许的下载目录内", http.StatusForbidden)
+		return
+	}
+	info, err := os.Stat(realPath)
+	if err != nil || !info.Mode().IsRegular() {
+		http.Error(w, "文件不存在或不是普通文件", http.StatusNotFound)
+		return
+	}
+	name := filepath.Base(realPath)
+	disposition := "attachment"
+	if strings.EqualFold(r.URL.Query().Get("disposition"), "inline") {
+		disposition = "inline"
+	}
+	w.Header().Set(
+		"Content-Disposition",
+		mime.FormatMediaType(disposition, map[string]string{"filename": name}),
+	)
+	w.Header().Set("Cache-Control", "no-store")
+	// ServeFile 会设置 Content-Type / Content-Length，并支持 Range / If-Range / HEAD。
+	http.ServeFile(w, r, realPath)
+}
+
+// resolveDownloadPath 校验下载路径并解析符号链接，返回白名单内的真实绝对路径。
+// 请求路径与解析后的真实路径都必须落在同一白名单根目录内，双重校验防逃逸。
+func (s *Server) resolveDownloadPath(requested string) (string, bool) {
+	abs, err := filepath.Abs(requested)
+	if err != nil {
+		return "", false
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", false
+	}
+	real = filepath.Clean(real)
+	for _, root := range s.downloadDirs {
+		realRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(realRoot, real)
+		if err != nil {
+			continue
+		}
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) ||
+			filepath.IsAbs(rel) {
+			continue
+		}
+		return real, true
+	}
+	return "", false
+}
+
+// safeRelativePath 把浏览器上报的 webkitRelativePath 收敛为网关内的相对路径，
+// 拒绝绝对路径、盘符与向上的路径穿越。
+func safeRelativePath(raw string) (string, bool) {
+	raw = strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
+	if raw == "" {
+		return "", true
+	}
+	if path.IsAbs(raw) || (len(raw) >= 2 && raw[1] == ':') {
+		return "", false
+	}
+	cleaned := path.Clean(raw)
+	if cleaned == "." {
+		return "", true
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", false
+	}
+	return cleaned, true
+}
+
+func writeUploadedFile(target string, source io.Reader) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, source)
+	return err
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -297,10 +602,12 @@ func (s *Server) resume(sess *session, since uint64) bool {
 		if err != nil {
 			return true
 		}
-		return sess.send(websocket.TextMessage, payload)
+		return sess.sendWait(websocket.TextMessage, payload, replayWait)
 	}
+	// 重放必须可靠入队：非阻塞 send 在队列瞬时打满时会返回 false，
+	// 上层据此直接关闭连接，用户看到的是「重连后又立刻掉线」。
 	for _, item := range items {
-		if !sess.send(websocket.TextMessage, item.payload) {
+		if !sess.sendWait(websocket.TextMessage, item.payload, replayWait) {
 			return false
 		}
 	}
@@ -442,6 +749,9 @@ func (s *Server) staticHandler() http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		// Flutter Web 的 main.dart.js 文件名固定，不能让浏览器长期缓存：
+		// 每次重建产物后必须重新校验，否则会一直加载旧界面。
+		w.Header().Set("Cache-Control", "no-cache")
 		if r.URL.Path == "/" {
 			files.ServeHTTP(w, r)
 			return
@@ -500,6 +810,20 @@ func (s *session) send(kind int, data []byte) bool {
 	case <-s.done:
 		return false
 	default:
+		return false
+	}
+}
+
+// sendWait 与 send 类似，但队列满时等待写线程消费，而不是直接判定连接失联。
+func (s *session) sendWait(kind int, data []byte, timeout time.Duration) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case s.out <- frame{kind: kind, data: data}:
+		return true
+	case <-s.done:
+		return false
+	case <-timer.C:
 		return false
 	}
 }

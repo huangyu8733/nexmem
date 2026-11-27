@@ -26,6 +26,21 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- 扫码加好友与视频通话都需要摄像头；语音/视频通话需要麦克风。 -->
+	<key>NSCameraUsageDescription</key>
+	<string>Nexmem 需要使用摄像头扫描好友二维码，以及进行视频通话。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Nexmem 需要使用麦克风进行语音和视频通话。</string>
+	<!-- 设备发现使用 mDNS 局域网广播，iOS 14+ 需要本地网络用途说明。 -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Nexmem 需要通过局域网发现同一网络下的可远程控制设备，不会访问其他本地服务。</string>
+	<!-- 本机位置仅在用户主动点击“使用系统定位”后申请，用于估算设备距离。 -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Nexmem 仅在您主动设置本机位置时读取系统定位，用于估算附近设备的距离，不会上传或发送给对端。</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_nexmem._udp</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

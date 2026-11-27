@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../app/core_session.dart';
 import '../../app/pane_header.dart';
+import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 import '../settings/settings_pane.dart' show showPaneDialog;
@@ -290,13 +291,13 @@ class _SocialHubPageState extends State<SocialHubPage>
               IconButton(
                 key: ValueKey<String>('friend-req-reject-${r.id}'),
                 tooltip: context.t('拒绝'),
-                icon: const Icon(Icons.close, color: Colors.red),
+                icon: const Icon(Icons.close, color: NexmemColors.danger),
                 onPressed: () => _respondFriend(r, false),
               ),
               IconButton(
                 key: ValueKey<String>('friend-req-accept-${r.id}'),
                 tooltip: context.t('同意'),
-                icon: const Icon(Icons.check, color: Colors.green),
+                icon: const Icon(Icons.check, color: NexmemColors.success),
                 onPressed: () => _respondFriend(r, true),
               ),
             ],
@@ -358,13 +359,13 @@ class _SocialHubPageState extends State<SocialHubPage>
               IconButton(
                 key: ValueKey<String>('join-req-reject-${r.id}'),
                 tooltip: context.t('拒绝'),
-                icon: const Icon(Icons.close, color: Colors.red),
+                icon: const Icon(Icons.close, color: NexmemColors.danger),
                 onPressed: () => _respondJoin(r, false),
               ),
               IconButton(
                 key: ValueKey<String>('join-req-accept-${r.id}'),
                 tooltip: context.t('同意'),
-                icon: const Icon(Icons.check, color: Colors.green),
+                icon: const Icon(Icons.check, color: NexmemColors.success),
                 onPressed: () => _respondJoin(r, true),
               ),
             ],
@@ -385,9 +386,11 @@ class _SocialHubPageState extends State<SocialHubPage>
       children: <Widget>[
         if (_notifs.unread > 0 || _notifs.items.isNotEmpty)
           Align(
-            alignment: Alignment.centerRight,
+            alignment: AlignmentDirectional.centerEnd,
             child: Wrap(
-              alignment: WrapAlignment.end,
+              alignment: Directionality.of(context) == TextDirection.rtl
+                  ? WrapAlignment.start
+                  : WrapAlignment.end,
               children: <Widget>[
                 if (_notifs.unread > 0)
                   TextButton(
@@ -473,7 +476,11 @@ class _ErrorBar extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: Row(children: <Widget>[
           Expanded(child: Text(message, style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer))),
-          IconButton(onPressed: onRetry, icon: const Icon(Icons.refresh)),
+          IconButton(
+            tooltip: context.t('重试'),
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh),
+          ),
         ]),
       );
 }

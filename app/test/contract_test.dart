@@ -47,6 +47,23 @@ void main() {
     expect(missing, isEmpty, reason: '缺少用例: ${missing.join(', ')}');
   });
 
+  test('聊天正文在契约层声明 4096 字符上限', () {
+    final byName = <String, Map<String, dynamic>>{
+      for (final item in api['methods'] as List)
+        (item as Map)['name'] as String: item.cast<String, dynamic>(),
+    };
+    for (final method in const <String>[
+      'dm.sendText',
+      'dm.sendGroupText',
+      'msg.edit',
+    ]) {
+      final params = byName[method]!['params'] as Map<String, dynamic>;
+      final props = (params['properties'] as Map).cast<String, dynamic>();
+      final text = (props['text'] as Map).cast<String, dynamic>();
+      expect(text['maxLength'], 4096, reason: '$method.text 缺少长度约束');
+    }
+  });
+
   for (final file in files) {
     final doc = _readJson(file.path) as Map<String, dynamic>;
     group(file.uri.pathSegments.last, () {

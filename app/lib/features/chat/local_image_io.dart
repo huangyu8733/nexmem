@@ -10,9 +10,13 @@ class LocalImage extends StatelessWidget {
     this.width,
     this.height,
     this.fit = BoxFit.cover,
+    this.sourceUri,
   });
 
   final String path;
+
+  /// Web 在线播放源；桌面/移动端不使用，保留参数只为两端构造签名一致。
+  final Uri? sourceUri;
   final double? width;
   final double? height;
   final BoxFit fit;

@@ -51,16 +51,34 @@ func relayTestAddr(t *testing.T) string {
 	return fmt.Sprintf("/ip4/127.0.0.1/tcp/4001/p2p/%s", id.String())
 }
 
-// P6-20 验收：设置页开启中继并填写地址后，重启内核按设置启用；默认关闭。
+// 首次启动（从未保存过中继设置）默认启用官方主/备中继。
+func TestRelayDefaultsToOfficialOnFirstStart(t *testing.T) {
+	dir := t.TempDir()
+	gw, app := startRelayTestApp(t, dir, nil)
+	defer func() { _ = app.Stop() }()
+	_ = gw
+
+	got := relayAddrsOf(app)
+	if len(got) != len(defaultRelayAddrs) {
+		t.Fatalf("首次启动应启用 %d 个官方中继，实际 %v", len(defaultRelayAddrs), got)
+	}
+	for i, want := range defaultRelayAddrs {
+		if got[i] != want {
+			t.Fatalf("官方中继[%d] 期望 %s，实际 %s", i, want, got[i])
+		}
+	}
+	policy := relayPolicy(got)
+	if !policy.Enabled || len(policy.Relays) != len(defaultRelayAddrs) {
+		t.Fatalf("默认中继策略未启用: %+v", policy)
+	}
+}
+
+// P6-20 验收：设置页开启中继并填写地址后，重启内核按设置启用。
 func TestRelaySettingsAppliedOnRestart(t *testing.T) {
 	dir := t.TempDir()
 	addr := relayTestAddr(t)
 
 	gw, app := startRelayTestApp(t, dir, nil)
-	if got := relayAddrsOf(app); len(got) != 0 {
-		_ = app.Stop()
-		t.Fatalf("默认应关闭中继，实际 %v", got)
-	}
 	call(t, gw, "settings.set", map[string]any{"key": relayEnabledSettingKey, "value": "true"})
 	call(t, gw, "settings.set", map[string]any{"key": relayAddrsSettingKey, "value": addr + "\n" + addr})
 	if err := app.Stop(); err != nil {

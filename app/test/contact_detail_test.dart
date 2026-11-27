@@ -127,6 +127,10 @@ void main() {
     );
 
     await tester.tap(
+      find.byKey(const ValueKey<String>('contact-friends-entry')),
+    );
+    await tester.pump();
+    await tester.tap(
       find.byKey(const ValueKey<String>('contact-info-1')),
     );
     await tester.pumpAndSettle();

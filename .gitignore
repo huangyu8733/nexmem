@@ -19,6 +19,14 @@ app/android/.kotlin/
 app/.dart_tool/
 *.apk
 
+# 本地生成的 Go 可执行文件（CI 重新编译，不入库）
+/core/nexmem-*
+/core/*.exe
+/core/spike-nat
+
 # 项目私有数据 / 会话记忆 / 截图
 .workbuddy/
 .screenshots/
+.DS_Store
+app/ios/Frameworks/
+app/ios/Pods/

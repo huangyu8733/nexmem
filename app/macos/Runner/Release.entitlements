@@ -5,5 +5,11 @@
 	<!-- 远程控制需要辅助功能注入，关闭 App Sandbox；发布方式改为 Developer ID 公证。 -->
 	<key>com.apple.security.app-sandbox</key>
 	<false/>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.device.camera</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
 </dict>
 </plist>

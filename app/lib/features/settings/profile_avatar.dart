@@ -33,8 +33,14 @@ class ProfileAvatarStore extends ChangeNotifier {
   }
 
   /// 绑定设置服务并加载头像；重复调用只会覆盖绑定并重新读取。
+  ///
+  /// 账号切换/重新进入时会重新 attach：先清空旧账号的头像字节，避免新账号
+  /// 头像尚未读出（或读取失败）期间，左栏与「我的」页短暂显示上一个账号的头像。
   void attach(SettingsService settings) {
     _settings = settings;
+    _bytes = null;
+    _generation++;
+    notifyListeners();
     unawaited(reload());
   }
 

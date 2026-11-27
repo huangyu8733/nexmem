@@ -6,6 +6,9 @@ import 'package:material_ui/material_ui.dart';
 
 import 'app/app.dart';
 import 'app/core_session.dart';
+import 'features/files/chat_file_actions.dart';
+import 'features/files/system_file_picker.dart';
+import 'features/files/web_download.dart';
 import 'transport/android_transport.dart';
 import 'transport/ios_transport.dart';
 import 'transport/native_transport_stub.dart'
@@ -67,5 +70,41 @@ Future<CoreSession?> _sessionFromEnvironment() async {
     token: token,
   );
   unawaited(transport.connect().catchError((Object _) {}));
-  return CoreSession(transport);
+  final String accessToken = token;
+  return CoreSession(
+    transport,
+    pickFile: () =>
+        pickLocalFile(endpoint: transport.endpoint, token: accessToken),
+    pickDirectory: () =>
+        pickLocalDirectory(endpoint: transport.endpoint, token: accessToken),
+    // Web 端内核在网关进程内，群文件落到服务端路径，需经鉴权 /download 取回。
+    downloadToBrowser: (String serverPath, String fileName) =>
+        downloadThroughBrowser(
+          endpoint: transport.endpoint,
+          token: accessToken,
+          serverPath: serverPath,
+          fileName: fileName,
+        ),
+    // 聊天媒体在线播放：同一个鉴权端点，但声明 inline，让浏览器流式加载。
+    mediaSourceUri: (String serverPath) =>
+        webMediaUri(transport.endpoint, accessToken, serverPath),
+    readChatFileBytes: (String path) => readChatFileBytes(
+          path: path,
+          endpoint: transport.endpoint,
+          token: accessToken,
+        ),
+    saveChatFile: (String path, String fileName) => saveChatFileToDevice(
+          sourcePath: path,
+          fileName: fileName,
+          endpoint: transport.endpoint,
+          token: accessToken,
+          downloadToBrowser: (String serverPath, String fileName) =>
+              downloadThroughBrowser(
+                endpoint: transport.endpoint,
+                token: accessToken,
+                serverPath: serverPath,
+                fileName: fileName,
+              ),
+        ),
+  );
 }

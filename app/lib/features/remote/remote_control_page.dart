@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../l10n/l10n.dart';
 import 'remote_control_service.dart';
+import 'remote_group_controller.dart';
 import 'remote_input_codec.dart';
 import 'remote_session.dart';
 import 'remote_video_view.dart';
@@ -35,6 +36,8 @@ class RemoteControlPage extends StatefulWidget {
     this.onShowMessage,
     this.sessions = const <RemoteSessionTab>[],
     this.onSelectSession,
+    this.groupController,
+    this.onGroupChanged,
   });
 
   final RemoteInfo info;
@@ -48,6 +51,12 @@ class RemoteControlPage extends StatefulWidget {
   /// 其他同时进行的远控会话，供顶栏切换。
   final List<RemoteSessionTab> sessions;
   final ValueChanged<String>? onSelectSession;
+
+  /// 群控状态：由壳层持有，跨会话切换保持勾选。
+  final RemoteGroupController? groupController;
+
+  /// 群控勾选或开关变化后通知外部重建。
+  final VoidCallback? onGroupChanged;
 
   @override
   State<RemoteControlPage> createState() => _RemoteControlPageState();
@@ -83,7 +92,32 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
       widget.info.permissions.input &&
       _service != null;
 
+  /// 群控生效条件：开关已打开且至少勾选了两台设备。
+  bool get _groupActive {
+    final RemoteGroupController? group = widget.groupController;
+    return group != null && group.enabled && group.targetCount > 1;
+  }
+
   void _show(String message) => widget.onShowMessage?.call(message);
+
+  /// 打开远控设备列表，在面板里勾选设备、开关群控、批量断开。
+  void _openDeviceSheet() {
+    final RemoteGroupController? group = widget.groupController;
+    if (group == null) {
+      return;
+    }
+    group.sync();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF171A1F),
+      isScrollControlled: true,
+      builder: (BuildContext _) => RemoteGroupSheet(
+        controller: group,
+        onChanged: () => setState(() {}),
+        onClose: () => Navigator.of(context).pop(),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -258,9 +292,14 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
             '${info.stats.bitrateKbps > 0 ? ' · ${info.stats.bitrateKbps} kbps' : ''}'
             '${info.stats.packetLoss > 0.005 ? ' · ${context.t('丢包')} ${(info.stats.packetLoss * 100).toStringAsFixed(1)}%' : ''}'
         : info.state.label;
+    final RemoteGroupController? group = widget.groupController;
+    final String groupLabel = group != null && group.enabled
+        ? '  · ${context.t('群控 {0} 台', [group.targetCount])}'
+        : '';
     final String subtitle =
         '${info.display?.name ?? ''}  $stats'
-        '${info.permissions.input ? '' : '  · ${context.t('仅查看')}'}';
+        '${info.permissions.input ? '' : '  · ${context.t('仅查看')}'}'
+        '$groupLabel';
     return Container(
       color: Colors.black.withValues(alpha: 0.55),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -294,6 +333,27 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
               ],
             ),
           ),
+          if (group != null && group.availableTargets.isNotEmpty)
+            IconButton(
+              key: const ValueKey<String>('remote-group-manage'),
+              tooltip: context.t('管理远控设备'),
+              icon: const Icon(Icons.devices_other, color: Colors.white),
+              onPressed: _openDeviceSheet,
+            ),
+          if (group != null && group.canGroup)
+            IconButton(
+              key: const ValueKey<String>('remote-group-toggle'),
+              tooltip: context.t('群控模式'),
+              icon: Icon(
+                group.enabled ? Icons.groups : Icons.groups_outlined,
+                color: group.enabled ? Colors.greenAccent : Colors.white,
+              ),
+              onPressed: () {
+                group.setEnabled(!group.enabled);
+                setState(() {});
+                widget.onGroupChanged?.call();
+              },
+            ),
           if (widget.sessions.length > 1 &&
               widget.onSelectSession != null)
             PopupMenuButton<String>(
@@ -354,51 +414,64 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
       color: Colors.black.withValues(alpha: 0.6),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        // 每个按钮可收缩，窄屏/长语种下不会把工具栏挤出屏幕。
         children: <Widget>[
-          _toolButton(
-            key: 'remote-clipboard-send',
-            icon: Icons.content_paste,
-            label: context.t('发送剪贴板'),
-            onTap: widget.info.permissions.clipboard ? _sendClipboard : null,
+          Flexible(
+            child: _toolButton(
+              key: 'remote-clipboard-send',
+              icon: Icons.content_paste,
+              label: context.t('发送剪贴板'),
+              onTap: widget.info.permissions.clipboard ? _sendClipboard : null,
+            ),
           ),
-          _toolButton(
-            key: 'remote-clipboard-get',
-            icon: Icons.content_paste_go,
-            label: context.t('获取剪贴板'),
-            onTap: widget.info.permissions.clipboard ? _requestClipboard : null,
+          Flexible(
+            child: _toolButton(
+              key: 'remote-clipboard-get',
+              icon: Icons.content_paste_go,
+              label: context.t('获取剪贴板'),
+              onTap:
+                  widget.info.permissions.clipboard ? _requestClipboard : null,
+            ),
           ),
-          _toolButton(
-            key: 'remote-file',
-            icon: Icons.upload_file,
-            label: context.t('发送文件'),
-            onTap: widget.info.permissions.file ? widget.onSendFile : null,
+          Flexible(
+            child: _toolButton(
+              key: 'remote-file',
+              icon: Icons.upload_file,
+              label: context.t('发送文件'),
+              onTap: widget.info.permissions.file ? widget.onSendFile : null,
+            ),
           ),
-          _toolButton(
-            key: 'remote-keyboard',
-            icon: Icons.keyboard,
-            label: context.t('键盘'),
-            onTap: () {
-              setState(() => _showKeyboard = !_showKeyboard);
-              if (_showKeyboard) {
-                _focus.unfocus();
-              } else {
-                _focus.requestFocus();
-              }
-            },
+          Flexible(
+            child: _toolButton(
+              key: 'remote-keyboard',
+              icon: Icons.keyboard,
+              label: context.t('键盘'),
+              onTap: () {
+                setState(() => _showKeyboard = !_showKeyboard);
+                if (_showKeyboard) {
+                  _focus.unfocus();
+                } else {
+                  _focus.requestFocus();
+                }
+              },
+            ),
           ),
-          _toolButton(
-            key: 'remote-touchpad',
-            icon: Icons.touch_app,
-            label: context.t('触控板'),
-            onTap: () => setState(() => _showTouchpad = !_showTouchpad),
+          Flexible(
+            child: _toolButton(
+              key: 'remote-touchpad',
+              icon: Icons.touch_app,
+              label: context.t('触控板'),
+              onTap: () => setState(() => _showTouchpad = !_showTouchpad),
+            ),
           ),
-          _toolButton(
-            key: 'remote-end',
-            icon: Icons.power_settings_new,
-            label: context.t('断开'),
-            danger: true,
-            onTap: _end,
+          Flexible(
+            child: _toolButton(
+              key: 'remote-end',
+              icon: Icons.power_settings_new,
+              label: context.t('断开'),
+              danger: true,
+              onTap: _end,
+            ),
           ),
         ],
       ),
@@ -417,7 +490,7 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
@@ -433,6 +506,9 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
             const SizedBox(height: 2),
             Text(
               label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 10,
                 color: onTap == null ? Colors.white24 : Colors.white60,
@@ -809,7 +885,7 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
     final int y = ((position.dy - rect.top) / rect.height * 65535)
         .clamp(0, 65535)
         .round();
-    unawaited(service.sendPointer(RemotePointerEvent(
+    final RemotePointerEvent event = RemotePointerEvent(
       type: type,
       xNorm: x,
       yNorm: y,
@@ -817,7 +893,13 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
       wheelY: wheelY,
       modifiers: RemoteKeyMap.currentModifiers(),
       displayIndex: widget.info.display?.index ?? 0,
-    )));
+    );
+    final RemoteGroupController? group = widget.groupController;
+    if (_groupActive) {
+      unawaited(group!.broadcastPointer(event));
+      return;
+    }
+    unawaited(service.sendPointer(event));
   }
 
   // ---------------------------------------------------------------------------
@@ -835,11 +917,17 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
     final bool down =
         event is KeyDownEvent || event is KeyRepeatEvent;
     if (event is KeyUpEvent || down) {
-      unawaited(_service!.sendKey(
-        name,
-        down: down,
-        modifiers: RemoteKeyMap.currentModifiers(),
-      ));
+      final int modifiers = RemoteKeyMap.currentModifiers();
+      final RemoteGroupController? group = widget.groupController;
+      if (_groupActive) {
+        unawaited(group!.broadcastKey(name, down: down, modifiers: modifiers));
+      } else {
+        unawaited(_service!.sendKey(
+          name,
+          down: down,
+          modifiers: modifiers,
+        ));
+      }
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -849,12 +937,23 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
     if (value.isEmpty) {
       return;
     }
-    unawaited(_service?.sendText(value));
+    final RemoteGroupController? group = widget.groupController;
+    if (_groupActive) {
+      unawaited(group!.broadcastText(value));
+    } else {
+      unawaited(_service?.sendText(value));
+    }
     _text.clear();
   }
 
   /// 一次完整的按键（按下 + 松开），用于手机端补发功能键。
   Future<void> _sendKeyTap(String key) async {
+    final RemoteGroupController? group = widget.groupController;
+    if (_groupActive) {
+      await group!.broadcastKey(key, down: true);
+      await group.broadcastKey(key, down: false);
+      return;
+    }
     final RemoteControlService? service = _service;
     if (service == null) {
       return;
@@ -867,6 +966,11 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
     final String emptyText = context.t('本机剪贴板为空');
     final String sentText = context.t('剪贴板已发送');
     final String failedText = context.t('读取剪贴板失败');
+    final RemoteGroupController? group = widget.groupController;
+    final String groupSentText = context.t(
+      '剪贴板已发送到 {0} 台设备',
+      [group?.targetCount ?? 0],
+    );
     try {
       final ClipboardData? data = await Clipboard.getData('text/plain');
       final String text = data?.text ?? '';
@@ -874,8 +978,13 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
         _show(emptyText);
         return;
       }
-      await _service?.sendClipboardText(text);
-      _show(sentText);
+      if (_groupActive) {
+        await group!.broadcastClipboard(text);
+        _show(groupSentText);
+      } else {
+        await _service?.sendClipboardText(text);
+        _show(sentText);
+      }
     } on Object {
       _show(failedText);
     }

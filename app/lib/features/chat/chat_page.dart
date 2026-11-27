@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart' show kIsWeb, ValueListenable;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -12,12 +12,53 @@ import '../../app/empty_state.dart';
 import '../../app/theme.dart';
 import '../chats/conversation.dart';
 import '../contacts/contact_service.dart';
+import '../files/chat_file_viewer.dart';
+import '../files/media_viewer.dart';
 import '../group/group_storage.dart';
 import '../settings/diagnostics.dart';
 import '../settings/report.dart';
 import 'chat_message.dart';
 import 'chat_store.dart';
 import 'local_image.dart';
+
+/// 文本正文上限：与内核契约 dm.sendText / dm.sendGroupText / msg.edit 的
+/// `text.maxLength = 4096` 保持一致，UI 层提前拦截，避免发送后才失败。
+const int kMaxMessageChars = 4096;
+
+/// 输入框字符计数：平时隐藏，接近上限时才提示，避免常驻数字影响美观。
+Widget? _messageCounter(
+  BuildContext context, {
+  required int currentLength,
+  required bool isFocused,
+  required int? maxLength,
+}) {
+  if (maxLength == null || currentLength < maxLength - 200) {
+    return null;
+  }
+  return Text(
+    '$currentLength/$maxLength',
+    style: TextStyle(
+      fontSize: 11,
+      color: currentLength >= maxLength
+          ? Theme.of(context).colorScheme.error
+          : Theme.of(context).colorScheme.outline,
+    ),
+  );
+}
+
+/// 发送失败时把内核真实原因显示出来，而不是只留一个不可读的感叹号。
+///
+/// 异步回调用调用方提前捕获的 [messenger] 与模板，避免跨 async gap 使用
+/// BuildContext；调用方负责在挂载状态下取得 messenger。
+void _showSendFailure(
+  ScaffoldMessengerState messenger,
+  String template,
+  Object error,
+) {
+  messenger.showSnackBar(
+    SnackBar(content: Text(template.replaceFirst('{0}', '$error'))),
+  );
+}
 
 /// QQ 风格气泡：圆角矩形 + 朝向发送方的小尖角。
 ///
@@ -161,6 +202,10 @@ class ChatPage extends StatelessWidget {
     this.onStartCall,
     this.onStartRemote,
     this.onPickFile,
+    this.onDownloadGroupFile,
+    this.onSaveFile,
+    this.onReadFileBytes,
+    this.mediaSourceUri,
     this.onDeleteMessage,
     this.onForwardMessage,
     this.onRecallMessage,
@@ -174,6 +219,9 @@ class ChatPage extends StatelessWidget {
     this.onTypingChanged,
     this.onEditMessage,
     this.presence,
+    this.displayName,
+    this.remark = '',
+    this.onSetRemark,
   });
 
   final ConversationItem conversation;
@@ -181,6 +229,15 @@ class ChatPage extends StatelessWidget {
 
   /// 在线状态源（十六进制账号 → 是否在线）；传入后聊天头部实时跟随轮询结果。
   final ValueListenable<Map<String, bool>>? presence;
+
+  /// 单聊显示名：备注 > 昵称 > 账号；为空时回退到 [ConversationItem.title]。
+  final String? displayName;
+
+  /// 当前备注，供点击标题编辑备注时预填。
+  final String remark;
+
+  /// 点击聊天标题设置备注；仅单聊传入。回调参数为新的备注文本。
+  final ValueChanged<String>? onSetRemark;
 
   /// 群聊可 @ 的成员候选（七-1）；为空时不展示 @ 入口。
   final List<MentionCandidate> mentionCandidates;
@@ -222,6 +279,23 @@ class ChatPage extends StatelessWidget {
   /// Web / 移动端可注入平台实现。
   final Future<ChatAttachment?> Function()? onPickFile;
 
+  /// 下载群文件（A-02）：由壳层注入，参数为消息所属会话与附件元数据。
+  /// 返回落盘绝对路径；为空表示回调不可用或用户取消。
+  final Future<String?> Function(
+    ConversationItem conversation,
+    ChatMessage message,
+  )? onDownloadGroupFile;
+
+  /// 把附件保存到本机：群聊沿用内核解密下载，私聊 / 媒体直接复制已落盘文件。
+  final Future<String?> Function(ChatMessage message)? onSaveFile;
+
+  /// 读取附件字节供文本 / 压缩包内联预览；Web 由网关鉴权下载提供。
+  final Future<Uint8List> Function(ChatMessage message)? onReadFileBytes;
+
+  /// Web 聊天媒体在线播放源；由壳层把内核服务端路径换成鉴权 inline 链接。
+  /// 桌面/移动端为空，气泡保持本地文件预览。
+  final Uri? Function(String path)? mediaSourceUri;
+
   /// 本地删除一条消息（P6-11 长按 / 右键菜单），由壳层调用 `msg.delete`。
   /// 为空（离线模式）时仅从内存移除。
   final Future<void> Function(String msgUuid)? onDeleteMessage;
@@ -248,12 +322,7 @@ class ChatPage extends StatelessWidget {
   Future<void> _pickAndSendFile(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final String selfName = context.t('我');
-    final ChatAttachment? file = onPickFile != null
-        ? await onPickFile!()
-        : await showDialog<ChatAttachment>(
-            context: context,
-            builder: (BuildContext context) => const FileSendDialog(),
-          );
+    final ChatAttachment? file = await _pickAttachment(context);
     if (file == null || file.path.trim().isEmpty) {
       return;
     }
@@ -275,13 +344,8 @@ class ChatPage extends StatelessWidget {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final String selfName = context.t('我');
     final String notImage = context.t('请选择图片文件（png / jpg / gif / webp）');
-    final ChatAttachment? picked = onPickFile != null
-        ? await onPickFile!()
-        : await showDialog<ChatAttachment>(
-            context: context,
-            builder: (BuildContext context) =>
-                FileSendDialog(title: context.t('发送图片')),
-          );
+    final ChatAttachment? picked =
+        await _pickAttachment(context, title: context.t('发送图片'));
     if (picked == null || picked.path.trim().isEmpty) {
       return;
     }
@@ -303,23 +367,15 @@ class ChatPage extends StatelessWidget {
   }
 
   /// 发送语音消息（A-01）：复用 [onPickFile] 选择本机音频文件，
-  /// 经 `dm.sendFile` 文件通道送达。本实现只覆盖「选音频 → 发送 → 展示」闭环，
-  /// 不伪造录音能力（麦克风采集需原生插件与权限，见剩余开发进度 C-01）。
+  /// 经文件通道送达：单聊 `dm.sendFile`，群聊 `dm.sendGroupFile`（A-02）。
+  /// 本实现只覆盖「选音频 → 发送 → 展示」闭环，不伪造录音能力
+  /// （麦克风采集需原生插件与权限，见剩余开发进度 C-01）。
   Future<void> _pickAndSendVoice(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final String selfName = context.t('我');
     final String notAudio = context.t('请选择音频文件（m4a / mp3 / wav / aac 等）');
-    if (conversation.isGroup) {
-      messenger.showSnackBar(SnackBar(content: Text(context.t('群聊暂不支持发送语音'))));
-      return;
-    }
-    final ChatAttachment? picked = onPickFile != null
-        ? await onPickFile!()
-        : await showDialog<ChatAttachment>(
-            context: context,
-            builder: (BuildContext context) =>
-                FileSendDialog(title: context.t('发送语音')),
-          );
+    final ChatAttachment? picked =
+        await _pickAttachment(context, title: context.t('发送语音'));
     if (picked == null || picked.path.trim().isEmpty) {
       return;
     }
@@ -344,9 +400,36 @@ class ChatPage extends StatelessWidget {
     }
   }
 
+  /// 调用系统文件选择器；平台选择器失败时给出明确提示而不是静默无反应。
+  Future<ChatAttachment?> _pickAttachment(
+    BuildContext context, {
+    String? title,
+  }) async {
+    final Future<ChatAttachment?> Function()? picker = onPickFile;
+    try {
+      if (picker != null) {
+        return await picker();
+      }
+      return await showDialog<ChatAttachment>(
+        context: context,
+        builder: (BuildContext context) => FileSendDialog(title: title),
+      );
+    } on Object catch (error) {
+      if (!context.mounted) {
+        return null;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.t('选择文件失败：{0}', [error]))),
+      );
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final String sendFailureTemplate = context.t('发送失败：{0}');
     return ColoredBox(
       color: scheme.surface,
       child: Column(
@@ -355,6 +438,9 @@ class ChatPage extends StatelessWidget {
             conversation: conversation,
             store: store,
             presence: presence,
+            displayName: displayName,
+            remark: remark,
+            onSetRemark: onSetRemark,
             onBack: onBack,
             onOpenGroupInfo: onOpenGroupInfo,
             onToggleProfile: onToggleProfile,
@@ -373,6 +459,13 @@ class ChatPage extends StatelessWidget {
                 return _MessageList(
                   store: store,
                   isGroup: conversation.isGroup,
+                  onDownloadGroupFile: onDownloadGroupFile == null
+                      ? null
+                      : (ChatMessage message) =>
+                            onDownloadGroupFile!(conversation, message),
+                  onSaveFile: onSaveFile,
+                  onReadFileBytes: onReadFileBytes,
+                  mediaSourceUri: mediaSourceUri,
                   onDeleteMessage: onDeleteMessage,
                   onForwardMessage: onForwardMessage,
                   onRecallMessage: onRecallMessage,
@@ -389,14 +482,22 @@ class ChatPage extends StatelessWidget {
             onSend: (String text, List<String> mentions, int ttlHours) {
               // 不等待通道回执，输入框立即清空；状态由消息行自行刷新。
               // 引用 ID 由 InputArea 在清空前捕获，这里再读一次以带 replyTo（P6-32）。
-              store.send(
-                text,
-                senderName: context.t('我'),
-                replyTo: store.quoting?.id,
-                mentions: mentions,
-                ttlHours: ttlHours,
+              unawaited(
+                () async {
+                  try {
+                    await store.send(
+                      text,
+                      senderName: context.t('我'),
+                      replyTo: store.quoting?.id,
+                      mentions: mentions,
+                      ttlHours: ttlHours,
+                    );
+                    onSent?.call(text);
+                  } on Object catch (error) {
+                    _showSendFailure(messenger, sendFailureTemplate, error);
+                  }
+                }(),
               );
-              onSent?.call(text);
             },
             onTypingChanged: onTypingChanged,
             mentionCandidates: mentionCandidates,
@@ -518,6 +619,8 @@ class ChatInputArea extends StatelessWidget {
     return ListenableBuilder(
       listenable: store,
       builder: (BuildContext context, Widget? _) {
+        final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+        final String sendFailureTemplate = context.t('发送失败：{0}');
         final bool degraded =
             !conversation.isGroup && store.peerOfflineStorageDisabled;
         final bool groupStorageMissing =
@@ -539,12 +642,20 @@ class ChatInputArea extends StatelessWidget {
                 if (onSend != null) {
                   onSend!(text, mentions, ttlHours);
                 } else {
-                  store.send(
-                    text,
-                    senderName: context.t('我'),
-                    replyTo: replyTo,
-                    mentions: mentions,
-                    ttlHours: ttlHours,
+                  unawaited(
+                    () async {
+                      try {
+                        await store.send(
+                          text,
+                          senderName: context.t('我'),
+                          replyTo: replyTo,
+                          mentions: mentions,
+                          ttlHours: ttlHours,
+                        );
+                      } on Object catch (error) {
+                        _showSendFailure(messenger, sendFailureTemplate, error);
+                      }
+                    }(),
                   );
                 }
                 // 引用随本次发送一并清空；无引用时 setQuoting(null) 是无害的空操作。
@@ -642,6 +753,9 @@ class _ChatHeader extends StatelessWidget {
     required this.conversation,
     required this.store,
     this.presence,
+    this.displayName,
+    this.remark = '',
+    this.onSetRemark,
     this.onBack,
     this.onOpenGroupInfo,
     this.onToggleProfile,
@@ -656,6 +770,9 @@ class _ChatHeader extends StatelessWidget {
   final ConversationItem conversation;
   final ChatStore store;
   final ValueListenable<Map<String, bool>>? presence;
+  final String? displayName;
+  final String remark;
+  final ValueChanged<String>? onSetRemark;
   final VoidCallback? onBack;
   final VoidCallback? onOpenGroupInfo;
   final VoidCallback? onToggleProfile;
@@ -723,6 +840,43 @@ class _ChatHeader extends StatelessWidget {
     messenger.showSnackBar(SnackBar(content: Text(cleared)));
   }
 
+  /// 点击标题打开备注编辑；回调交给壳层落库并回填会话标题。
+  Future<void> _openRemark(BuildContext context) async {
+    final TextEditingController controller =
+        TextEditingController(text: remark);
+    final String? next = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: Text(context.t('设置备注')),
+        content: TextField(
+          key: const ValueKey<String>('chat-header-remark-field'),
+          controller: controller,
+          autofocus: true,
+          maxLines: 1,
+          decoration: InputDecoration(
+            labelText: context.t('备注'),
+            helperText: context.t('仅本机可见，不会发送给对方'),
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(context.t('取消')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: Text(context.t('保存')),
+          ),
+        ],
+      ),
+    );
+    if (next == null) {
+      return;
+    }
+    onSetRemark?.call(next);
+  }
+
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
@@ -731,8 +885,16 @@ class _ChatHeader extends StatelessWidget {
           fontSize: 11,
           color: scheme.onSurface.withValues(alpha: 0.5),
         );
+    final String peer = conversation.peer.isNotEmpty
+        ? conversation.peer
+        : conversation.id;
+    final String name = displayName?.trim().isNotEmpty ?? false
+        ? displayName!.trim()
+        : (conversation.title.trim().isNotEmpty
+            ? conversation.title.trim()
+            : shortAccountLabel(peer));
     return SizedBox(
-      height: 52,
+      height: 56,
       child: Row(
         children: <Widget>[
           if (onBack != null)
@@ -741,25 +903,60 @@ class _ChatHeader extends StatelessWidget {
               icon: const Icon(Icons.arrow_back_ios_new, size: 18),
               onPressed: onBack,
             ),
-          const SizedBox(width: NexmemMetrics.space12),
+          const SizedBox(width: NexmemMetrics.space4),
           Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  conversation.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleMedium
-                      ?.copyWith(fontSize: 17, fontWeight: FontWeight.w600),
+            child: InkWell(
+              key: const ValueKey<String>('chat-header-identity'),
+              onTap: onSetRemark == null ? null : () => _openRemark(context),
+              borderRadius: BorderRadius.circular(NexmemMetrics.radiusListItem),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: NexmemMetrics.space4,
+                  vertical: 2,
                 ),
-                _PresenceSubtitle(
-                  conversation: conversation,
-                  presence: presence,
-                  style: secondary,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    AppAvatar(
+                      seed: conversation.id,
+                      label: name,
+                      icon: conversation.isGroup ? Icons.groups_outlined : null,
+                      size: 36,
+                      showPresence: !conversation.isGroup,
+                      presence: switch (conversation.presence) {
+                        PresenceStatus.online => AvatarPresence.online,
+                        PresenceStatus.relay => AvatarPresence.relay,
+                        PresenceStatus.offline => AvatarPresence.offline,
+                      },
+                    ),
+                    const SizedBox(width: NexmemMetrics.space8),
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 240),
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                        ),
+                        _PresenceSubtitle(
+                          conversation: conversation,
+                          presence: presence,
+                          style: secondary,
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
           if (onStartCall != null) ...<Widget>[
@@ -845,6 +1042,10 @@ class _MessageList extends StatefulWidget {
   const _MessageList({
     required this.store,
     required this.isGroup,
+    this.onDownloadGroupFile,
+    this.onSaveFile,
+    this.onReadFileBytes,
+    this.mediaSourceUri,
     this.onDeleteMessage,
     this.onForwardMessage,
     this.onRecallMessage,
@@ -855,6 +1056,10 @@ class _MessageList extends StatefulWidget {
 
   final ChatStore store;
   final bool isGroup;
+  final Future<String?> Function(ChatMessage message)? onDownloadGroupFile;
+  final Future<String?> Function(ChatMessage message)? onSaveFile;
+  final Future<Uint8List> Function(ChatMessage message)? onReadFileBytes;
+  final Uri? Function(String path)? mediaSourceUri;
   final Future<void> Function(String msgUuid)? onDeleteMessage;
   final Future<bool> Function(ChatMessage message)? onForwardMessage;
   final Future<void> Function(ChatMessage message)? onRecallMessage;
@@ -1089,6 +1294,8 @@ class _MessageListState extends State<_MessageList> {
 
   @override
   Widget build(BuildContext context) {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final String sendFailureTemplate = context.t('发送失败：{0}');
     final List<ChatMessage> messages = widget.store.messages;
     if (messages.isEmpty) {
       return EmptyState(
@@ -1125,7 +1332,21 @@ class _MessageListState extends State<_MessageList> {
               message: message,
               showSenderName: showSender,
               highlighted: highlighted,
-              onRetry: () => widget.store.retry(message.id),
+              onDownloadGroupFile: widget.onDownloadGroupFile,
+              onSaveFile: widget.onSaveFile,
+              onReadFileBytes: widget.onReadFileBytes,
+              mediaSourceUri: widget.mediaSourceUri,
+              onRetry: () => unawaited(
+                    widget.store
+                        .retry(message.id)
+                        .catchError(
+                          (Object error) => _showSendFailure(
+                            messenger,
+                            sendFailureTemplate,
+                            error,
+                          ),
+                        ),
+                  ),
               onDelete: () => _deleteMessage(message),
               onForward: widget.onForwardMessage == null
                   ? null
@@ -1343,6 +1564,11 @@ class MessageBubble extends StatelessWidget {
     required this.message,
     this.showSenderName = false,
     this.highlighted = false,
+    this.onDownloadGroupFile,
+    this.onPreviewMedia,
+    this.onSaveFile,
+    this.onReadFileBytes,
+    this.mediaSourceUri,
     this.onRetry,
     this.onDelete,
     this.onForward,
@@ -1357,6 +1583,21 @@ class MessageBubble extends StatelessWidget {
 
   /// 搜索命中定位时的高亮底色（P6-07）。
   final bool highlighted;
+
+  /// 下载群文件回调（A-02）；仅群文件气泡且内核会话可用时传入。
+  final Future<String?> Function(ChatMessage message)? onDownloadGroupFile;
+
+  /// 覆盖媒体气泡的预览行为；为空时使用内置的 MediaViewerDialog。
+  /// 便于测试注入替身，无需真正启动视频/音频播放器。
+  final Future<void> Function(ChatMessage message)? onPreviewMedia;
+
+  /// 保存附件到本机 / 读取附件字节，供通用文件查看页使用。
+  final Future<String?> Function(ChatMessage message)? onSaveFile;
+  final Future<Uint8List> Function(ChatMessage message)? onReadFileBytes;
+
+  /// Web 在线播放源；为空时媒体/图片气泡沿用本地文件或下载降级。
+  final Uri? Function(String path)? mediaSourceUri;
+
   final VoidCallback? onRetry;
 
   /// 本地删除本条消息（P6-11 长按 / 右键菜单）。
@@ -1467,6 +1708,8 @@ class MessageBubble extends StatelessWidget {
           controller: controller,
           autofocus: true,
           maxLines: 4,
+          maxLength: kMaxMessageChars,
+          buildCounter: _messageCounter,
           decoration: InputDecoration(hintText: context.t('输入新正文')),
         ),
         actions: <Widget>[
@@ -1664,7 +1907,16 @@ class MessageBubble extends StatelessWidget {
                             mine: mine,
                           ),
                         if (message.isFile)
-                          _FileBubbleContent(message: message, mine: mine)
+                          _FileBubbleContent(
+                            message: message,
+                            mine: mine,
+                            isGroup: message.isGroup,
+                            onDownload: onDownloadGroupFile,
+                            onPreview: onPreviewMedia,
+                            onSave: onSaveFile,
+                            onReadBytes: onReadFileBytes,
+                            mediaSourceUri: mediaSourceUri,
+                          )
                         else
                           _highlightMentions(
                             message.text,
@@ -1742,12 +1994,127 @@ class MessageBubble extends StatelessWidget {
 
 /// 文件气泡内容（P2-04）：图标 + 文件名 + 大小 / 传输进度。
 ///
-/// 点击复制本机路径，便于在内核尚未提供「打开文件」能力时定位落盘位置。
+/// 图片可点开缩放预览；语音/视频点开用 MediaViewerDialog 播放；
+/// 其余文件点击复制本机路径，便于定位落盘位置。
 class _FileBubbleContent extends StatelessWidget {
-  const _FileBubbleContent({required this.message, required this.mine});
+  const _FileBubbleContent({
+    required this.message,
+    required this.mine,
+    required this.isGroup,
+    this.onDownload,
+    this.onPreview,
+    this.onSave,
+    this.onReadBytes,
+    this.mediaSourceUri,
+  });
 
   final ChatMessage message;
   final bool mine;
+  final bool isGroup;
+  final Future<String?> Function(ChatMessage)? onDownload;
+  final Future<void> Function(ChatMessage)? onPreview;
+  final Future<String?> Function(ChatMessage)? onSave;
+  final Future<Uint8List> Function(ChatMessage)? onReadBytes;
+  final Uri? Function(String path)? mediaSourceUri;
+
+  /// 两端都可能有真实传输进度（接收端消息状态是 sent，不能只看 sending）。
+  /// 发送完成（status 不再是 sending）后即使进度未刷新也不再显示进度条。
+  bool get _hasTransfer =>
+      message.transferTotal > 0 &&
+      message.transferDone < message.transferTotal;
+
+  bool get _showProgress =>
+      message.status == MessageStatus.sending ||
+      (!message.isMine && _hasTransfer);
+
+  /// 有进度数据时显示确定进度；发送中但首条进度未到时显示不确定进度。
+  double? get _progressRatio => _hasTransfer ? message.transferRatio : null;
+
+  /// 打开媒体预览：桌面/移动端直接播本地文件；Web 端有鉴权播放源时在线
+  /// 流式播放，没有时才退化为下载后用本地播放器打开，并给出明确提示。
+  Future<void> _preview(BuildContext context, ChatAttachment file) async {
+    final Future<void> Function(ChatMessage)? injected = onPreview;
+    if (injected != null) {
+      await injected(message);
+      return;
+    }
+    final Uri? source = mediaSourceUri == null || file.path.isEmpty
+        ? null
+        : mediaSourceUri!(file.path);
+    if (source != null) {
+      await showDialog<void>(
+        context: context,
+        builder: (BuildContext _) => MediaViewerDialog(
+          path: file.path,
+          mime: file.mime,
+          title: file.name,
+          sourceUri: source,
+        ),
+      );
+      return;
+    }
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    // 文案在 await 之前取好，避免跨异步间隔使用 BuildContext。
+    final String downloadedHint =
+        context.t('已下载 {0}，请用本地播放器打开', [file.name]);
+    final String downloadHint = context.t('请下载后使用本地播放器打开');
+    if (kIsWeb || file.path.isEmpty) {
+      if (onDownload != null) {
+        final String? saved = await onDownload!.call(message);
+        if (!context.mounted || saved == null || saved.isEmpty) {
+          return;
+        }
+        messenger.showSnackBar(SnackBar(content: Text(downloadedHint)));
+      } else {
+        // 私聊文件在 Web 端没有下载回调；复制落盘路径并明确说明限制，
+        // 避免用户点了却没有任何反馈。
+        await Clipboard.setData(ClipboardData(text: file.path));
+        messenger.showSnackBar(SnackBar(content: Text(downloadHint)));
+      }
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext _) => MediaViewerDialog(
+        path: file.path,
+        mime: file.mime,
+        title: file.name,
+      ),
+    );
+  }
+
+  /// 打开通用文件查看页：文本 / 压缩包内联预览，其他格式展示元信息并提供保存。
+  Future<void> _openViewer(BuildContext context, ChatAttachment file) async {
+    final Future<Uint8List> Function(ChatMessage)? reader = onReadBytes;
+    final Future<String?> Function(ChatMessage)? saver = onSave;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext routeContext) => ChatFileViewer(
+          name: file.name,
+          mime: file.mime,
+          size: file.size,
+          readBytes: () => reader != null
+              ? reader(message)
+              : Future<Uint8List>.value(Uint8List(0)),
+          onSave: () => saver != null
+              ? saver(message)
+              : Future<String?>.value(null),
+        ),
+      ),
+    );
+  }
+
+  /// 保存媒体附件到本机（与查看页共用同一回调）。
+  Future<void> _save(BuildContext context) async {
+    final Future<String?> Function(ChatMessage)? saver = onSave;
+    if (saver == null) return;
+    final l10n = context.l10n;
+    final String? saved = await saver(message);
+    if (!context.mounted || saved == null || saved.isEmpty) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(l10n.t('已保存到：{0}', [saved]))));
+  }
 
   IconData _icon(String name, String mime) {
     final String lowerName = name.toLowerCase();
@@ -1767,10 +2134,91 @@ class _FileBubbleContent extends StatelessWidget {
     return Icons.insert_drive_file_outlined;
   }
 
+  /// 语音/视频气泡：播放图标 + 文件名 + 大小，点击打开媒体播放器。
+  Widget _mediaContent(
+    BuildContext context,
+    ChatAttachment file,
+    MediaKind kind,
+  ) {
+    final Color fg = mine
+        ? Colors.white
+        : Theme.of(context).colorScheme.onSurface;
+    final Color muted = fg.withValues(alpha: 0.75);
+    final double side = math.min(180, MediaQuery.sizeOf(context).width * 0.5);
+    final bool showProgress = _showProgress;
+    final double? ratio = _progressRatio;
+    final Widget content = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Container(
+          width: side,
+          height: side,
+          decoration: BoxDecoration(
+            color: fg.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Center(
+            child: Icon(
+              kind == MediaKind.video
+                  ? Icons.play_circle_outlined
+                  : Icons.audiotrack_outlined,
+              size: 48,
+              color: fg,
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        SizedBox(
+          width: side,
+          child: Text(
+            file.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: muted),
+          ),
+        ),
+        if (showProgress)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: SizedBox(
+              width: side,
+              child: LinearProgressIndicator(
+                key: ValueKey<String>('chat-file-progress-${message.id}'),
+                value: ratio,
+                minHeight: 3,
+                backgroundColor: fg.withValues(alpha: 0.12),
+                valueColor: AlwaysStoppedAnimation<Color>(fg),
+              ),
+            ),
+          ),
+      ],
+    );
+    return Stack(
+      alignment: Alignment.topRight,
+      children: <Widget>[
+        InkWell(
+          key: ValueKey<String>('chat-media-preview-${message.id}'),
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => unawaited(_preview(context, file)),
+          child: content,
+        ),
+        if (onSave != null)
+          IconButton(
+            key: ValueKey<String>('chat-file-save-${message.id}'),
+            icon: const Icon(Icons.save_alt_outlined, size: 18),
+            tooltip: context.t('保存到本机'),
+            color: fg,
+            onPressed: () => unawaited(_save(context)),
+          ),
+      ],
+    );
+  }
+
   /// 图片气泡（P6-16）：缩略图 + 发送进度覆盖层 + 文件名/大小说明。
   Widget _imageContent(BuildContext context, ChatAttachment file) {
-    final bool transferring = message.status == MessageStatus.sending;
-    final double? ratio = message.transferRatio;
+    final bool transferring = _showProgress;
+    final double? ratio = _progressRatio;
     final double side = math.min(180, MediaQuery.sizeOf(context).width * 0.5);
     final Widget thumb = ClipRRect(
       borderRadius: BorderRadius.circular(8),
@@ -1780,6 +2228,9 @@ class _FileBubbleContent extends StatelessWidget {
         width: side,
         height: side,
         fit: BoxFit.cover,
+        sourceUri: mediaSourceUri == null || file.path.isEmpty
+            ? null
+            : mediaSourceUri!(file.path),
       ),
     );
     final Widget body = transferring
@@ -1797,10 +2248,12 @@ class _FileBubbleContent extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    const SizedBox(
+                    SizedBox(
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(
+                        key: ValueKey<String>('chat-file-progress-${message.id}'),
+                        value: ratio,
                         strokeWidth: 2,
                         color: Colors.white,
                       ),
@@ -1808,7 +2261,11 @@ class _FileBubbleContent extends StatelessWidget {
                     const SizedBox(height: 6),
                     Text(
                       ratio == null
-                          ? context.t('发送中')
+                          ? context.t(
+                              message.status == MessageStatus.sending
+                                  ? '发送中'
+                                  : '接收中',
+                            )
                           : '${(ratio * 100).round()}%',
                       style: const TextStyle(color: Colors.white, fontSize: 12),
                     ),
@@ -1842,22 +2299,89 @@ class _FileBubbleContent extends StatelessWidget {
     );
   }
 
+  Future<void> _download(BuildContext context) async {
+    final String? saved = await onDownload?.call(message);
+    if (!context.mounted || saved == null || saved.isEmpty) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(context.t('群文件已保存到：{0}', [saved]))),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ChatAttachment file = message.attachment!;
+    final Widget body = _buildBody(context, file);
+    final bool canDownload =
+        isGroup && file.canDownloadGroupFile && onDownload != null;
+    if (!canDownload) {
+      return body;
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        body,
+        const SizedBox(height: 6),
+        SizedBox(
+          height: 32,
+          child: OutlinedButton.icon(
+            key: ValueKey<String>('group-file-download-${message.id}'),
+            onPressed: () => _download(context),
+            icon: const Icon(Icons.download_outlined, size: 16),
+            label: Text(
+              context.t('下载群文件'),
+              style: const TextStyle(fontSize: 12),
+            ),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBody(BuildContext context, ChatAttachment file) {
     if (file.isImage && file.path.isNotEmpty) {
-      return _imageContent(context, file);
+      return Stack(
+        alignment: Alignment.topRight,
+        children: <Widget>[
+          InkWell(
+            key: ValueKey<String>('chat-image-preview-${message.id}'),
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => unawaited(_preview(context, file)),
+            child: _imageContent(context, file),
+          ),
+          if (onSave != null)
+            IconButton(
+              key: ValueKey<String>('chat-file-save-${message.id}'),
+              icon: const Icon(Icons.save_alt_outlined, size: 18),
+              tooltip: context.t('保存到本机'),
+              color: mine ? Colors.white : null,
+              onPressed: () => unawaited(_save(context)),
+            ),
+        ],
+      );
+    }
+    final MediaKind kind = mediaKindOf(file.path, mime: file.mime);
+    if (kind == MediaKind.audio || kind == MediaKind.video) {
+      return _mediaContent(context, file, kind);
     }
     final Color fg = mine
         ? Colors.white
         : Theme.of(context).colorScheme.onSurface;
     final Color muted = fg.withValues(alpha: 0.75);
-    final double? ratio = message.transferRatio;
-    final bool transferring = message.status == MessageStatus.sending;
+    // 发送与接收都可能有进度：接收端消息状态是 sent，不能只看 sending。
+    final bool showProgress = _showProgress;
+    final double? ratio = _progressRatio;
     final String sizeText = file.size > 0
         ? formatFileSize(file.size)
         : context.t('大小未知');
-    final String detail = transferring && ratio != null
+    final String detail = ratio != null
         ? '${(ratio * 100).round()}% · $sizeText'
         : sizeText;
     final Widget content = Column(
@@ -1895,20 +2419,34 @@ class _FileBubbleContent extends StatelessWidget {
             ),
           ],
         ),
-        if (transferring)
+        if (showProgress)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: LinearProgressIndicator(
+              key: ValueKey<String>('chat-file-progress-${message.id}'),
               value: ratio,
               minHeight: 3,
-              backgroundColor: muted.withValues(alpha: 0.3),
-              valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+              backgroundColor: fg.withValues(alpha: 0.12),
+              valueColor: AlwaysStoppedAnimation<Color>(fg),
             ),
           ),
       ],
     );
     if (file.path.isEmpty) {
       return content;
+    }
+    // 注入了通用查看 / 保存通道时，普通文件点击打开查看页；离线模式仍
+    // 保留原来的复制路径行为，避免没有内核时误报「读取失败」。
+    if (onSave != null || onReadBytes != null) {
+      return Tooltip(
+        message: file.path,
+        child: InkWell(
+          key: ValueKey<String>('chat-file-viewer-${message.id}'),
+          borderRadius: BorderRadius.circular(6),
+          onTap: () => unawaited(_openViewer(context, file)),
+          child: content,
+        ),
+      );
     }
     return Tooltip(
       message: file.path,
@@ -1940,7 +2478,7 @@ class _ExpiryBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String label = formatExpiryRemaining(expiresAt);
+    final String label = formatExpiryRemaining(expiresAt, l10n: context.l10n);
     if (label.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -2230,7 +2768,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 Text(
                   hours == 0
                       ? context.t('关闭（普通消息）')
-                      : context.t('{0}后销毁', [ephemeralTtlLabel(hours)]),
+                      : context.t('{0}后销毁', [ephemeralTtlLabel(hours, context.l10n)]),
                 ),
               ],
             ),
@@ -2366,7 +2904,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 icon: Icons.timer_outlined,
                 tooltip: _ttlHours == 0
                     ? context.t('定时销毁')
-                    : context.t('定时销毁：{0}', [ephemeralTtlLabel(_ttlHours)]),
+                    : context.t('定时销毁：{0}', [ephemeralTtlLabel(_ttlHours, context.l10n)]),
                 onTap: _showTtlPicker,
               ),
               _ToolButton(
@@ -2398,7 +2936,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    context.t('定时销毁：{0}后', [ephemeralTtlLabel(_ttlHours)]),
+                    context.t('定时销毁：{0}后', [ephemeralTtlLabel(_ttlHours, context.l10n)]),
                     key: const ValueKey<String>('ttl-active-chip'),
                     style: TextStyle(fontSize: 11, color: NexmemColors.warning),
                   ),
@@ -2422,6 +2960,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
                     focusNode: _focus,
                     minLines: 1,
                     maxLines: 5,
+                    maxLength: kMaxMessageChars,
+                    buildCounter: _messageCounter,
                     textInputAction: TextInputAction.send,
                     onSubmitted: (_) => _submit(),
                     style: const TextStyle(fontSize: 15),
@@ -2547,7 +3087,9 @@ class _QuotedStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color foreground = mine ? Colors.white : Colors.black87;
+    // 自己气泡是主色深底用白字；对方气泡跟随主题，暗色下不能用近黑色。
+    final Color foreground =
+        mine ? Colors.white : Theme.of(context).colorScheme.onSurface;
     return Container(
       key: const ValueKey<String>('chat-quoted-strip'),
       margin: const EdgeInsets.only(bottom: 6),

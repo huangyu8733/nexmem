@@ -4,6 +4,8 @@
 /// 时间戳换算的本地时间；`state` 映射为 [MessageStatus]。
 library;
 
+import '../../l10n/l10n.dart';
+
 enum MessageStatus {
   /// 发送中（气泡旁转圈）。
   sending,
@@ -31,6 +33,8 @@ class ChatAttachment {
     required this.size,
     this.mime = '',
     this.path = '',
+    this.blobRef = '',
+    this.keyB64 = '',
   });
 
   /// 展示用文件名。
@@ -45,18 +49,36 @@ class ChatAttachment {
   /// 本机绝对路径。
   final String path;
 
+  /// 群盘对象键（仅群文件消息）：配合 [keyB64] 调用 `file.downloadGroup`。
+  final String blobRef;
+
+  /// 附件 AES 密钥的 base64（仅群文件消息）。
+  final String keyB64;
+
+  /// 是否具备从群盘取回文件所需的完整元数据。
+  bool get canDownloadGroupFile => blobRef.isNotEmpty && keyB64.isNotEmpty;
+
   /// 是否为可直接预览的图片附件（按 MIME 或扩展名判定）。
   bool get isImage => isImageAttachment(name: name, mime: mime);
 
   /// 是否为语音/音频附件（A-01，按 MIME 或扩展名判定）。
   bool get isAudio => isAudioAttachment(name: name, mime: mime);
 
-  ChatAttachment copyWith({String? name, int? size, String? mime, String? path}) {
+  ChatAttachment copyWith({
+    String? name,
+    int? size,
+    String? mime,
+    String? path,
+    String? blobRef,
+    String? keyB64,
+  }) {
     return ChatAttachment(
       name: name ?? this.name,
       size: size ?? this.size,
       mime: mime ?? this.mime,
       path: path ?? this.path,
+      blobRef: blobRef ?? this.blobRef,
+      keyB64: keyB64 ?? this.keyB64,
     );
   }
 }
@@ -295,7 +317,7 @@ bool shouldShowTimeSeparator(DateTime? previous, DateTime current) {
 }
 
 /// 消息区分隔条文案：今天 `HH:mm`、昨天 `昨天 HH:mm`、更早 `yyyy/MM/dd HH:mm`。
-String formatMessageTime(DateTime time, {DateTime? now}) {
+String formatMessageTime(DateTime time, {DateTime? now, AppLocalizations? l10n}) {
   final DateTime ref = now ?? DateTime.now();
   final DateTime today = DateTime(ref.year, ref.month, ref.day);
   final DateTime thatDay = DateTime(time.year, time.month, time.day);
@@ -306,7 +328,7 @@ String formatMessageTime(DateTime time, {DateTime? now}) {
     return hhmm;
   }
   if (days == 1) {
-    return '昨天 $hhmm';
+    return l10n?.t('昨天 {0}', <Object?>[hhmm]) ?? '昨天 $hhmm';
   }
   final String mm = time.month.toString().padLeft(2, '0');
   final String dd = time.day.toString().padLeft(2, '0');
@@ -323,36 +345,55 @@ String formatBubbleTime(DateTime time) {
 const List<int> ephemeralTtlOptions = <int>[0, 1, 24, 168];
 
 /// TTL 选项的人类可读标签，索引与 [ephemeralTtlOptions] 一一对应。
-String ephemeralTtlLabel(int hours) {
+String ephemeralTtlLabel(int hours, [AppLocalizations? l10n]) {
+  String t(String key, [List<Object?> args = const <Object?>[]]) {
+    final String? translated = l10n?.t(key, args);
+    if (translated != null) return translated;
+    String text = key;
+    for (int i = 0; i < args.length; i++) {
+      text = text.replaceAll('{$i}', '${args[i]}');
+    }
+    return text;
+  }
   return switch (hours) {
-    0 => '关闭',
-    1 => '1 小时',
-    24 => '1 天',
-    168 => '7 天',
-    _ => '$hours 小时',
+    0 => t('关闭'),
+    1 => t('1 小时'),
+    24 => t('1 天'),
+    168 => t('7 天'),
+    _ => t('{0} 小时', <Object?>[hours]),
   };
 }
 
 /// 定时消息气泡上的剩余时间文案：`expiresAt` 为 Unix 毫秒，0 表示永不过期。
 /// 剩余不足 1 分钟显示「即将销毁」，超过 1 天显示「X 天后销毁」。
-String formatExpiryRemaining(int expiresAt, {DateTime? now}) {
+String formatExpiryRemaining(int expiresAt,
+    {DateTime? now, AppLocalizations? l10n}) {
+  String t(String key, [List<Object?> args = const <Object?>[]]) {
+    final String? translated = l10n?.t(key, args);
+    if (translated != null) return translated;
+    String text = key;
+    for (int i = 0; i < args.length; i++) {
+      text = text.replaceAll('{$i}', '${args[i]}');
+    }
+    return text;
+  }
   if (expiresAt <= 0) {
     return '';
   }
   final int nowMs = (now ?? DateTime.now()).millisecondsSinceEpoch;
   final int remainingMs = expiresAt - nowMs;
   if (remainingMs <= 0) {
-    return '已到期';
+    return t('已到期');
   }
   final Duration remaining = Duration(milliseconds: remainingMs);
   if (remaining.inDays >= 1) {
-    return '${remaining.inDays} 天后销毁';
+    return t('{0} 天后销毁', <Object?>[remaining.inDays]);
   }
   if (remaining.inHours >= 1) {
-    return '${remaining.inHours} 小时后销毁';
+    return t('{0} 小时后销毁', <Object?>[remaining.inHours]);
   }
   if (remaining.inMinutes >= 1) {
-    return '${remaining.inMinutes} 分钟后销毁';
+    return t('{0} 分钟后销毁', <Object?>[remaining.inMinutes]);
   }
-  return '即将销毁';
+  return t('即将销毁');
 }

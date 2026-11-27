@@ -617,6 +617,49 @@ func TestListItemExposesAttachmentPath(t *testing.T) {
 	}
 }
 
+// TestListExposesGroupDownloadRef 验证群文件附件的 blob_ref / key_b64 经
+// msg.list 回传给客户端，使 file.downloadGroup 能取回并解密群盘文件。
+func TestListExposesGroupDownloadRef(t *testing.T) {
+	dao := openDAO(t)
+	const conv = "group:test"
+	fileKey := []byte("0123456789abcdef")
+	inner, err := proto.Marshal(&nexmemv1.InnerMessage{
+		Attachments: []*nexmemv1.Attachment{{
+			Name:    "群文件.zip",
+			Size:    4096,
+			Mime:    "application/zip",
+			BlobRef: "group_offline/x/files/y.bin",
+			Key:     fileKey,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("编码群附件: %v", err)
+	}
+	putMessage(t, dao, store.Message{
+		MsgUUID:        "g1",
+		ConversationID: conv,
+		SenderAccount:  []byte("account-g1"),
+		SentAt:         3000,
+		Direction:      store.DirectionIn,
+		ContentType:    int(nexmemv1.ContentType_CONTENT_TYPE_FILE),
+		BodyEnc:        inner,
+		State:          store.MessageStateAcked,
+	})
+	data, gerr := handle(t, bind(t, dao), "msg.list", map[string]any{
+		"conversation_id": conv, "limit": 10,
+	})
+	if gerr != nil {
+		t.Fatalf("拉取群消息失败: %v", gerr)
+	}
+	atts := data.(map[string]any)["items"].([]map[string]any)[0]["attachments"].([]map[string]any)
+	if atts[0]["blob_ref"] != "group_offline/x/files/y.bin" {
+		t.Fatalf("blob_ref 未回传: %+v", atts[0])
+	}
+	if atts[0]["key_b64"] != base64.StdEncoding.EncodeToString(fileKey) {
+		t.Fatalf("key_b64 未回传: %+v", atts[0])
+	}
+}
+
 // TestDeleteConversation 覆盖 conversation.delete：删除后会话列表不再返回，
 // 未知会话与缺参返回 INVALID_ARG，内核未启动返回 NOT_STARTED（P6-07）。
 func TestDeleteConversation(t *testing.T) {

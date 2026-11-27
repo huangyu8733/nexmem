@@ -18,6 +18,7 @@ import 'input/display_geometry.dart';
 import 'remote_audit.dart';
 import 'remote_crc32.dart';
 import 'remote_file.dart';
+import 'remote_group_controller.dart';
 import 'remote_input_codec.dart';
 import 'remote_media.dart';
 import 'remote_prefs.dart';
@@ -66,7 +67,7 @@ class _PendingFile {
   final int id;
 }
 
-class RemoteControlService {
+class RemoteControlService implements RemoteGroupService {
   RemoteControlService({
     required this.transport,
     required this.mediaFactory,
@@ -128,6 +129,10 @@ class RemoteControlService {
   Timer? _reconnectTimer;
   int _reconnectAttempts = 0;
 
+  /// ICE 断开前是否处于暂停态。重连成功后恢复暂停，避免被控端界面
+  /// 显示「控制中」但输入实际仍被暂停。
+  bool _pausedBeforeReconnect = false;
+
   DateTime? _lastGoodQualityAt;
   int _qualityIndex = RemoteQuality.balanced.index;
 
@@ -137,6 +142,7 @@ class RemoteControlService {
   bool _remoteDescriptionSet = false;
 
   Stream<RemoteInfo> get changes => _changes.stream;
+  @override
   RemoteInfo? get current => _current;
   bool get isBusy => _current != null && !_current!.isTerminal;
 
@@ -175,6 +181,8 @@ class RemoteControlService {
     String peer, {
     String peerName = '',
     RemotePermissions permissions = RemotePermissions.all,
+    String credential = '',
+    bool silent = false,
   }) async {
     if (peer.isEmpty || isBusy) {
       return;
@@ -198,6 +206,8 @@ class RemoteControlService {
       sid: sid,
       name: selfName.isEmpty ? _shortId(selfAccount) : selfName,
       permissions: permissions,
+      credential: credential,
+      silent: silent,
     ));
   }
 
@@ -285,6 +295,7 @@ class RemoteControlService {
   }
 
   /// 主动结束会话。
+  @override
   Future<void> end({String reason = '会话已结束'}) async {
     final RemoteInfo? info = _current;
     if (info == null) {
@@ -305,6 +316,7 @@ class RemoteControlService {
     if (info == null || !info.isHost || info.state != RemoteState.active) {
       return;
     }
+    _pausedBeforeReconnect = true;
     _emit(info.copyWith(state: RemoteState.paused));
     await _send(RemoteSignal(
       type: RemoteSignalType.pause,
@@ -319,6 +331,7 @@ class RemoteControlService {
     if (info == null || !info.isHost || info.state != RemoteState.paused) {
       return;
     }
+    _pausedBeforeReconnect = false;
     _emit(info.copyWith(state: RemoteState.active));
     _resetIdle();
     await _send(RemoteSignal(
@@ -388,9 +401,11 @@ class RemoteControlService {
             reason: signal.reason.isEmpty ? '对方结束了远程控制' : signal.reason);
         break;
       case RemoteSignalType.pause:
+        _pausedBeforeReconnect = true;
         _emit(info.copyWith(state: RemoteState.paused));
         break;
       case RemoteSignalType.resume:
+        _pausedBeforeReconnect = false;
         _emit(info.copyWith(state: RemoteState.active));
         break;
       case RemoteSignalType.display:
@@ -449,6 +464,27 @@ class RemoteControlService {
       ));
       return;
     }
+    final bool silent = signal.silent;
+    final String expectedCredential = _prefs.passwordCredential;
+    if (silent) {
+      // 静默控制只认「开启远控 + 密码 + 台账中保存的校验值」，不弹确认。
+      if (expectedCredential.isEmpty) {
+        await _sendRaw(peer, RemoteSignal(
+          type: RemoteSignalType.reject,
+          sid: signal.sid,
+          reason: '被控端未设置远程控制密码',
+        ));
+        return;
+      }
+      if (signal.credential != expectedCredential) {
+        await _sendRaw(peer, RemoteSignal(
+          type: RemoteSignalType.reject,
+          sid: signal.sid,
+          reason: '远程控制密码错误',
+        ));
+        return;
+      }
+    }
     if (isBusy) {
       await _sendRaw(peer, RemoteSignal(
         type: RemoteSignalType.reject,
@@ -457,7 +493,9 @@ class RemoteControlService {
       ));
       return;
     }
-    if (isContact != null && !await isContact!(peer)) {
+    // 聊天发起的请求始终需要对方确认，且不依赖台账密码；静默请求走设备信息 + 密码，
+    // 属于已授权的台账设备，因此不再重复做联系人校验。
+    if (!silent && isContact != null && !await isContact!(peer)) {
       await _sendRaw(peer, RemoteSignal(
         type: RemoteSignalType.reject,
         sid: signal.sid,
@@ -490,7 +528,7 @@ class RemoteControlService {
     _requestTimer = Timer(requestTimeout, () {
       unawaited(reject(reason: '请求已过期'));
     });
-    if (!_prefs.requireConfirm) {
+    if (silent) {
       await accept(permissions: requested);
     }
   }
@@ -628,7 +666,13 @@ class RemoteControlService {
       _reconnectAttempts = 0;
       if (info.state == RemoteState.connecting ||
           info.state == RemoteState.reconnecting) {
-        _emit(info.copyWith(state: RemoteState.active));
+        final bool restorePaused = _pausedBeforeReconnect;
+        _pausedBeforeReconnect = false;
+        _emit(
+          info.copyWith(
+            state: restorePaused ? RemoteState.paused : RemoteState.active,
+          ),
+        );
         _startActiveTimers();
       }
       return;
@@ -638,6 +682,9 @@ class RemoteControlService {
           info.state != RemoteState.paused &&
           info.state != RemoteState.reconnecting) {
         return;
+      }
+      if (info.state == RemoteState.paused) {
+        _pausedBeforeReconnect = true;
       }
       _emit(info.copyWith(state: RemoteState.reconnecting));
       _statsTimer?.cancel();
@@ -788,6 +835,7 @@ class RemoteControlService {
   // 控制端 → 被控端输入
   // ---------------------------------------------------------------------------
 
+  @override
   Future<void> sendPointer(RemotePointerEvent event) async {
     if (!_canInput) {
       return;
@@ -796,6 +844,7 @@ class RemoteControlService {
     await _media?.sendPointer(RemotePointerCodec.encode(event));
   }
 
+  @override
   Future<void> sendKey(
     String key, {
     required bool down,
@@ -810,6 +859,7 @@ class RemoteControlService {
     );
   }
 
+  @override
   Future<void> sendText(String text) async {
     if (!_canInput || text.isEmpty) {
       return;
@@ -818,6 +868,7 @@ class RemoteControlService {
     await _media?.sendControl(RemoteControlMessage.text(text));
   }
 
+  @override
   Future<void> sendClipboardText(String text) async {
     final RemoteInfo? info = _current;
     if (info == null || !info.permissions.clipboard || _media == null) {
@@ -1298,6 +1349,7 @@ class RemoteControlService {
       return;
     }
     _cancelTimers();
+    _pausedBeforeReconnect = false;
     final Future<void> cleanup = _disposeMedia();
     unawaited(cleanup);
     final int started = info.startedAtMs;
@@ -1323,7 +1375,25 @@ class RemoteControlService {
     _clearFileState();
   }
 
-  void _fail(String reason) => _finish(RemoteState.failed, reason: reason);
+  /// 本地失败收尾。必须在退出前通知对端，否则会出现一端已退回聊天、
+  /// 另一端仍显示「正在远程控制本机」的状态漂移（如 ICE 重连失败）。
+  /// 信令走内核流、与 WebRTC 媒体面独立，ICE 断开时通常仍可达；
+  /// 发不出去也不影响本地收尾。
+  void _fail(String reason) {
+    final RemoteInfo? info = _current;
+    if (info == null) {
+      return;
+    }
+    unawaited(
+      _send(RemoteSignal(
+        type: RemoteSignalType.end,
+        sid: info.sid,
+        token: _token,
+        reason: reason,
+      )).catchError((Object _) => Future<void>.value()),
+    );
+    _finish(RemoteState.failed, reason: reason);
+  }
 
   void _cancelTimers() {
     _requestTimer?.cancel();
@@ -1396,6 +1466,7 @@ class RemoteControlService {
     _remoteDescriptionSet = false;
     _token = '';
     _reconnectAttempts = 0;
+    _pausedBeforeReconnect = false;
     _lastGoodQualityAt = null;
     _current = null;
     _incomingFiles.clear();

@@ -45,6 +45,46 @@ class Contact {
   }
 }
 
+/// 未设置分组的好友在界面上归入的默认分组（可按当前语言替换展示名）。
+const String defaultFriendGroupLabel = '我的好友';
+
+/// 按本地好友分组（[Contact.groupName]）归类。
+///
+/// 未分组好友归入 [defaultGroup] 并排在最前；其余分组按名称排序。
+/// 组内按显示名、账号排序，保证顺序稳定。
+List<(String, List<Contact>)> groupFriends(
+  Iterable<Contact> contacts, {
+  String defaultGroup = defaultFriendGroupLabel,
+}) {
+  final Map<String, List<Contact>> buckets = <String, List<Contact>>{};
+  for (final Contact contact in contacts) {
+    final String name = contact.groupName.trim();
+    final String group = name.isEmpty ? defaultGroup : name;
+    buckets.putIfAbsent(group, () => <Contact>[]).add(contact);
+  }
+  final List<String> names = buckets.keys.toList()
+    ..sort((String a, String b) {
+      if (a == defaultGroup) {
+        return -1;
+      }
+      if (b == defaultGroup) {
+        return 1;
+      }
+      return a.compareTo(b);
+    });
+  return <(String, List<Contact>)>[
+    for (final String name in names)
+      (
+        name,
+        buckets[name]!
+          ..sort((Contact a, Contact b) {
+            final int byName = a.name.compareTo(b.name);
+            return byName != 0 ? byName : a.id.compareTo(b.id);
+          }),
+      ),
+  ];
+}
+
 /// 非拉丁字母或数字统一归入 `#`。
 String contactGroupLetter(String name) {
   if (name.isEmpty) {

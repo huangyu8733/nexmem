@@ -134,7 +134,7 @@ class _ContactDetailPageState extends State<ContactDetailPage> {
     }
     final String names =
         _devices.take(3).map((DeviceInfo d) => d.name).join('、');
-    return '$names · ${deviceActiveLabel(_devices.first.issuedAt)}';
+    return '$names · ${deviceActiveLabel(_devices.first.issuedAt, context.l10n)}';
   }
 
   void _openDevices() {

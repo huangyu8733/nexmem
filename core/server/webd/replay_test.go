@@ -3,6 +3,7 @@ package webd
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nexmem/core/gateway"
 )
@@ -21,6 +22,42 @@ func TestEventBufferReplay(t *testing.T) {
 	}
 	if _, ok := buf.replay(0); !ok {
 		t.Fatal("since=0 表示全新客户端，不应触发 resync")
+	}
+	// 网关重启后 seq 从 0 重新计数：客户端水位(9)超前于服务端最新(3)，
+	// 必须触发 resync，否则新事件会被客户端按旧水位误判为重复丢弃。
+	if _, ok := buf.replay(9); ok {
+		t.Fatal("客户端水位超前于服务端 latest 时应判定为缺口，触发 resync")
+	}
+}
+
+func TestSessionSendWaitDrainsFullQueue(t *testing.T) {
+	s := &session{
+		out:  make(chan frame, 1),
+		done: make(chan struct{}),
+	}
+	s.out <- frame{kind: 1, data: []byte("first")}
+
+	done := make(chan bool, 1)
+	go func() {
+		done <- s.sendWait(1, []byte("second"), 2*time.Second)
+	}()
+
+	// 写线程消费一帧后，等待中的重放帧应成功入队，而不是立刻断开。
+	select {
+	case <-s.out:
+	case <-time.After(time.Second):
+		t.Fatal("首帧未被消费")
+	}
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("队列腾空后 sendWait 仍返回失败")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("sendWait 未在队列腾空后返回")
+	}
+	if got := string((<-s.out).data); got != "second" {
+		t.Fatalf("重放帧内容 = %q，期望 second", got)
 	}
 }
 

@@ -232,6 +232,9 @@ func (gw *Gateway) downloadHandler() gateway.HandlerFunc {
 		if strings.TrimSpace(req.Dest) == "" {
 			return nil, gateway.NewError(gateway.CodeInvalidArg, "缺少必填参数 dest")
 		}
+		if req.Parallel < 0 || req.Parallel > maxParallel {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "parallel 需要在 1-%d 之间", maxParallel)
+		}
 		rec, err := svc.Download(ctx, req.ShareID, req.Dest, nil, req.Parallel)
 		if err != nil {
 			code := gateway.CodeInvalidArg

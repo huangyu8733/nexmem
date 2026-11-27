@@ -8,6 +8,7 @@ type ErrorCode string
 // 固定错误码。跨端契约中只允许出现这些取值。
 const (
 	CodeInvalidArg             ErrorCode = "INVALID_ARG"
+	CodeUnauthorized           ErrorCode = "UNAUTHORIZED"
 	CodeNotStarted             ErrorCode = "NOT_STARTED"
 	CodeNotOnline              ErrorCode = "NOT_ONLINE"
 	CodePeerUnreachable        ErrorCode = "PEER_UNREACHABLE"
@@ -25,6 +26,7 @@ const (
 // errorCodeOrder 同时决定契约文件中错误码的导出顺序。
 var errorCodeOrder = []ErrorCode{
 	CodeInvalidArg,
+	CodeUnauthorized,
 	CodeNotStarted,
 	CodeNotOnline,
 	CodePeerUnreachable,
@@ -42,6 +44,7 @@ var errorCodeOrder = []ErrorCode{
 // retryable 表示该错误是否为瞬时错误，Dart 侧据此决定是否提示重试。
 var retryable = map[ErrorCode]bool{
 	CodeInvalidArg:             false,
+	CodeUnauthorized:           false,
 	CodeNotStarted:             false,
 	CodeNotOnline:              true,
 	CodePeerUnreachable:        true,
@@ -59,6 +62,7 @@ var retryable = map[ErrorCode]bool{
 // errorDescription 是契约文件中给人读的说明。
 var errorDescription = map[ErrorCode]string{
 	CodeInvalidArg:             "参数缺失、类型错误或 method 未知",
+	CodeUnauthorized:           "Web 网关访问令牌无效或已轮换",
 	CodeNotStarted:             "内核未启动，或该能力当前阶段尚未接入",
 	CodeNotOnline:              "内核在线状态未就绪（degraded/offline）",
 	CodePeerUnreachable:        "打洞与中继均无法连通对端",

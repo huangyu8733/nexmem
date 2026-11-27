@@ -212,7 +212,8 @@ type seedSession struct {
 }
 
 // openSeedSession 连接种子、发送清单请求并消费清单响应帧，返回可复用的分片会话。
-func (s *Service) openSeedSession(ctx context.Context, p peer.ID, addrs []string, shareID string) (*seedSession, *Manifest, error) {
+// expectedOwner 非空时同时校验发布者，防止同 ID 清单被其他账号冒充。
+func (s *Service) openSeedSession(ctx context.Context, p peer.ID, addrs []string, shareID, expectedOwner string) (*seedSession, *Manifest, error) {
 	mas, err := parseAddrs(addrs)
 	if err != nil {
 		return nil, nil, err
@@ -258,6 +259,10 @@ func (s *Service) openSeedSession(ctx context.Context, p peer.ID, addrs []string
 	if _, err := m.Verify(); err != nil {
 		_ = st.Reset()
 		return nil, nil, err
+	}
+	if expectedOwner != "" && m.Owner != expectedOwner {
+		_ = st.Reset()
+		return nil, nil, ErrBadSignature
 	}
 	return ss, &m, nil
 }

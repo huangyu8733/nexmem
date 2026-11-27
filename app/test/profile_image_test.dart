@@ -279,6 +279,27 @@ void main() {
     expect(store.bytes!.length, image.bytes.length);
   });
 
+  testWidgets('账号切换重新 attach 时立即清空旧账号头像，避免串号', (
+    WidgetTester tester,
+  ) async {
+    final _MemorySettings first = _MemorySettings();
+    final ProfileImageData image = await _sampleImage();
+    await ProfileImageStore(first).save(ProfileImageSlot.avatar, image);
+
+    final ProfileAvatarStore store = ProfileAvatarStore.instance;
+    store.resetForTest();
+    addTearDown(store.resetForTest);
+    store.attach(first);
+    await tester.pumpAndSettle();
+    expect(store.bytes, isNotNull);
+
+    // 切到没有头像的第二个账号：attach 必须同步清空，不能等异步读取完成。
+    store.attach(_MemorySettings());
+    expect(store.bytes, isNull);
+    await tester.pumpAndSettle();
+    expect(store.bytes, isNull);
+  });
+
   testWidgets('未设置头像时 SelfAvatar 显示占位图标', (WidgetTester tester) async {
     final ProfileAvatarStore store = ProfileAvatarStore.instance;
     store.attach(_MemorySettings());

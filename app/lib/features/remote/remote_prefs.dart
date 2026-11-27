@@ -8,13 +8,16 @@ class RemotePrefs {
   static final RemotePrefs instance = RemotePrefs._();
   static const String _fileName = 'prefs.json';
 
-  bool enabled = true;
+  bool enabled = false;
   bool requireConfirm = true;
   bool allowInput = true;
   bool allowClipboard = true;
   bool allowFile = true;
   int idleMinutes = 15;
   RemoteQuality quality = RemoteQuality.balanced;
+
+  /// 仅保存密码校验值，不保存明文。为空时禁止开启被远程控制。
+  String passwordCredential = '';
   bool loaded = false;
 
   RemotePermissions get allowed => RemotePermissions(
@@ -39,6 +42,13 @@ class RemotePrefs {
         (RemoteQuality q) => q.name == json['quality'],
         orElse: () => RemoteQuality.balanced,
       );
+      passwordCredential = json['password_credential'] is String
+          ? json['password_credential'] as String
+          : '';
+    }
+    // 旧版本可能在无密码时开启了被控，加载后强制关闭，必须由用户重新设置密码。
+    if (enabled && passwordCredential.isEmpty) {
+      enabled = false;
     }
     loaded = true;
   }
@@ -51,5 +61,6 @@ class RemotePrefs {
         'allow_file': allowFile,
         'idle_minutes': idleMinutes,
         'quality': quality.name,
+        'password_credential': passwordCredential,
       });
 }

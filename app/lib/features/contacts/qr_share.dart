@@ -2,7 +2,7 @@
 ///
 /// 「我的二维码」用纯 Dart `qr` 包把内核签发的名片文本渲染为二维码；对方
 /// 扫码后把文本粘贴到「从二维码添加」即可经内核验签解析账号 ID 并预填
-/// 添加好友弹窗。相机扫码依赖真机权限，按 R-17 挂起，本文件不伪造扫码能力。
+/// 添加好友弹窗。摄像头扫码走 [showQrCameraScanner] 跨平台实现。
 library;
 
 import 'package:flutter/services.dart';
@@ -15,6 +15,7 @@ import '../../transport/transport.dart';
 import '../../app/core_session.dart';
 import 'add_friend_dialog.dart';
 import 'contact_service.dart';
+import 'qr_camera_scanner.dart';
 
 /// 打开「我的二维码」弹窗：展示当前账号名片二维码 + 可复制的文本。
 Future<void> showMyQrDialog(
@@ -86,6 +87,9 @@ class _MyQrDialogState extends State<_MyQrDialog> {
                   card.accountId,
                   key: const ValueKey<String>('qr-account-id'),
                   textAlign: TextAlign.center,
+                  // 64 位十六进制 ID 在窄屏下会折成多行，截断显示、点下方按钮复制完整值。
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
                 ),
                 const SizedBox(height: 8),
@@ -154,13 +158,18 @@ class _QrImportDialogState extends State<_QrImportDialog> {
   }
 
   Future<void> _parse() async {
-    final String invalidQr = context.t('二维码无效或验签失败，请确认为 Nexmem 名片');
     final String payload = _controller.text.trim();
     if (payload.isEmpty) {
       setState(() => _error = context.t('请粘贴对方的二维码名片文本'));
       return;
     }
+    await _parsePayload(payload);
+  }
+
+  Future<void> _parsePayload(String payload) async {
+    final String invalidQr = context.t('二维码无效或验签失败，请确认为 Nexmem 名片');
     setState(() {
+      _controller.text = payload;
       _busy = true;
       _error = null;
     });
@@ -196,6 +205,15 @@ class _QrImportDialogState extends State<_QrImportDialog> {
     }
   }
 
+  /// 打开摄像头扫码；扫到文本后直接填入并解析，省去手动粘贴。
+  Future<void> _scan() async {
+    final String? raw = await showQrCameraScanner(context);
+    if (!mounted || raw == null || raw.trim().isEmpty) {
+      return;
+    }
+    await _parsePayload(raw.trim());
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -203,8 +221,18 @@ class _QrImportDialogState extends State<_QrImportDialog> {
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.tonalIcon(
+              key: const ValueKey<String>('qr-import-camera-button'),
+              icon: const Icon(Icons.qr_code_scanner),
+              label: Text(context.t('打开摄像头扫码')),
+              onPressed: _busy ? null : _scan,
+            ),
+          ),
+          const SizedBox(height: 8),
           Text(
-            context.t('扫描对方二维码后，把识别出的文本粘贴到下方（相机扫码需真机权限）。'),
+            context.t('也可以扫描后把识别出的文本粘贴到下方'),
             style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(height: NexmemMetrics.space12),
