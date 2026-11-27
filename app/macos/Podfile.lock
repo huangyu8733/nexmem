@@ -22,7 +22,7 @@ DEPENDENCIES:
   - video_player_avfoundation (from `Flutter/ephemeral/.symlinks/plugins/video_player_avfoundation/darwin`)
 
 SPEC REPOS:
-  file:///tmp/nexmem-e2e/specs:
+  trunk:
     - WebRTC-SDK
 
 EXTERNAL SOURCES:

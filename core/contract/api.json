@@ -2620,6 +2620,12 @@
               },
               "lan_broadcast_error": {
                 "type": "string"
+              },
+              "lan_broadcast_addr": {
+                "type": "string"
+              },
+              "lan_broadcast_sent": {
+                "type": "integer"
               }
             }
           }

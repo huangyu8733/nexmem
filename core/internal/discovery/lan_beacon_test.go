@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"encoding/base64"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,39 @@ import (
 	"github.com/nexmem/core/internal/identity"
 	"github.com/nexmem/core/internal/qrshare"
 )
+
+func TestLanIPFromMultiaddrs(t *testing.T) {
+	addrs := []string{
+		"/ip4/0.0.0.0/tcp/4001/p2p/12D3KooX",
+		"/ip4/192.168.10.91/tcp/41105/p2p/12D3KooX",
+	}
+	if got := lanIPFromMultiaddrs(addrs); got != "192.168.10.91" {
+		t.Fatalf("局域网 IP = %q，期望 192.168.10.91", got)
+	}
+	if got := lanIPFromMultiaddrs([]string{"bad", "/ip6/::1/tcp/1"}); got != "" {
+		t.Fatalf("无效地址应返回空串，实际 %q", got)
+	}
+}
+
+func TestLANBeaconBindsBroadcastToLANIP(t *testing.T) {
+	probe, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: LANBeaconPort})
+	if err != nil {
+		t.Skipf("UDP %d 已被占用，跳过 LAN Beacon 绑定测试: %v", LANBeaconPort, err)
+	}
+	_ = probe.Close()
+
+	acc, _ := identity.GenerateAccount()
+	b, err := StartLANBeacon(acc, "12D3KooWSelf", "演示", []string{
+		"/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSelf",
+	})
+	if err != nil {
+		t.Fatalf("启动 LAN Beacon: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+	if got := b.BroadcastLocalAddr(); got != "127.0.0.1" {
+		t.Fatalf("广播源地址 = %q，期望绑定到 127.0.0.1", got)
+	}
+}
 
 func TestLANBeaconHandlePacket(t *testing.T) {
 	self, _ := identity.GenerateAccount()

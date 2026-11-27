@@ -268,6 +268,8 @@ class DiscoveryDiagnostics {
     this.lanRaw = 0,
     this.lanBeaconActive = false,
     this.lanBroadcastError = '',
+    this.lanBroadcastAddr = '',
+    this.lanBroadcastSent = 0,
   });
 
   factory DiscoveryDiagnostics.fromJson(Map<String, dynamic>? json) {
@@ -304,6 +306,10 @@ class DiscoveryDiagnostics {
       lanBroadcastError: json['lan_broadcast_error'] is String
           ? json['lan_broadcast_error'] as String
           : '',
+      lanBroadcastAddr: json['lan_broadcast_addr'] is String
+          ? json['lan_broadcast_addr'] as String
+          : '',
+      lanBroadcastSent: _intOf(json['lan_broadcast_sent']),
     );
   }
 
@@ -327,6 +333,8 @@ class DiscoveryDiagnostics {
   final int lanRaw;
   final bool lanBeaconActive;
   final String lanBroadcastError;
+  final String lanBroadcastAddr;
+  final int lanBroadcastSent;
 }
 
 /// 分页发现结果。大量设备时客户端按 offset 增量加载，避免一次性构建全部卡片。

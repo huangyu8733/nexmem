@@ -19,12 +19,22 @@ async function enableSemantics(page) {
     await enable.first().waitFor({ state: 'attached', timeout: 30000 });
     await enable.first().focus();
     await page.keyboard.press('Enter');
-    // 语义树开启后底部导航才会以 tab 角色暴露。
-    await page.getByRole('tab', { name: '消息' }).waitFor({ state: 'attached', timeout: 20000 });
   } catch (_) {
     // 已开启语义树时占位按钮不存在。
   }
   await page.waitForTimeout(600);
+}
+
+// 启动服务检测门：CI 环境可能无法完成全部探测，用兜底按钮进入主界面。
+async function dismissStartupGate(page) {
+  const cont = page.getByRole('button', { name: /仍要进入/ }).first();
+  try {
+    await cont.waitFor({ state: 'visible', timeout: 8000 });
+    await cont.click();
+  } catch (_) {
+    // 服务全部就绪时不会出现检测门。
+  }
+  await page.getByRole('tab', { name: '消息' }).waitFor({ state: 'attached', timeout: 20000 });
 }
 
 async function openApp(page, baseUrl, token) {
@@ -32,6 +42,7 @@ async function openApp(page, baseUrl, token) {
   await page.goto(`${baseUrl}/${query}`, { waitUntil: 'load' });
   await page.waitForSelector('flutter-view', { timeout: 60000 });
   await enableSemantics(page);
+  await dismissStartupGate(page);
 }
 
 async function newPage(browser) {

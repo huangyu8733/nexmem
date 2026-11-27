@@ -140,6 +140,8 @@ func (a *App) discoverDevicesHandler() gateway.HandlerFunc {
 		diag := &discoveryDiagnostics{LANBeaconActive: lanBeacon != nil}
 		if lanBeacon != nil {
 			diag.LANBroadcastErr = lanBeacon.BroadcastError()
+			diag.LANBroadcastAddr = lanBeacon.BroadcastLocalAddr()
+			diag.LANBroadcastSent = lanBeacon.BroadcastSent()
 		}
 		records := make(map[string]*discoveredDeviceRecord)
 		get := func(peerID string) *discoveredDeviceRecord {
@@ -360,6 +362,8 @@ type discoveryDiagnostics struct {
 	LANRaw             int      `json:"lan_raw"`
 	LANBeaconActive    bool     `json:"lan_beacon_active"`
 	LANBroadcastErr    string   `json:"lan_broadcast_error"`
+	LANBroadcastAddr   string   `json:"lan_broadcast_addr"`
+	LANBroadcastSent   uint64   `json:"lan_broadcast_sent"`
 }
 
 // goInterfaceAddresses 返回 Go runtime 枚举到的本机网卡 IP，

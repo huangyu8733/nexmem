@@ -38,8 +38,10 @@ jobs:
       - name: 生成 protobuf 并检查无漂移
         run: |
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq protobuf-compiler
+          # 固定 protoc 版本，避免生成文件中的版本注释随 runner 自带版本漂移。
+          curl -fsSL -o /tmp/protoc.zip \
+            https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protoc-36.2-linux-x86_64.zip
+          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc 'include/*'
           export PATH="$(go env GOPATH)/bin:$PATH"
           protoc -I core/proto --go_out=core/api/v1 --go_opt=paths=source_relative core/proto/*.proto
           git diff --exit-code -- core/api/v1
@@ -172,11 +174,14 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       - name: 安装 Android SDK / NDK
         if: matrix.target == 'android'
         uses: android-actions/setup-android@v3
+        with:
+          # 旧版 tools 包已从 SDK 仓库移除，只装仍可用的 platform-tools。
+          packages: "platform-tools"
 
       - name: 安装 NDK
         if: matrix.target == 'android'

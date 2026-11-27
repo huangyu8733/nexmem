@@ -1070,6 +1070,8 @@ class _DeviceDiscoverySheetState extends State<DeviceDiscoverySheet> {
           'lanBeacon=${page.diagnostics.lanBeaconActive} '
           'lanRaw=${page.diagnostics.lanRaw} '
           'lanBcastErr=${page.diagnostics.lanBroadcastError} '
+          'lanBcastAddr=${page.diagnostics.lanBroadcastAddr} '
+          'lanBcastSent=${page.diagnostics.lanBroadcastSent} '
           'injected=${page.diagnostics.injectedLan} '
           'selfAddrs=${page.diagnostics.selfAddrs} '
           'netIfaces=${page.diagnostics.netIfaces}',
@@ -1135,6 +1137,19 @@ class _DeviceDiscoverySheetState extends State<DeviceDiscoverySheet> {
       hints.add((
         key: '局域网广播失败：{0}',
         args: <Object>[d.lanBroadcastError],
+      ));
+    }
+    if (d.lanBeaconActive &&
+        d.lanBroadcastError.isEmpty &&
+        d.lanBroadcastSent == 0) {
+      // 发送 socket 未成功写出任何包：常见于 iOS 把 255.255.255.255
+      // 从蜂窝默认路由发出，或系统未授予本地网络权限。源地址可直接看出
+      // 是否绑定到了注入的 WiFi IP。
+      hints.add((
+        key: '局域网广播尚未发出，源地址：{0}',
+        args: <Object>[
+          d.lanBroadcastAddr.isEmpty ? '默认路由' : d.lanBroadcastAddr,
+        ],
       ));
     }
     if (d.filteredNoProtocol > 0) {

@@ -33,7 +33,7 @@ DEPENDENCIES:
   - webview_flutter_wkwebview (from `.symlinks/plugins/webview_flutter_wkwebview/darwin`)
 
 SPEC REPOS:
-  file:///tmp/nexmem-e2e/specs:
+  trunk:
     - WebRTC-SDK
 
 EXTERNAL SOURCES:
