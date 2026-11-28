@@ -99,6 +99,8 @@ func TestGroupAnnouncementEndToEnd(t *testing.T) {
 		_, ok := memberAnnouncement()
 		return ok
 	})
+	// 群记录落库先于成员订阅主题；GossipSub 不回放历史，未形成邻居就发布会丢帧。
+	waitGroupTopicReady(t, appA, appB, groupID)
 
 	const text = "本周六上午十点全员会议，请准时参加。"
 	saved, ok := call(t, gwA, "group.setAnnouncement", map[string]any{

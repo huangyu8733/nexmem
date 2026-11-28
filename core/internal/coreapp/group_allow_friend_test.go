@@ -96,6 +96,8 @@ func TestGroupAllowFriendAddEndToEnd(t *testing.T) {
 		_, ok := allowFriendAdd(gwB)
 		return ok
 	})
+	// 群记录落库先于成员订阅主题；GossipSub 不回放历史，未形成邻居就发布会丢帧。
+	waitGroupTopicReady(t, appA, appB, groupID)
 	if enabled, _ := allowFriendAdd(gwA); enabled {
 		t.Fatal("新群加好友权限应默认关闭")
 	}

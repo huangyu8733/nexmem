@@ -66,7 +66,9 @@ async function newPage(browser) {
   const page = await context.newPage();
   page.on('console', (msg) => {
     if (msg.type() === 'error') {
-      console.log('[browser]', msg.text());
+      // 测试结束后浏览器仍可能输出断连日志；用进程输出而非 Playwright 的
+      // test 作用域 console，避免抛 "Error: Test ended." 让整条 job 失败。
+      process.stderr.write(`[browser] ${msg.text()}\n`);
     }
   });
   return { context, page };

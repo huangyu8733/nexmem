@@ -640,6 +640,23 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Fatal("等待条件超时")
 }
 
+// waitGroupTopicReady 等待成员已订阅群主题、且管理员侧主题出现邻居。
+// 群记录与密钥落库先于 GossipSub 订阅完成，而 PubSub 不回放历史消息；
+// 在邻居形成前发布群设置控制帧会被静默丢弃，成员侧永远看不到变更。
+func waitGroupTopicReady(t *testing.T, admin, member *App, groupID string) {
+	t.Helper()
+	raw, err := base64.RawURLEncoding.DecodeString(groupID)
+	if err != nil {
+		t.Fatalf("群 ID 解码失败: %v", err)
+	}
+	waitFor(t, propagationWait, func() bool {
+		return member.groupService() != nil &&
+			member.groupService().Subscribed(raw) &&
+			admin.groupService() != nil &&
+			admin.groupService().Peers(raw) > 0
+	})
+}
+
 // TestDiscoveryDefaultsEnabled 校验发现源默认开启，且用户显式 false 仍可关闭。
 func TestDiscoveryDefaultsEnabled(t *testing.T) {
 	tests := []struct {
