@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../app/core_session.dart';
 import '../features/chat/chat_message.dart';
+import '../features/chat/voice_recorder.dart';
 import 'event_buffer.dart';
 import 'event_sequencer.dart';
 import 'transport.dart';
@@ -423,6 +424,7 @@ Future<CoreSession?> openAndroidSession({
     pickFile: transport.pickFile,
     pickImage: transport.pickImage,
     pickMedia: transport.pickMedia,
+    voiceRecorder: makeVoiceRecorder(),
     pickDirectory: transport.pickDirectory,
   );
 }

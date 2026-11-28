@@ -8,6 +8,7 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 
 import '../app/core_session.dart';
+import '../features/chat/voice_recorder.dart';
 import '../features/files/directory_picker.dart';
 import '../features/files/system_file_picker.dart';
 import 'event_buffer.dart';
@@ -517,6 +518,7 @@ CoreSession? openNativeSession() {
     pickFile: pickLocalFile,
     pickImage: pickLocalImage,
     pickMedia: pickLocalMedia,
+    voiceRecorder: makeVoiceRecorder(),
     pickDirectory: pickShareDirectory,
   );
 }

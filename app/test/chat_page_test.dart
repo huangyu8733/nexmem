@@ -11,6 +11,7 @@ import 'package:nexmem_app/features/chat/chat_message.dart';
 import 'package:nexmem_app/features/chat/chat_page.dart';
 import 'package:nexmem_app/features/chat/chat_store.dart';
 import 'package:nexmem_app/features/chat/local_image.dart';
+import 'package:nexmem_app/features/chat/voice_recorder.dart';
 import 'package:nexmem_app/features/files/media_viewer.dart';
 import 'package:nexmem_app/features/chats/conversation.dart';
 import 'package:nexmem_app/features/group/group_storage.dart';
@@ -21,6 +22,54 @@ Widget _wrap(Widget child) {
     theme: NexmemTheme.light(),
     home: Scaffold(body: child),
   );
+}
+
+class _FakeVoiceRecorder implements VoiceRecorder {
+  _FakeVoiceRecorder({
+    this.supported = true,
+    this.startOk = true,
+    VoiceRecording? recording,
+  }) : recording = recording ?? _sampleVoice;
+
+  static const VoiceRecording _sampleVoice = VoiceRecording(
+    path: '/tmp/nexmem-voice/voice.m4a',
+    name: 'voice.m4a',
+    mime: 'audio/mp4',
+    size: 2048,
+    duration: Duration(seconds: 3),
+  );
+
+  @override
+  bool supported;
+  bool startOk;
+  final VoiceRecording recording;
+  int starts = 0;
+  int stops = 0;
+  int cancels = 0;
+  bool _isRecording = false;
+
+  @override
+  bool get isRecording => _isRecording;
+
+  @override
+  Future<bool> start() async {
+    starts++;
+    _isRecording = startOk;
+    return startOk;
+  }
+
+  @override
+  Future<VoiceRecording?> stop() async {
+    stops++;
+    _isRecording = false;
+    return recording;
+  }
+
+  @override
+  Future<void> cancel() async {
+    cancels++;
+    _isRecording = false;
+  }
 }
 
 const ConversationItem _peerConversation = ConversationItem(
@@ -309,7 +358,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    for (final String tool in <String>['语音', '表情', '图片', '文件']) {
+    for (final String tool in <String>[
+      '按住说话',
+      '表情',
+      '图片',
+      '音视频',
+      '文件',
+    ]) {
       expect(find.byTooltip(tool), findsOneWidget);
     }
 
@@ -879,6 +934,129 @@ void main() {
     expect(store.messages.single.text, 'voice.mp3');
   });
 
+  testWidgets('按住说话：长按录音松手后发送语音附件', (WidgetTester tester) async {
+    final _FakeSender sender = _FakeSender(() async {});
+    final ChatStore store = ChatStore(conversationId: 'alice', sender: sender);
+    addTearDown(store.dispose);
+    final _FakeVoiceRecorder recorder = _FakeVoiceRecorder();
+    final List<String> sent = <String>[];
+
+    await tester.pumpWidget(
+      _wrap(
+        ChatPage(
+          conversation: _peerConversation,
+          store: store,
+          voiceRecorder: recorder,
+          onSent: sent.add,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final TestGesture gesture = await tester.startGesture(
+      tester.getCenter(find.byTooltip('按住说话')),
+    );
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pumpAndSettle();
+    expect(recorder.starts, 1);
+    expect(find.textContaining('录音中'), findsOneWidget);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(recorder.stops, 1);
+    expect(sender.lastFile?['path'], '/tmp/nexmem-voice/voice.m4a');
+    expect(sender.lastFile?['mime'], 'audio/mp4');
+    expect(store.length, 1);
+    expect(sent, <String>['voice.m4a']);
+  });
+
+  testWidgets('按住说话：上滑取消丢弃录音不发送', (WidgetTester tester) async {
+    final _FakeSender sender = _FakeSender(() async {});
+    final ChatStore store = ChatStore(conversationId: 'alice', sender: sender);
+    addTearDown(store.dispose);
+    final _FakeVoiceRecorder recorder = _FakeVoiceRecorder();
+
+    await tester.pumpWidget(
+      _wrap(
+        ChatPage(
+          conversation: _peerConversation,
+          store: store,
+          voiceRecorder: recorder,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final TestGesture gesture = await tester.startGesture(
+      tester.getCenter(find.byTooltip('按住说话')),
+    );
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pumpAndSettle();
+    await gesture.moveBy(const Offset(0, -120));
+    await tester.pump();
+    expect(find.text('松开取消录音'), findsOneWidget);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(recorder.cancels, 1);
+    expect(recorder.stops, 0);
+    expect(sender.lastFile, isNull);
+    expect(store.length, 0);
+  });
+
+  testWidgets('按住说话：不支持的平台给出提示且不启动录音', (
+    WidgetTester tester,
+  ) async {
+    final ChatStore store = ChatStore(conversationId: 'alice');
+    addTearDown(store.dispose);
+    final _FakeVoiceRecorder unsupported = _FakeVoiceRecorder(supported: false);
+
+    await tester.pumpWidget(
+      _wrap(
+        ChatPage(
+          conversation: _peerConversation,
+          store: store,
+          voiceRecorder: unsupported,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.longPress(find.byTooltip('按住说话'));
+    await tester.pumpAndSettle();
+    expect(unsupported.starts, 0);
+    expect(
+      find.text('当前平台不支持按住说话，请用音视频按钮选择音频文件'),
+      findsOneWidget,
+    );
+    expect(store.length, 0);
+  });
+
+  testWidgets('按住说话：麦克风权限失败给出提示且不发送', (
+    WidgetTester tester,
+  ) async {
+    final ChatStore store = ChatStore(conversationId: 'alice');
+    addTearDown(store.dispose);
+    final _FakeVoiceRecorder denied = _FakeVoiceRecorder(startOk: false);
+
+    await tester.pumpWidget(
+      _wrap(
+        ChatPage(
+          conversation: _peerConversation,
+          store: store,
+          voiceRecorder: denied,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.longPress(find.byTooltip('按住说话'));
+    await tester.pumpAndSettle();
+    expect(denied.starts, 1);
+    expect(find.text('无法开始录音，请检查麦克风权限'), findsOneWidget);
+    expect(store.length, 0);
+  });
+
   testWidgets('文件发送失败置为可重发，重发沿用同一 msg_uuid 与路径', (WidgetTester tester) async {
     int calls = 0;
     final _FakeSender sender = _FakeSender(() async {
@@ -1028,7 +1206,7 @@ void main() {
     expect(find.text('photo.PNG · 4.0 KB'), findsOneWidget);
   });
 
-  testWidgets('A-01 语音工具选音频经文件通道发送并补齐 MIME', (WidgetTester tester) async {
+  testWidgets('音视频工具选音频文件经文件通道发送并补齐 MIME', (WidgetTester tester) async {
     final _FakeSender sender = _FakeSender(() async {});
     final ChatStore store = ChatStore(conversationId: 'alice', sender: sender);
     addTearDown(store.dispose);
@@ -1048,7 +1226,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('语音'));
+    await tester.tap(find.byTooltip('音视频'));
     await tester.pumpAndSettle();
 
     expect(sender.lastFile?['path'], r'D:\voice\voice.M4A');
@@ -1056,7 +1234,7 @@ void main() {
     expect(store.length, 1);
   });
 
-  testWidgets('A-01 群聊语音工具经群文件通道发送', (WidgetTester tester) async {
+  testWidgets('音视频工具在群聊经群文件通道发送音频', (WidgetTester tester) async {
     final _FakeSender sender = _FakeSender(() async {});
     final ChatStore store = ChatStore(
       conversationId: 'group-1',
@@ -1080,7 +1258,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('语音'));
+    await tester.tap(find.byTooltip('音视频'));
     await tester.pumpAndSettle();
 
     expect(sender.lastFile?['path'], '/tmp/group-voice.M4A');
@@ -1089,7 +1267,7 @@ void main() {
     expect(find.text('群聊暂不支持发送语音'), findsNothing);
   });
 
-  testWidgets('A-01 语音工具拒绝非音频文件且不发送', (WidgetTester tester) async {
+  testWidgets('音视频工具拒绝非音视频文件且不发送', (WidgetTester tester) async {
     final _FakeSender sender = _FakeSender(() async {});
     final ChatStore store = ChatStore(conversationId: 'alice', sender: sender);
     addTearDown(store.dispose);
@@ -1109,10 +1287,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('语音'));
+    await tester.tap(find.byTooltip('音视频'));
     await tester.pumpAndSettle();
 
-    expect(find.text('请选择音频文件（m4a / mp3 / wav / aac 等）'), findsOneWidget);
+    expect(find.text('请选择视频或音频文件'), findsOneWidget);
     expect(sender.lastFile, isNull);
     expect(store.length, 0);
   });

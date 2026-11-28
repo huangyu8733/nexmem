@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../features/chat/chat_message.dart';
 import '../features/chat/chat_store.dart';
+import '../features/chat/voice_recorder.dart';
 import '../features/chats/conversation.dart';
 import '../features/chats/conversation_service.dart';
 import '../features/chats/read_marker.dart';
@@ -419,6 +420,7 @@ class CoreSession {
     this.pickFile,
     this.pickImage,
     this.pickMedia,
+    this.voiceRecorder,
     this.pickDirectory,
     this.downloadToBrowser,
     this.mediaSourceUri,
@@ -465,6 +467,10 @@ class CoreSession {
   /// 平台视频/音频选择器：移动端拉起系统媒体库，桌面/Web 走媒体文件过滤。
   /// 为空时聊天页退回 [pickFile]。
   final Future<ChatAttachment?> Function()? pickMedia;
+
+  /// 按住说话录音器：移动端为原生录音，Web 为浏览器录音 + 鉴权上传，
+  /// 桌面为不支持的安全降级实现。
+  final VoiceRecorder? voiceRecorder;
 
   /// 平台目录选择器（P2P 文件夹共享）；为空时分享页退回本机路径输入框。
   final Future<String?> Function()? pickDirectory;

@@ -20,6 +20,7 @@ import '../settings/report.dart';
 import 'chat_message.dart';
 import 'chat_store.dart';
 import 'local_image.dart';
+import 'voice_recorder.dart';
 
 /// 文本正文上限：与内核契约 dm.sendText / dm.sendGroupText / msg.edit 的
 /// `text.maxLength = 4096` 保持一致，UI 层提前拦截，避免发送后才失败。
@@ -204,6 +205,7 @@ class ChatPage extends StatelessWidget {
     this.onPickFile,
     this.onPickImage,
     this.onPickMedia,
+    this.voiceRecorder,
     this.onDownloadGroupFile,
     this.onSaveFile,
     this.onReadFileBytes,
@@ -288,6 +290,9 @@ class ChatPage extends StatelessWidget {
   /// 选择视频或音频：移动端拉起系统媒体选择器，桌面/Web 用媒体过滤器。
   /// 为空时退回 [onPickFile]，保持旧部署可用。
   final Future<ChatAttachment?> Function()? onPickMedia;
+
+  /// 按住说话录音器：由平台注入，为空时工具条不展示录音入口。
+  final VoiceRecorder? voiceRecorder;
 
   /// 下载群文件（A-02）：由壳层注入，参数为消息所属会话与附件元数据。
   /// 返回落盘绝对路径；为空表示回调不可用或用户取消。
@@ -529,6 +534,8 @@ class ChatPage extends StatelessWidget {
           ChatInputArea(
             conversation: conversation,
             store: store,
+            voiceRecorder: voiceRecorder,
+            onVoiceSent: (String name) => onSent?.call(name),
             onSend: (String text, List<String> mentions, int ttlHours) {
               // 不等待通道回执，输入框立即清空；状态由消息行自行刷新。
               // 引用 ID 由 InputArea 在清空前捕获，这里再读一次以带 replyTo（P6-32）。
@@ -634,6 +641,8 @@ class ChatInputArea extends StatelessWidget {
     this.onAttachImage,
     this.onAttachMedia,
     this.onAttachVoice,
+    this.voiceRecorder,
+    this.onVoiceSent,
     this.onTypingChanged,
     this.mentionCandidates = const <MentionCandidate>[],
     this.mentionController,
@@ -666,6 +675,12 @@ class ChatInputArea extends StatelessWidget {
 
   /// 「语音」工具入口（A-01）；为空时提示功能未开放。
   final VoidCallback? onAttachVoice;
+
+  /// 按住说话录音器；为空时输入条不展示长按入口。
+  final VoiceRecorder? voiceRecorder;
+
+  /// 录音发送成功后的会话摘要回调。
+  final ValueChanged<String>? onVoiceSent;
 
   @override
   Widget build(BuildContext context) {
@@ -716,6 +731,28 @@ class ChatInputArea extends StatelessWidget {
               onAttachImage: onAttachImage,
               onAttachMedia: onAttachMedia,
               onAttachVoice: onAttachVoice,
+              voiceRecorder: voiceRecorder,
+              onVoiceSend: (VoiceRecording recording) async {
+                try {
+                  await store.sendFile(
+                    ChatAttachment(
+                      name: recording.name,
+                      size: recording.size,
+                      mime: recording.mime,
+                      path: recording.path,
+                    ),
+                    senderName: context.t('我'),
+                  );
+                  onVoiceSent?.call(recording.name);
+                } on Object catch (error) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(context.t('语音发送失败：{0}', [error])),
+                    ),
+                  );
+                }
+              },
               onTypingChanged: onTypingChanged,
               mentionCandidates: mentionCandidates,
               mentionController: mentionController,
@@ -2627,6 +2664,8 @@ class ChatInputBar extends StatefulWidget {
     this.onAttachImage,
     this.onAttachMedia,
     this.onAttachVoice,
+    this.voiceRecorder,
+    this.onVoiceSend,
     this.onTypingChanged,
     this.mentionCandidates = const <MentionCandidate>[],
     this.mentionController,
@@ -2656,6 +2695,10 @@ class ChatInputBar extends StatefulWidget {
 
   /// 「语音」工具入口（A-01）；为空时提示功能未开放。
   final VoidCallback? onAttachVoice;
+
+  /// 按住说话录音器与发送回调。
+  final VoiceRecorder? voiceRecorder;
+  final Future<void> Function(VoiceRecording recording)? onVoiceSend;
 
   @override
   State<ChatInputBar> createState() => _ChatInputBarState();
@@ -2720,6 +2763,12 @@ class _ChatInputBarState extends State<ChatInputBar> {
   Timer? _typingTimer;
   bool _typingActive = false;
 
+  /// 按住说话：录音中状态、上滑取消与最长 60 秒自动发送。
+  bool _recording = false;
+  bool _recordCancelled = false;
+  int _recordSeconds = 0;
+  Timer? _recordTimer;
+
   @override
   void initState() {
     super.initState();
@@ -2732,6 +2781,11 @@ class _ChatInputBarState extends State<ChatInputBar> {
     _controller.removeListener(_onChanged);
     widget.mentionController?.removeListener(_onMentionRequested);
     _typingTimer?.cancel();
+    _recordTimer?.cancel();
+    final VoiceRecorder? recorder = widget.voiceRecorder;
+    if (recorder != null && recorder.isRecording) {
+      unawaited(recorder.cancel());
+    }
     _controller.dispose();
     _focus.dispose();
     super.dispose();
@@ -2899,6 +2953,90 @@ class _ChatInputBarState extends State<ChatInputBar> {
     ).showSnackBar(SnackBar(content: Text(context.t('{0}功能将在后续版本开放', [name]))));
   }
 
+  void _showVoiceNotice(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  /// 按住说话：检查权限并开始录音，最多 60 秒后自动发送。
+  Future<void> _startRecording() async {
+    final VoiceRecorder? recorder = widget.voiceRecorder;
+    if (recorder == null) {
+      _notImplemented(context.t('按住说话'));
+      return;
+    }
+    if (!recorder.supported) {
+      _showVoiceNotice(
+        context.t('当前平台不支持按住说话，请用音视频按钮选择音频文件'),
+      );
+      return;
+    }
+    final bool started = await recorder.start();
+    if (!mounted) return;
+    if (!started) {
+      _showVoiceNotice(context.t('无法开始录音，请检查麦克风权限'));
+      return;
+    }
+    setState(() {
+      _recording = true;
+      _recordCancelled = false;
+      _recordSeconds = 0;
+    });
+    _recordTimer?.cancel();
+    _recordTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() => _recordSeconds++);
+      if (_recordSeconds >= 60) {
+        unawaited(_finishRecording());
+      }
+    });
+  }
+
+  /// 松手结束录音：上滑取消则丢弃，否则发送。
+  Future<void> _finishRecording() async {
+    final VoiceRecorder? recorder = widget.voiceRecorder;
+    if (recorder == null || !_recording) return;
+    _recordTimer?.cancel();
+    _recordTimer = null;
+    final bool cancelled = _recordCancelled;
+    if (mounted) {
+      setState(() {
+        _recording = false;
+        _recordCancelled = false;
+      });
+    }
+    if (cancelled) {
+      await recorder.cancel();
+      return;
+    }
+    final VoiceRecording? recording = await recorder.stop();
+    if (recording == null || !mounted) return;
+    await widget.onVoiceSend?.call(recording);
+  }
+
+  void _cancelRecording() {
+    final VoiceRecorder? recorder = widget.voiceRecorder;
+    _recordTimer?.cancel();
+    _recordTimer = null;
+    if (mounted) {
+      setState(() {
+        _recording = false;
+        _recordCancelled = false;
+      });
+    }
+    if (recorder != null) unawaited(recorder.cancel());
+  }
+
+  void _onRecordMove(LongPressMoveUpdateDetails details) {
+    final bool cancelled = details.localOffsetFromOrigin.dy < -60;
+    if (cancelled != _recordCancelled && mounted) {
+      setState(() => _recordCancelled = cancelled);
+    }
+  }
+
   /// 展开 / 收起表情面板（ui-spec.md §3 输入工具条）。
   void _toggleEmoji() {
     setState(() => _emojiOpen = !_emojiOpen);
@@ -2938,14 +3076,42 @@ class _ChatInputBarState extends State<ChatInputBar> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
+          if (_recording)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Icon(
+                    _recordCancelled ? Icons.close : Icons.mic,
+                    size: 14,
+                    color: _recordCancelled
+                        ? Theme.of(context).colorScheme.error
+                        : scheme.primary,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _recordCancelled
+                        ? context.t('松开取消录音')
+                        : context.t('录音中 {0} 秒 · 松开发送，上滑取消', [
+                            _recordSeconds,
+                          ]),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           Row(
             children: <Widget>[
-              _ToolButton(
-                icon: Icons.mic_none,
-                tooltip: context.t('语音'),
-                onTap:
-                    widget.onAttachVoice ??
-                    () => _notImplemented(context.t('语音')),
+              _HoldToTalkButton(
+                tooltip: context.t('按住说话'),
+                onHoldStart: _startRecording,
+                onHoldEnd: (_) => unawaited(_finishRecording()),
+                onHoldMove: _onRecordMove,
+                onHoldCancel: _cancelRecording,
               ),
               _ToolButton(
                 icon: _emojiOpen
@@ -3116,6 +3282,42 @@ class _EmojiButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
         onTap: onTap,
         child: Center(child: Text(emoji, style: const TextStyle(fontSize: 20))),
+      ),
+    );
+  }
+}
+
+/// 按住说话按钮：长按开始录音，松手结束，上滑取消。
+class _HoldToTalkButton extends StatelessWidget {
+  const _HoldToTalkButton({
+    required this.tooltip,
+    required this.onHoldStart,
+    required this.onHoldEnd,
+    required this.onHoldMove,
+    required this.onHoldCancel,
+  });
+
+  final String tooltip;
+  final Future<void> Function() onHoldStart;
+  final void Function(LongPressEndDetails details) onHoldEnd;
+  final void Function(LongPressMoveUpdateDetails details) onHoldMove;
+  final VoidCallback onHoldCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onLongPressStart: (_) => unawaited(onHoldStart()),
+        onLongPressEnd: onHoldEnd,
+        onLongPressMoveUpdate: onHoldMove,
+        onLongPressCancel: onHoldCancel,
+        child: const SizedBox(
+          width: 34,
+          height: 34,
+          child: Center(child: Icon(Icons.mic_none, size: 20)),
+        ),
       ),
     );
   }

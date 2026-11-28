@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'app/app.dart';
 import 'app/core_session.dart';
+import 'features/chat/voice_recorder.dart';
 import 'features/files/chat_file_actions.dart';
 import 'features/files/system_file_picker.dart';
 import 'features/files/web_download.dart';
@@ -79,6 +80,10 @@ Future<CoreSession?> _sessionFromEnvironment() async {
         pickLocalImage(endpoint: transport.endpoint, token: accessToken),
     pickMedia: () =>
         pickLocalMedia(endpoint: transport.endpoint, token: accessToken),
+    voiceRecorder: makeVoiceRecorder(
+      endpoint: transport.endpoint,
+      token: accessToken,
+    ),
     pickDirectory: () =>
         pickLocalDirectory(endpoint: transport.endpoint, token: accessToken),
     // Web 端内核在网关进程内，群文件落到服务端路径，需经鉴权 /download 取回。

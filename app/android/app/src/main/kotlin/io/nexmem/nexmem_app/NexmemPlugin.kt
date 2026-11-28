@@ -1,9 +1,12 @@
 package io.nexmem.nexmem_app
 
+import android.Manifest
 import android.app.Activity
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.MediaRecorder
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -11,6 +14,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -50,6 +54,9 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
     private var activity: Activity? = null
     private var activityBinding: ActivityPluginBinding? = null
     private var pendingPick: MethodChannel.Result? = null
+    private var voiceRecorder: MediaRecorder? = null
+    private var voicePath: String? = null
+    private var voiceStartMs = 0L
     private val worker = Executors.newSingleThreadExecutor { r ->
         Thread(r, "nexmem-core").apply { isDaemon = true }
     }
@@ -169,6 +176,9 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
             "pickFile" -> pickFile(result)
             "pickImage" -> pickImage(result)
             "pickMedia" -> pickMedia(result)
+            "startVoiceRecord" -> startVoiceRecord(result)
+            "stopVoiceRecord" -> stopVoiceRecord(result)
+            "cancelVoiceRecord" -> cancelVoiceRecord(result)
             "pickDirectory" -> pickDirectory(result)
             "openPath" -> openPath(call.argument<String>("path"), result)
             "openUrl" -> openUrl(call.argument<String>("url"), result)
@@ -358,6 +368,113 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
             pendingPick = null
             result.error("PICK_FAILED", t.message ?: "无法打开媒体选择器", null)
         }
+    }
+
+    /** 按住说话：MediaRecorder 输出 AAC/M4A 到应用缓存目录。 */
+    private fun startVoiceRecord(result: MethodChannel.Result) {
+        val ctx = context
+        if (ctx == null) {
+            result.error("NO_CONTEXT", "插件未挂载", null)
+            return
+        }
+        if (voiceRecorder != null) {
+            result.error("RECORD_BUSY", "已有录音正在进行", null)
+            return
+        }
+        if (ContextCompat.checkSelfPermission(
+                ctx,
+                Manifest.permission.RECORD_AUDIO,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            result.error("NO_PERMISSION", "麦克风权限未授予", null)
+            return
+        }
+        val dir = File(ctx.cacheDir, "nexmem-voice").apply { mkdirs() }
+        val path = File(dir, "${System.currentTimeMillis()}.m4a").absolutePath
+        try {
+            val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(ctx)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
+            }.apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setAudioSamplingRate(44100)
+                setAudioEncodingBitRate(64000)
+                setOutputFile(path)
+                prepare()
+                start()
+            }
+            voiceRecorder = recorder
+            voicePath = path
+            voiceStartMs = System.currentTimeMillis()
+            result.success(true)
+        } catch (t: Throwable) {
+            voicePath = null
+            result.error("RECORD_FAILED", t.message ?: "无法启动录音", null)
+        }
+    }
+
+    private fun stopVoiceRecord(result: MethodChannel.Result) {
+        val recorder = voiceRecorder
+        if (recorder == null) {
+            result.success(null)
+            return
+        }
+        val path = voicePath
+        val durationMs = System.currentTimeMillis() - voiceStartMs
+        voiceRecorder = null
+        voicePath = null
+        try {
+            recorder.stop()
+        } catch (_: Throwable) {
+            // 录音过短时 stop 会抛异常，按无结果处理。
+        } finally {
+            try {
+                recorder.release()
+            } catch (_: Throwable) {
+            }
+        }
+        if (path == null || durationMs < 400) {
+            result.success(null)
+            return
+        }
+        val file = File(path)
+        result.success(
+            mapOf(
+                "path" to path,
+                "name" to file.name,
+                "mime" to "audio/mp4",
+                "size" to file.length(),
+                "durationMs" to durationMs,
+            ),
+        )
+    }
+
+    private fun cancelVoiceRecord(result: MethodChannel.Result) {
+        val recorder = voiceRecorder
+        voiceRecorder = null
+        val path = voicePath
+        voicePath = null
+        if (recorder != null) {
+            try {
+                recorder.stop()
+            } catch (_: Throwable) {
+            }
+            try {
+                recorder.release()
+            } catch (_: Throwable) {
+            }
+        }
+        if (path != null) {
+            try {
+                File(path).delete()
+            } catch (_: Throwable) {
+            }
+        }
+        result.success(null)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {

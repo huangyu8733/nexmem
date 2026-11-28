@@ -3,12 +3,31 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nexmem_app/features/chat/voice_recorder.dart';
+import 'package:nexmem_app/features/chat/voice_recorder_io.dart';
+import 'package:nexmem_app/features/permissions/app_permissions.dart';
+import 'package:nexmem_app/features/permissions/app_permission_types.dart';
 import 'package:nexmem_app/transport/android_transport.dart';
 import 'package:nexmem_app/transport/transport.dart';
 
 /// 以 mock MethodChannel 模拟 `NexmemPlugin`（P1-07）：
 /// `call` 回响应信封、`replayedSince` 回事件帧数组、`ack` 记录水位、
 /// `event` 由 `emitFromNative` 反向推给 Dart。
+class _GrantedPermissions implements AppPermissions {
+  const _GrantedPermissions();
+
+  @override
+  Future<AppPermissionState> status(AppPermissionKind kind) async =>
+      AppPermissionState.granted;
+
+  @override
+  Future<AppPermissionState> request(AppPermissionKind kind) async =>
+      AppPermissionState.granted;
+
+  @override
+  Future<bool> openSettings(AppPermissionKind kind) async => true;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -76,6 +95,18 @@ void main() {
                 throw PlatformException(code: 'PICK_FAILED', message: '选择器不可用');
               }
               return pickedFile;
+            case 'startVoiceRecord':
+              return true;
+            case 'stopVoiceRecord':
+              return <String, dynamic>{
+                'path': '/data/cache/nexmem-voice/1.m4a',
+                'name': '1.m4a',
+                'mime': 'audio/mp4',
+                'size': 1024,
+                'durationMs': 3000,
+              };
+            case 'cancelVoiceRecord':
+              return null;
             case 'startService':
               startServiceCalls++;
               return '';
@@ -399,6 +430,28 @@ void main() {
     expect(log.map((MethodCall c) => c.method), contains('pickMedia'));
 
     await transport.close();
+  });
+
+  test('按住说话录音通道：申请权限、开始、停止并回传附件', () async {
+    final ChannelVoiceRecorder recorder = ChannelVoiceRecorder(
+      channel: channel,
+      permissions: const _GrantedPermissions(),
+    );
+    expect(recorder.supported, isTrue);
+    expect(await recorder.start(), isTrue);
+    expect(recorder.isRecording, isTrue);
+
+    final VoiceRecording? recording = await recorder.stop();
+    expect(recording?.path, '/data/cache/nexmem-voice/1.m4a');
+    expect(recording?.name, '1.m4a');
+    expect(recording?.mime, 'audio/mp4');
+    expect(recording?.size, 1024);
+    expect(recording?.duration, const Duration(seconds: 3));
+    expect(recorder.isRecording, isFalse);
+    expect(
+      log.map((MethodCall c) => c.method),
+      containsAll(<String>['startVoiceRecord', 'stopVoiceRecord']),
+    );
   });
 
   test('pickFile 原生失败映射为 NOT_ONLINE', () async {
