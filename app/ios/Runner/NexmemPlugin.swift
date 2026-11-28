@@ -1,4 +1,3 @@
-import AVFoundation
 import Flutter
 import PhotosUI
 import UIKit
@@ -19,9 +18,6 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
     private let channel: FlutterMethodChannel
     private let worker = DispatchQueue(label: "io.nexmem.core.call", qos: .userInitiated)
     private var pendingPick: FlutterResult?
-    private var voiceRecorder: AVAudioRecorder?
-    private var voiceURL: URL?
-    private var voiceStart: Date?
 
     private init(messenger: FlutterBinaryMessenger) {
         channel = FlutterMethodChannel(name: NexmemPlugin.channelName, binaryMessenger: messenger)
@@ -66,12 +62,6 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
             pickImage(result)
         case "pickMedia":
             pickMedia(result)
-        case "startVoiceRecord":
-            startVoiceRecord(result)
-        case "stopVoiceRecord":
-            stopVoiceRecord(result)
-        case "cancelVoiceRecord":
-            cancelVoiceRecord(result)
         case "startService", "stopService":
             // iOS 没有前台服务，常驻依赖静默推送（P6-02），保持空实现。
             result("")
@@ -144,98 +134,6 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
                 }
             }
         }
-    }
-
-    // MARK: - 按住说话录音（PTT）
-
-    private func startVoiceRecord(_ result: @escaping FlutterResult) {
-        if voiceRecorder != nil {
-            result(FlutterError(code: "RECORD_BUSY", message: "已有录音正在进行", details: nil))
-            return
-        }
-        switch AVAudioSession.sharedInstance().recordPermission {
-        case .granted:
-            startRecorder(result)
-        case .denied:
-            result(FlutterError(code: "NO_PERMISSION", message: "麦克风权限未授予", details: nil))
-        case .undetermined:
-            AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
-                DispatchQueue.main.async {
-                    if granted {
-                        self?.startRecorder(result)
-                    } else {
-                        result(FlutterError(code: "NO_PERMISSION", message: "麦克风权限未授予", details: nil))
-                    }
-                }
-            }
-        @unknown default:
-            startRecorder(result)
-        }
-    }
-
-    private func startRecorder(_ result: FlutterResult) {
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-            try session.setActive(true)
-            let fm = FileManager.default
-            let cache = fm.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            let dir = cache.appendingPathComponent("nexmem-voice", isDirectory: true)
-            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-            let url = dir.appendingPathComponent("\(Int(Date().timeIntervalSince1970 * 1000)).m4a")
-            let settings: [String: Any] = [
-                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-                AVSampleRateKey: 44100,
-                AVNumberOfChannelsKey: 1,
-                AVEncoderBitRateKey: 64000,
-            ]
-            let recorder = try AVAudioRecorder(url: url, settings: settings)
-            recorder.record()
-            voiceRecorder = recorder
-            voiceURL = url
-            voiceStart = Date()
-            result(true)
-        } catch {
-            result(FlutterError(code: "RECORD_FAILED", message: error.localizedDescription, details: nil))
-        }
-    }
-
-    private func stopVoiceRecord(_ result: FlutterResult) {
-        guard let recorder = voiceRecorder else {
-            result(nil)
-            return
-        }
-        let url = voiceURL
-        let durationMs = Int64((Date().timeIntervalSince(voiceStart ?? Date())) * 1000)
-        recorder.stop()
-        voiceRecorder = nil
-        voiceURL = nil
-        voiceStart = nil
-        try? AVAudioSession.sharedInstance().setActive(false)
-        guard let url = url, durationMs >= 400 else {
-            result(nil)
-            return
-        }
-        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
-        result([
-            "path": url.path,
-            "name": url.lastPathComponent,
-            "mime": "audio/mp4",
-            "size": size,
-            "durationMs": durationMs,
-        ])
-    }
-
-    private func cancelVoiceRecord(_ result: FlutterResult) {
-        voiceRecorder?.stop()
-        voiceRecorder = nil
-        if let url = voiceURL {
-            try? FileManager.default.removeItem(at: url)
-        }
-        voiceURL = nil
-        voiceStart = nil
-        try? AVAudioSession.sharedInstance().setActive(false)
-        result(nil)
     }
 
     // MARK: - 文件选择器（P2-08）

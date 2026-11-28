@@ -14,6 +14,9 @@ PODS:
   - mobile_scanner (7.0.0):
     - Flutter
     - FlutterMacOS
+  - record_darwin (2.0.0):
+    - Flutter
+    - FlutterMacOS
   - video_player_avfoundation (0.0.1):
     - Flutter
     - FlutterMacOS
@@ -29,6 +32,7 @@ DEPENDENCIES:
   - flutter_webrtc (from `.symlinks/plugins/flutter_webrtc/ios`)
   - integration_test (from `.symlinks/plugins/integration_test/ios`)
   - mobile_scanner (from `.symlinks/plugins/mobile_scanner/darwin`)
+  - record_darwin (from `.symlinks/plugins/record_darwin/darwin`)
   - video_player_avfoundation (from `.symlinks/plugins/video_player_avfoundation/darwin`)
   - webview_flutter_wkwebview (from `.symlinks/plugins/webview_flutter_wkwebview/darwin`)
 
@@ -49,6 +53,8 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/integration_test/ios"
   mobile_scanner:
     :path: ".symlinks/plugins/mobile_scanner/darwin"
+  record_darwin:
+    :path: ".symlinks/plugins/record_darwin/darwin"
   video_player_avfoundation:
     :path: ".symlinks/plugins/video_player_avfoundation/darwin"
   webview_flutter_wkwebview:
@@ -61,10 +67,11 @@ SPEC CHECKSUMS:
   flutter_webrtc: 7948417965923736a584f9a1c5eeccaccf3372cf
   integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
   mobile_scanner: 9157936403f5a0644ca3779a38ff8404c5434a93
+  record_darwin: 4af4f79edec94b4b8356a7a43b0def39d807d3ea
   video_player_avfoundation: a0f7b0f7f7d91c3d33f7a746bc3fbb57a6fae803
   WebRTC-SDK: 71bce2be85c3082d24bbfd1a9930ea07d0c494c1
   webview_flutter_wkwebview: 8ebf4fded22593026f7dbff1fbff31ea98573c8d
 
-PODFILE CHECKSUM: 3ba3a73b1b12adcf321a227a745625fe0888cc82
+PODFILE CHECKSUM: 3a38394eb115ec3a4c75ad134d7d54cabd7639ed
 
 COCOAPODS: 1.17.0
