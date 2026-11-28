@@ -51,5 +51,6 @@ Future<CoreSession?> openIOSSession() async {
     rebaseStaleDataDir: true,
     pickFile: transport.pickFile,
     pickImage: transport.pickImage,
+    pickMedia: transport.pickMedia,
   );
 }

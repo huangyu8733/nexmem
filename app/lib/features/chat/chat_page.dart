@@ -203,6 +203,7 @@ class ChatPage extends StatelessWidget {
     this.onStartRemote,
     this.onPickFile,
     this.onPickImage,
+    this.onPickMedia,
     this.onDownloadGroupFile,
     this.onSaveFile,
     this.onReadFileBytes,
@@ -283,6 +284,10 @@ class ChatPage extends StatelessWidget {
   /// 选择相册图片：移动端拉起系统相册，桌面/Web 用图片过滤器。
   /// 为空时退回 [onPickFile]，保持旧部署可用。
   final Future<ChatAttachment?> Function()? onPickImage;
+
+  /// 选择视频或音频：移动端拉起系统媒体选择器，桌面/Web 用媒体过滤器。
+  /// 为空时退回 [onPickFile]，保持旧部署可用。
+  final Future<ChatAttachment?> Function()? onPickMedia;
 
   /// 下载群文件（A-02）：由壳层注入，参数为消息所属会话与附件元数据。
   /// 返回落盘绝对路径；为空表示回调不可用或用户取消。
@@ -371,6 +376,39 @@ class ChatPage extends StatelessWidget {
       }
       messenger.showSnackBar(
         SnackBar(content: Text(context.t('图片发送失败：{0}', [error]))),
+      );
+    }
+  }
+
+  /// 发送视频或音频文件：移动端拉起系统媒体选择器，桌面/Web 用媒体过滤器。
+  /// 发送前补齐 MIME，保证接收端能识别为媒体气泡并直接预览/播放。
+  Future<void> _pickAndSendMedia(BuildContext context) async {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final String selfName = context.t('我');
+    final String notMedia = context.t('请选择视频或音频文件');
+    final ChatAttachment? picked = await _pickAttachment(
+      context,
+      title: context.t('发送文件'),
+      picker: onPickMedia ?? onPickFile,
+    );
+    if (picked == null || picked.path.trim().isEmpty) {
+      return;
+    }
+    final String mime = mediaMimeFor(name: picked.name, mime: picked.mime);
+    if (!isVideoAttachment(name: picked.name, mime: mime) &&
+        !isAudioAttachment(name: picked.name, mime: mime)) {
+      messenger.showSnackBar(SnackBar(content: Text(notMedia)));
+      return;
+    }
+    try {
+      await store.sendFile(picked.copyWith(mime: mime), senderName: selfName);
+      onSent?.call(picked.name);
+    } on Object catch (error) {
+      if (!context.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.t('发送失败：{0}', [error]))),
       );
     }
   }
@@ -514,6 +552,7 @@ class ChatPage extends StatelessWidget {
             mentionController: mentionController,
             onAttachFile: () => _pickAndSendFile(context),
             onAttachImage: () => _pickAndSendImage(context),
+            onAttachMedia: () => _pickAndSendMedia(context),
             onAttachVoice: () => _pickAndSendVoice(context),
           ),
         ],
@@ -593,6 +632,7 @@ class ChatInputArea extends StatelessWidget {
     this.onSend,
     this.onAttachFile,
     this.onAttachImage,
+    this.onAttachMedia,
     this.onAttachVoice,
     this.onTypingChanged,
     this.mentionCandidates = const <MentionCandidate>[],
@@ -620,6 +660,9 @@ class ChatInputArea extends StatelessWidget {
 
   /// 「图片」工具入口（P6-16）；为空时提示功能未开放。
   final VoidCallback? onAttachImage;
+
+  /// 「音视频」工具入口；为空时提示功能未开放。
+  final VoidCallback? onAttachMedia;
 
   /// 「语音」工具入口（A-01）；为空时提示功能未开放。
   final VoidCallback? onAttachVoice;
@@ -671,6 +714,7 @@ class ChatInputArea extends StatelessWidget {
               },
               onAttachFile: onAttachFile,
               onAttachImage: onAttachImage,
+              onAttachMedia: onAttachMedia,
               onAttachVoice: onAttachVoice,
               onTypingChanged: onTypingChanged,
               mentionCandidates: mentionCandidates,
@@ -2581,6 +2625,7 @@ class ChatInputBar extends StatefulWidget {
     required this.onSend,
     this.onAttachFile,
     this.onAttachImage,
+    this.onAttachMedia,
     this.onAttachVoice,
     this.onTypingChanged,
     this.mentionCandidates = const <MentionCandidate>[],
@@ -2605,6 +2650,9 @@ class ChatInputBar extends StatefulWidget {
 
   /// 「图片」工具入口（P6-16）；为空时提示功能未开放。
   final VoidCallback? onAttachImage;
+
+  /// 「音视频」工具入口；为空时提示功能未开放。
+  final VoidCallback? onAttachMedia;
 
   /// 「语音」工具入口（A-01）；为空时提示功能未开放。
   final VoidCallback? onAttachVoice;
@@ -2927,6 +2975,13 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 onTap:
                     widget.onAttachImage ??
                     () => _notImplemented(context.t('图片')),
+              ),
+              _ToolButton(
+                icon: Icons.movie_outlined,
+                tooltip: context.t('音视频'),
+                onTap:
+                    widget.onAttachMedia ??
+                    () => _notImplemented(context.t('音视频')),
               ),
               _ToolButton(
                 icon: Icons.attach_file,

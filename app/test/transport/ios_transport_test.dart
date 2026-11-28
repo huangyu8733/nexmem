@@ -48,6 +48,7 @@ void main() {
               return dataDir;
             case 'pickFile':
             case 'pickImage':
+            case 'pickMedia':
               return pickedFile;
             case 'call':
               final Map<Object?, Object?> args =
@@ -93,6 +94,7 @@ void main() {
     expect(session!.startConfig?['data_dir'], dataDir);
     expect(session.pickFile, isNotNull);
     expect(session.pickImage, isNotNull);
+    expect(session.pickMedia, isNotNull);
     final List<String> methods = log
         .map((MethodCall call) => call.method)
         .toList();

@@ -516,6 +516,7 @@ CoreSession? openNativeSession() {
     startConfig: config,
     pickFile: pickLocalFile,
     pickImage: pickLocalImage,
+    pickMedia: pickLocalMedia,
     pickDirectory: pickShareDirectory,
   );
 }

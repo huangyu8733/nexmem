@@ -77,6 +77,8 @@ Future<CoreSession?> _sessionFromEnvironment() async {
         pickLocalFile(endpoint: transport.endpoint, token: accessToken),
     pickImage: () =>
         pickLocalImage(endpoint: transport.endpoint, token: accessToken),
+    pickMedia: () =>
+        pickLocalMedia(endpoint: transport.endpoint, token: accessToken),
     pickDirectory: () =>
         pickLocalDirectory(endpoint: transport.endpoint, token: accessToken),
     // Web 端内核在网关进程内，群文件落到服务端路径，需经鉴权 /download 取回。

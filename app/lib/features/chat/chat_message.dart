@@ -64,6 +64,12 @@ class ChatAttachment {
   /// 是否为语音/音频附件（A-01，按 MIME 或扩展名判定）。
   bool get isAudio => isAudioAttachment(name: name, mime: mime);
 
+  /// 是否为视频附件（按 MIME 或扩展名判定）。
+  bool get isVideo => isVideoAttachment(name: name, mime: mime);
+
+  /// 是否为视频或音频附件。
+  bool get isMedia => isVideo || isAudio;
+
   ChatAttachment copyWith({
     String? name,
     int? size,
@@ -116,6 +122,33 @@ const Map<String, String> _audioMimeByExtension = <String, String>{
   'flac': 'audio/flac',
   'amr': 'audio/amr',
   '3gp': 'audio/3gpp',
+  'wma': 'audio/x-ms-wma',
+};
+
+/// 可内联预览的视频扩展名，与 `media_viewer.dart` 的 videos 集合保持一致。
+const List<String> videoFileExtensions = <String>[
+  'mp4',
+  'mov',
+  'mkv',
+  'avi',
+  'webm',
+  'flv',
+  'wmv',
+  'm4v',
+  'ts',
+];
+
+/// 视频扩展名到 MIME 的映射，用于发送前补齐附件 MIME。
+const Map<String, String> _videoMimeByExtension = <String, String>{
+  'mp4': 'video/mp4',
+  'mov': 'video/quicktime',
+  'mkv': 'video/x-matroska',
+  'avi': 'video/x-msvideo',
+  'webm': 'video/webm',
+  'flv': 'video/x-flv',
+  'wmv': 'video/x-ms-wmv',
+  'm4v': 'video/x-m4v',
+  'ts': 'video/mp2t',
 };
 
 String _extensionOf(String name) {
@@ -148,6 +181,36 @@ bool isAudioAttachment({required String name, String mime = ''}) {
 /// 按扩展名推断音频 MIME；非音频返回空串。
 String audioMimeFor(String name) {
   return _audioMimeByExtension[_extensionOf(name)] ?? '';
+}
+
+/// 按 MIME 或扩展名判定视频附件。
+bool isVideoAttachment({required String name, String mime = ''}) {
+  if (mime.toLowerCase().startsWith('video/')) {
+    return true;
+  }
+  return videoFileExtensions.contains(_extensionOf(name));
+}
+
+/// 按扩展名推断视频 MIME；非视频返回空串。
+String videoMimeFor(String name) {
+  return _videoMimeByExtension[_extensionOf(name)] ?? '';
+}
+
+/// 补齐音视频附件的 MIME：优先保留选择器给出的 MIME，
+/// 否则按扩展名推断，确保接收端 `mediaKindOf` 能识别为视频/音频。
+String mediaMimeFor({
+  required String name,
+  String mime = '',
+}) {
+  final String trimmed = mime.trim();
+  final String lower = trimmed.toLowerCase();
+  // 只信任明确的音视频 MIME；选择器给 application/octet-stream 时按扩展名推断。
+  if (lower.startsWith('video/') || lower.startsWith('audio/')) {
+    return trimmed;
+  }
+  final String video = videoMimeFor(name);
+  if (video.isNotEmpty) return video;
+  return audioMimeFor(name);
 }
 
 /// 人类可读的文件大小：`B` / `KB` / `MB` / `GB`（保留一位小数）。

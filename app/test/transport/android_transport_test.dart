@@ -71,6 +71,7 @@ void main() {
               return localIp;
             case 'pickFile':
             case 'pickImage':
+            case 'pickMedia':
               if (pickFileFails) {
                 throw PlatformException(code: 'PICK_FAILED', message: '选择器不可用');
               }
@@ -318,6 +319,7 @@ void main() {
     });
     expect(session.pickFile, isNotNull);
     expect(session.pickImage, isNotNull);
+    expect(session.pickMedia, isNotNull);
     expect(startServiceCalls, 1);
     await session.transport.close();
   });
@@ -377,6 +379,24 @@ void main() {
     expect(attachment?.name, 'album.jpg');
     expect(attachment?.path, '/data/cache/nexmem-picked/2-album.jpg');
     expect(log.map((MethodCall c) => c.method), contains('pickImage'));
+
+    await transport.close();
+  });
+
+  test('pickMedia 调用原生媒体通道并映射为附件', () async {
+    final AndroidTransport transport = AndroidTransport(channel: channel);
+    await transport.connect();
+
+    pickedFile = <String, dynamic>{
+      'name': 'clip.mp4',
+      'size': 2048,
+      'mime': 'video/mp4',
+      'path': '/data/cache/nexmem-picked/3-clip.mp4',
+    };
+    final attachment = await transport.pickMedia();
+    expect(attachment?.name, 'clip.mp4');
+    expect(attachment?.mime, 'video/mp4');
+    expect(log.map((MethodCall c) => c.method), contains('pickMedia'));
 
     await transport.close();
   });

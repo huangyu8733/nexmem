@@ -418,6 +418,7 @@ class CoreSession {
     this.rebaseStaleDataDir = false,
     this.pickFile,
     this.pickImage,
+    this.pickMedia,
     this.pickDirectory,
     this.downloadToBrowser,
     this.mediaSourceUri,
@@ -460,6 +461,10 @@ class CoreSession {
   /// 平台相册/图片库选择器：移动端拉起系统相册，桌面/Web 走图片文件过滤。
   /// 为空时聊天页退回 [pickFile]（可能出现系统文件管理器而非相册）。
   final Future<ChatAttachment?> Function()? pickImage;
+
+  /// 平台视频/音频选择器：移动端拉起系统媒体库，桌面/Web 走媒体文件过滤。
+  /// 为空时聊天页退回 [pickFile]。
+  final Future<ChatAttachment?> Function()? pickMedia;
 
   /// 平台目录选择器（P2P 文件夹共享）；为空时分享页退回本机路径输入框。
   final Future<String?> Function()? pickDirectory;

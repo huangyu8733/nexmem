@@ -27,8 +27,23 @@ Uri webUploadUri(Uri endpoint, String token) => endpoint.replace(
 String _mimeForName(String name) {
   final String image = imageMimeFor(name);
   if (image.isNotEmpty) return image;
-  return audioMimeFor(name);
+  return mediaMimeFor(name: name);
 }
+
+/// 音视频选择器扩展名：既有视频也有音频。
+const List<String> mediaFileExtensions = <String>[
+  ...videoFileExtensions,
+  'm4a',
+  'mp3',
+  'wav',
+  'aac',
+  'ogg',
+  'opus',
+  'flac',
+  'amr',
+  '3gp',
+  'wma',
+];
 
 /// 选择单个本地文件并返回可交给内核的附件。
 ///
@@ -37,8 +52,12 @@ Future<ChatAttachment?> pickLocalFile({
   Uri? endpoint,
   String token = '',
   FileType type = FileType.any,
+  List<String>? allowedExtensions,
 }) async {
-  final PlatformFile? file = await FilePicker.pickFile(type: type);
+  final PlatformFile? file = await FilePicker.pickFile(
+    type: type,
+    allowedExtensions: allowedExtensions,
+  );
   if (file == null) {
     return null;
   }
@@ -86,6 +105,15 @@ Future<ChatAttachment?> pickLocalFile({
 /// 选择图片：桌面打开系统图片选择器，Web 复用鉴权上传通道。
 Future<ChatAttachment?> pickLocalImage({Uri? endpoint, String token = ''}) =>
     pickLocalFile(endpoint: endpoint, token: token, type: FileType.image);
+
+/// 选择视频或音频：桌面/Web 用媒体扩展名过滤，Web 复用鉴权上传通道。
+Future<ChatAttachment?> pickLocalMedia({Uri? endpoint, String token = ''}) =>
+    pickLocalFile(
+      endpoint: endpoint,
+      token: token,
+      type: FileType.custom,
+      allowedExtensions: mediaFileExtensions,
+    );
 
 /// 选择本地目录并返回内核可读的目录路径。
 ///

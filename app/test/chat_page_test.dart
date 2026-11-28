@@ -810,6 +810,75 @@ void main() {
     expect(store.messages.single.text, 'album.png');
   });
 
+  testWidgets('音视频工具优先使用 onPickMedia，并按扩展名补齐 MIME', (
+    WidgetTester tester,
+  ) async {
+    final _FakeSender sender = _FakeSender(() async {});
+    final ChatStore store = ChatStore(conversationId: 'alice', sender: sender);
+    addTearDown(store.dispose);
+    bool filePickerCalled = false;
+
+    await tester.pumpWidget(
+      _wrap(
+        ChatPage(
+          conversation: _peerConversation,
+          store: store,
+          onPickFile: () async {
+            filePickerCalled = true;
+            return const ChatAttachment(
+              name: 'wrong.pdf',
+              size: 8,
+              mime: 'application/pdf',
+              path: '/tmp/wrong.pdf',
+            );
+          },
+          onPickMedia: () async => const ChatAttachment(
+            name: 'trip.mov',
+            size: 1024,
+            mime: '',
+            path: '/tmp/trip.mov',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('音视频'));
+    await tester.pumpAndSettle();
+
+    expect(filePickerCalled, isFalse);
+    expect(sender.lastFile?['path'], '/tmp/trip.mov');
+    expect(sender.lastFile?['mime'], 'video/quicktime');
+    expect(store.messages.single.text, 'trip.mov');
+  });
+
+  testWidgets('音视频工具也接受音频文件', (WidgetTester tester) async {
+    final _FakeSender sender = _FakeSender(() async {});
+    final ChatStore store = ChatStore(conversationId: 'alice', sender: sender);
+    addTearDown(store.dispose);
+
+    await tester.pumpWidget(
+      _wrap(
+        ChatPage(
+          conversation: _peerConversation,
+          store: store,
+          onPickMedia: () async => const ChatAttachment(
+            name: 'voice.mp3',
+            size: 128,
+            path: '/tmp/voice.mp3',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('音视频'));
+    await tester.pumpAndSettle();
+
+    expect(sender.lastFile?['mime'], 'audio/mpeg');
+    expect(store.messages.single.text, 'voice.mp3');
+  });
+
   testWidgets('文件发送失败置为可重发，重发沿用同一 msg_uuid 与路径', (WidgetTester tester) async {
     int calls = 0;
     final _FakeSender sender = _FakeSender(() async {

@@ -41,6 +41,7 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
         private const val REQUEST_PICK_FILE = 4201
         private const val REQUEST_PICK_DIRECTORY = 4202
         private const val REQUEST_PICK_IMAGE = 4203
+        private const val REQUEST_PICK_MEDIA = 4204
     }
 
     private var channel: MethodChannel? = null
@@ -167,6 +168,7 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
             "localIp" -> result.success(localIpAddress())
             "pickFile" -> pickFile(result)
             "pickImage" -> pickImage(result)
+            "pickMedia" -> pickMedia(result)
             "pickDirectory" -> pickDirectory(result)
             "openPath" -> openPath(call.argument<String>("path"), result)
             "openUrl" -> openUrl(call.argument<String>("url"), result)
@@ -332,10 +334,37 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
         }
     }
 
+    /** 打开系统媒体选择器，同时列出视频与音频（ACTION_OPEN_DOCUMENT + MIME 过滤）。 */
+    private fun pickMedia(result: MethodChannel.Result) {
+        pendingDirPick = false
+        val act = activity
+        if (act == null) {
+            result.error("NO_ACTIVITY", "当前没有可用的界面", null)
+            return
+        }
+        if (pendingPick != null) {
+            result.error("PICK_BUSY", "已有一个文件选择正在进行", null)
+            return
+        }
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("video/*", "audio/*"))
+        }
+        pendingPick = result
+        try {
+            act.startActivityForResult(intent, REQUEST_PICK_MEDIA)
+        } catch (t: Throwable) {
+            pendingPick = null
+            result.error("PICK_FAILED", t.message ?: "无法打开媒体选择器", null)
+        }
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         if (requestCode != REQUEST_PICK_FILE &&
             requestCode != REQUEST_PICK_DIRECTORY &&
-            requestCode != REQUEST_PICK_IMAGE
+            requestCode != REQUEST_PICK_IMAGE &&
+            requestCode != REQUEST_PICK_MEDIA
         ) {
             return false
         }

@@ -191,6 +191,10 @@ class AndroidTransport implements CoreTransport {
   Future<ChatAttachment?> pickImage() =>
       _pickViaPlatform('pickImage', '选择图片失败');
 
+  /// 拉起系统媒体选择器，可发送视频或音频文件。
+  Future<ChatAttachment?> pickMedia() =>
+      _pickViaPlatform('pickMedia', '选择音视频失败');
+
   Future<ChatAttachment?> _pickViaPlatform(
     String method,
     String errorLabel,
@@ -418,6 +422,7 @@ Future<CoreSession?> openAndroidSession({
     rebaseStaleDataDir: true,
     pickFile: transport.pickFile,
     pickImage: transport.pickImage,
+    pickMedia: transport.pickMedia,
     pickDirectory: transport.pickDirectory,
   );
 }

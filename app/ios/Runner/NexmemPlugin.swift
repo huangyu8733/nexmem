@@ -60,6 +60,8 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
             pickFile(result)
         case "pickImage":
             pickImage(result)
+        case "pickMedia":
+            pickMedia(result)
         case "startService", "stopService":
             // iOS 没有前台服务，常驻依赖静默推送（P6-02），保持空实现。
             result("")
@@ -167,6 +169,28 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
         config.selectionLimit = 1
         let picker = PHPickerViewController(configuration: config)
         picker.delegate = self
+        pendingPick = result
+        presenter.present(picker, animated: true)
+    }
+
+    /// 打开系统文件选择器，只列视频与音频。
+    /// Photos 框架没有音频资产类型，PHPicker 无法选音频，因此统一用
+    /// UIDocumentPicker + UTType.movie/.audio 过滤，视频音频一次可选。
+    private func pickMedia(_ result: @escaping FlutterResult) {
+        if pendingPick != nil {
+            result(FlutterError(code: "PICK_BUSY", message: "已有一个文件选择正在进行", details: nil))
+            return
+        }
+        guard let presenter = NexmemPlugin.topViewController() else {
+            result(FlutterError(code: "NO_ACTIVITY", message: "当前没有可用的界面", details: nil))
+            return
+        }
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: [.movie, .audio],
+            asCopy: true
+        )
+        picker.delegate = self
+        picker.allowsMultipleSelection = false
         pendingPick = result
         presenter.present(picker, animated: true)
     }
