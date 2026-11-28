@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/app_dialog.dart';
 import '../../l10n/l10n.dart';
 import 'remote_password.dart';
 
@@ -16,7 +17,7 @@ Future<String?> showRemotePasswordDialog({
   String? expectedCredential,
   String? message,
 }) {
-  return showDialog<String>(
+  return showAppDialog<String>(
     context: context,
     barrierDismissible: false,
     builder: (BuildContext context) => _RemotePasswordDialog(

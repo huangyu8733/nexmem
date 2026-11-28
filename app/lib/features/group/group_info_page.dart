@@ -13,6 +13,7 @@ import 'group_invite_dialogs.dart';
 import 'group_profile_dialogs.dart';
 import 'group_service.dart';
 import 'group_storage.dart';
+import '../../app/app_dialog.dart';
 
 /// 群资料页（ui-spec.md §4）：群名、成员表与群盘状态。
 ///
@@ -324,7 +325,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     if (_busy) {
       return;
     }
-    final bool? confirmed = await showDialog<bool>(
+    final bool? confirmed = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         key: const ValueKey<String>('group-remove-dialog'),
@@ -371,7 +372,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
       return;
     }
     final bool isAdmin = _isAdmin(info);
-    final bool? confirmed = await showDialog<bool>(
+    final bool? confirmed = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         key: const ValueKey<String>('group-leave-dialog'),
@@ -422,7 +423,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     if (_busy) {
       return;
     }
-    final bool? saved = await showDialog<bool>(
+    final bool? saved = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => GroupStorageConfigDialog(
         groupId: widget.groupId,
@@ -441,7 +442,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     if (_busy) {
       return;
     }
-    final bool? confirmed = await showDialog<bool>(
+    final bool? confirmed = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         key: const ValueKey<String>('group-storage-remove-dialog'),
@@ -490,7 +491,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     if (info == null || _busy) {
       return;
     }
-    final String? input = await showDialog<String>(
+    final String? input = await showAppDialog<String>(
       context: context,
       builder: (BuildContext context) =>
           _AnnouncementDialog(initial: info.announcement),
@@ -524,7 +525,7 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     if (info == null || _busy) {
       return;
     }
-    final String? input = await showDialog<String>(
+    final String? input = await showAppDialog<String>(
       context: context,
       builder: (BuildContext context) => _AliasDialog(initial: info.alias),
     );

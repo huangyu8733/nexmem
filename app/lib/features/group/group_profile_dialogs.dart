@@ -13,6 +13,7 @@ import '../../transport/transport.dart';
 import '../settings/image_crop_page.dart';
 import '../settings/profile_image.dart';
 import 'group_service.dart';
+import '../../app/app_dialog.dart';
 
 const int _maxNicknameRunes = 24;
 const int _maxLevelNameRunes = 16;
@@ -25,7 +26,7 @@ Future<GroupLevels?> showGroupLevelDialog(
   required String groupId,
   required GroupLevels initial,
 }) {
-  return showDialog<GroupLevels>(
+  return showAppDialog<GroupLevels>(
     context: context,
     builder: (BuildContext context) => _GroupLevelDialog(
       service: service,
@@ -112,7 +113,7 @@ class _GroupLevelDialogState extends State<_GroupLevelDialog> {
     final GroupLevel current = _levels[index];
     final TextEditingController controller =
         TextEditingController(text: current.name);
-    final String? saved = await showDialog<String>(
+    final String? saved = await showAppDialog<String>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('等级名称')),
@@ -307,7 +308,7 @@ Future<GroupMemberProfile?> showMemberProfileDialog(
   required bool isAdmin,
   required GroupLevels levels,
 }) {
-  return showDialog<GroupMemberProfile>(
+  return showAppDialog<GroupMemberProfile>(
     context: context,
     builder: (BuildContext context) => _MemberProfileDialog(
       service: service,

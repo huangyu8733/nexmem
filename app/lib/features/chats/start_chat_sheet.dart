@@ -9,6 +9,7 @@ import '../../app/theme.dart';
 import '../../transport/transport.dart';
 import '../contacts/contact.dart';
 import '../contacts/contact_service.dart';
+import '../../app/app_dialog.dart';
 
 /// `+` 菜单动作（ui-spec.md §2：发起单聊 / 创建群聊 / 添加好友）。
 enum StartChatAction { direct, group, addFriend }
@@ -64,7 +65,7 @@ Future<Contact?> showContactPicker(
   BuildContext context,
   ContactService service,
 ) {
-  return showDialog<Contact>(
+  return showAppDialog<Contact>(
     context: context,
     builder: (BuildContext dialogContext) =>
         _ContactPickerDialog(service: service),
@@ -76,7 +77,7 @@ Future<NewGroupRequest?> showCreateGroupDialog(
   BuildContext context,
   ContactService service,
 ) {
-  return showDialog<NewGroupRequest>(
+  return showAppDialog<NewGroupRequest>(
     context: context,
     builder: (BuildContext dialogContext) =>
         _CreateGroupDialog(service: service),
@@ -88,7 +89,7 @@ Future<NewGroupRequest?> showCreateGroupDialog(
 /// 群聊页右上角入口使用；建好后可在群资料页邀请成员或分享群信息拉人。
 /// 取消或空名返回 null。
 Future<String?> showCreateGroupByNameDialog(BuildContext context) {
-  return showDialog<String>(
+  return showAppDialog<String>(
     context: context,
     builder: (BuildContext dialogContext) => const _CreateGroupByNameDialog(),
   );

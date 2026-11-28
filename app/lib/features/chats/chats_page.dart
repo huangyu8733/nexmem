@@ -18,6 +18,7 @@ import '../search/search_page.dart';
 import 'conversation.dart';
 import 'conversation_store.dart';
 import 'start_chat_sheet.dart';
+import '../../app/app_dialog.dart';
 
 /// 会话列表（P1-18）：头像 / 昵称 / 摘要 / 时间 / 未读，置顶优先。
 class ChatsPage extends StatefulWidget {
@@ -217,7 +218,7 @@ class ChatsPageState extends State<ChatsPage> {
   /// 删除会话：确认后移除本地条目并交由上层同步内核；
   /// 历史消息保留，收到新消息时会话会重新出现。
   Future<void> _delete(ConversationItem item) async {
-    final bool? confirmed = await showDialog<bool>(
+    final bool? confirmed = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('删除会话')),

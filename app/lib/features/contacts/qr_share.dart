@@ -16,13 +16,14 @@ import '../../app/core_session.dart';
 import 'add_friend_dialog.dart';
 import 'contact_service.dart';
 import 'qr_camera_scanner.dart';
+import '../../app/app_dialog.dart';
 
 /// 打开「我的二维码」弹窗：展示当前账号名片二维码 + 可复制的文本。
 Future<void> showMyQrDialog(
   BuildContext context,
   CoreSession session,
 ) {
-  return showDialog<void>(
+  return showAppDialog<void>(
     context: context,
     builder: (BuildContext context) => _MyQrDialog(session: session),
   );
@@ -129,7 +130,7 @@ Future<void> showQrImportDialog(
   CoreSession session,
   ContactService service,
 ) {
-  return showDialog<void>(
+  return showAppDialog<void>(
     context: context,
     builder: (BuildContext context) =>
         _QrImportDialog(session: session, service: service),

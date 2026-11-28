@@ -14,6 +14,7 @@ import '../chats/conversation.dart';
 import '../contacts/contact_service.dart';
 import '../group/group_service.dart';
 import '../group/group_storage.dart';
+import '../../app/app_dialog.dart';
 
 /// 桌面 / Web 聊天区右侧可折叠资料面板（ui-spec.md §1 三级导航）。
 ///
@@ -461,7 +462,7 @@ class _ChatProfilePanelState extends State<ChatProfilePanel> {
   Future<void> _openRemark(BuildContext context) async {
     final TextEditingController controller =
         TextEditingController(text: widget.remark);
-    final String? next = await showDialog<String>(
+    final String? next = await showAppDialog<String>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('设置备注')),

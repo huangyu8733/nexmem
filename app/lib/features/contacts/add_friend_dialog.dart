@@ -5,6 +5,7 @@ import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 import 'contact_service.dart';
+import '../../app/app_dialog.dart';
 
 /// 打开「添加好友」弹窗（ui-spec.md §2 / §4）。
 ///
@@ -14,7 +15,7 @@ Future<bool?> showAddFriendDialog(
   BuildContext context,
   ContactService service,
 ) {
-  return showDialog<bool>(
+  return showAppDialog<bool>(
     context: context,
     builder: (BuildContext context) => AddFriendDialog(service: service),
   );
@@ -28,7 +29,7 @@ Future<bool?> showAddFriendDialogWithPreset(
   required String alias,
   CoreSession? session,
 }) {
-  return showDialog<bool>(
+  return showAppDialog<bool>(
     context: context,
     builder: (BuildContext context) => AddFriendDialog(
       service: service,

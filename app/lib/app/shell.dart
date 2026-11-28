@@ -78,6 +78,7 @@ import 'core_session.dart';
 import 'theme.dart';
 import 'web_notice.dart';
 import 'web_notice_store.dart';
+import 'app_dialog.dart';
 
 /// A-06：把静默吞错改为可观测降级日志。
 /// 只在调试构建输出，不改变原有「降级而非中断」的控制流。
@@ -677,7 +678,7 @@ class _AppShellState extends State<AppShell> {
     }
     _remoteFileDialogOpen = true;
     try {
-      final bool? accepted = await showDialog<bool>(
+      final bool? accepted = await showAppDialog<bool>(
         context: context,
         builder: (BuildContext context) => AlertDialog(
           title: Text(context.t('接收文件')),

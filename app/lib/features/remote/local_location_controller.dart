@@ -12,6 +12,7 @@ import '../../l10n/l10n.dart';
 import '../settings/settings_service.dart';
 import 'device_distance.dart';
 import 'local_location_platform.dart';
+import '../../app/app_dialog.dart';
 
 const String kLocalLatitudeSettingKey = 'device.local_latitude';
 const String kLocalLongitudeSettingKey = 'device.local_longitude';
@@ -160,7 +161,7 @@ Future<bool> showLocalLocationDialog({
   required BuildContext context,
   required LocalLocationController controller,
 }) async {
-  final bool? confirmed = await showDialog<bool>(
+  final bool? confirmed = await showAppDialog<bool>(
     context: context,
     builder: (BuildContext context) => _LocalLocationDialog(controller: controller),
   );

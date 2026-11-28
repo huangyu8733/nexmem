@@ -9,6 +9,7 @@ import '../../transport/transport.dart';
 import 'contact.dart';
 import 'contact_service.dart';
 import 'device_list_page.dart';
+import '../../app/app_dialog.dart';
 
 /// 好友资料页（P2-06 / P6-30，ui-spec.md §4）：备注、分组、拉黑与发消息入口。
 ///
@@ -238,7 +239,7 @@ class _ContactDetailPageState extends State<ContactDetailPage> {
     if (service == null) {
       return;
     }
-    final bool? confirm = await showDialog<bool>(
+    final bool? confirm = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('删除好友')),

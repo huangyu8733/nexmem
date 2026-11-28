@@ -13,6 +13,7 @@ import 'profile_avatar.dart';
 import 'profile_image.dart';
 import 'scrolling_id_text.dart';
 import 'settings_service.dart';
+import '../../app/app_dialog.dart';
 
 /// 个人资料在本机 KV 表中的键（`settings.get` / `settings.set`）。
 ///
@@ -780,7 +781,7 @@ Future<void> showProfileEditorDialog({
   required CoreAccount? account,
   required SettingsService settings,
 }) {
-  return showDialog<void>(
+  return showAppDialog<void>(
     context: context,
     builder: (BuildContext context) {
       final ColorScheme scheme = Theme.of(context).colorScheme;

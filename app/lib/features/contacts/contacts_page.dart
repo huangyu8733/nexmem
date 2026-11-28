@@ -20,6 +20,7 @@ import 'contact_service.dart';
 import 'device_list_page.dart';
 import '../group/group_list_page.dart';
 import '../group/group_service.dart';
+import '../../app/app_dialog.dart';
 
 /// 通讯录（P1-18 / P2-06 / P4-13）：好友 / 群聊 / 我的设备分组。
 ///
@@ -547,7 +548,7 @@ class ContactsPageState extends State<ContactsPage> {
     if (service == null) {
       return;
     }
-    final bool? added = await showDialog<bool>(
+    final bool? added = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) =>
           AddFriendDialog(service: service, session: widget.session),

@@ -15,6 +15,7 @@ import '../settings/settings_pane.dart';
 import 'directory_picker.dart';
 import 'media_viewer.dart';
 import 'transfer_store.dart';
+import '../../app/app_dialog.dart';
 
 /// P2P 文件共享管理页：发布本地文件夹、导入分享码、下载并自动做种。
 ///
@@ -162,7 +163,7 @@ class _FileSharePageState extends State<FileSharePage> {
 
   Future<void> _showCode(String code, String name) async {
     if (!mounted) return;
-    await showDialog<void>(
+    await showAppDialog<void>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('分享码：{0}', <String>[name])),
@@ -193,7 +194,7 @@ class _FileSharePageState extends State<FileSharePage> {
     try {
       final FileShareDetail detail = await widget.session.getShare(share.shareId);
       if (!mounted) return;
-      await showDialog<void>(
+      await showAppDialog<void>(
         context: context,
         builder: (BuildContext context) => AlertDialog(
           title: Text(share.name.isEmpty ? context.t('共享详情') : share.name),
@@ -267,7 +268,7 @@ class _FileSharePageState extends State<FileSharePage> {
     final Uri? source = widget.mediaSourceUri == null
         ? null
         : widget.mediaSourceUri!(filePath);
-    await showDialog<void>(
+    await showAppDialog<void>(
       context: context,
       builder: (BuildContext context) => MediaViewerDialog(
         path: filePath,
@@ -372,7 +373,7 @@ class _FileSharePageState extends State<FileSharePage> {
   }
 
   Future<void> _remove(FileShare share) async {
-    final bool? confirm = await showDialog<bool>(
+    final bool? confirm = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('删除共享')),

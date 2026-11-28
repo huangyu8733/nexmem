@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../l10n/l10n.dart';
 import '../contacts/contact.dart';
 import '../contacts/contact_service.dart';
+import '../../app/app_dialog.dart';
 
 /// 单个待邀请条目；[nickname] 非空时邀请成功后写入本群称呼。
 class GroupInviteEntry {
@@ -88,7 +89,7 @@ Future<List<GroupInviteEntry>?> showGroupInviteDialog(
   required List<Contact> friends,
   required Set<String> existingHex,
 }) {
-  return showDialog<List<GroupInviteEntry>>(
+  return showAppDialog<List<GroupInviteEntry>>(
     context: context,
     builder: (BuildContext context) => _GroupInviteDialog(
       friends: friends,

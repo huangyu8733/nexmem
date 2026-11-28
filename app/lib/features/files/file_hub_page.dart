@@ -11,6 +11,7 @@ import '../../transport/transport.dart';
 import 'file_share_page.dart';
 import 'media_viewer.dart';
 import 'transfer_store.dart';
+import '../../app/app_dialog.dart';
 
 /// 「文件与传输」统一入口：共享 / 传输 / 下载三个页签。
 ///
@@ -122,7 +123,7 @@ class _TransferTab extends StatelessWidget {
   final TransferStore store;
 
   Future<void> _confirmRemove(BuildContext context, TransferTask task) async {
-    final bool? ok = await showDialog<bool>(
+    final bool? ok = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('确认删除记录')),
@@ -146,7 +147,7 @@ class _TransferTab extends StatelessWidget {
   }
 
   Future<void> _confirmClear(BuildContext context) async {
-    final bool? ok = await showDialog<bool>(
+    final bool? ok = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('确认清空记录')),
@@ -611,7 +612,7 @@ class _DownloadsTabState extends State<_DownloadsTab> {
     final Uri? source = widget.mediaSourceUri == null
         ? null
         : widget.mediaSourceUri!(path);
-    await showDialog<void>(
+    await showAppDialog<void>(
       context: context,
       builder: (BuildContext context) => MediaViewerDialog(
         path: path,

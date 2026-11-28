@@ -11,13 +11,14 @@ import '../../app/theme.dart'
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart' show NexmemException;
 import 'settings_service.dart';
+import '../../app/app_dialog.dart';
 
 /// 打开多设备设置同步弹窗。
 Future<void> showSettingsSyncDialog(
   BuildContext context,
   SettingsService settings,
 ) {
-  return showDialog<void>(
+  return showAppDialog<void>(
     context: context,
     builder: (BuildContext context) => SettingsSyncDialog(settings: settings),
   );

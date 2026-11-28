@@ -1,7 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/app_dialog.dart';
 import '../../app/pane_header.dart';
-import '../../app/theme.dart';
 
 /// 内容型面板的统一打开方式（社交中心、发现源、备份、举报、升级等）。
 ///
@@ -38,28 +38,10 @@ Future<T?> showPaneDialog<T>({
     );
   }
 
-  final DialogThemeData dialogTheme = rootTheme.dialogTheme;
-  return showDialog<T>(
+  return showAppDialog<T>(
     context: context,
     barrierDismissible: barrierDismissible,
-    builder: (BuildContext dialogContext) => Theme(
-      data: rootTheme.copyWith(
-        dialogTheme: dialogTheme.copyWith(
-          backgroundColor: rootTheme.colorScheme.surface,
-          surfaceTintColor: rootTheme.colorScheme.surface,
-          elevation: 8,
-          shadowColor: rootTheme.colorScheme.shadow,
-          insetPadding: const EdgeInsets.symmetric(
-            horizontal: NexmemMetrics.space24,
-            vertical: NexmemMetrics.space24,
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(NexmemMetrics.radiusListItem),
-          ),
-        ),
-      ),
-      child: builder(dialogContext),
-    ),
+    builder: builder,
   );
 }
 

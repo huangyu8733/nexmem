@@ -21,6 +21,7 @@ import 'chat_message.dart';
 import 'chat_store.dart';
 import 'local_image.dart';
 import 'voice_recorder.dart';
+import '../../app/app_dialog.dart';
 
 /// 文本正文上限：与内核契约 dm.sendText / dm.sendGroupText / msg.edit 的
 /// `text.maxLength = 4096` 保持一致，UI 层提前拦截，避免发送后才失败。
@@ -465,7 +466,7 @@ class ChatPage extends StatelessWidget {
       if (effective != null) {
         return await effective();
       }
-      return await showDialog<ChatAttachment>(
+      return await showAppDialog<ChatAttachment>(
         context: context,
         builder: (BuildContext context) => FileSendDialog(title: title),
       );
@@ -875,7 +876,7 @@ class _ChatHeader extends StatelessWidget {
   Future<void> _openReport(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final String submittedText = context.t('举报已提交，感谢反馈');
-    final bool? submitted = await showDialog<bool>(
+    final bool? submitted = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => ReportDialog(
         conversationId: conversation.id,
@@ -892,7 +893,7 @@ class _ChatHeader extends StatelessWidget {
   Future<void> _openClear(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final String cleared = context.t('聊天记录已清空');
-    final bool? confirmed = await showDialog<bool>(
+    final bool? confirmed = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('清空聊天记录')),
@@ -934,7 +935,7 @@ class _ChatHeader extends StatelessWidget {
     final TextEditingController controller = TextEditingController(
       text: remark,
     );
-    final String? next = await showDialog<String>(
+    final String? next = await showAppDialog<String>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('设置备注')),
@@ -1789,7 +1790,7 @@ class MessageBubble extends StatelessWidget {
     final TextEditingController controller = TextEditingController(
       text: message.text,
     );
-    final String? revised = await showDialog<String>(
+    final String? revised = await showAppDialog<String>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('编辑消息')),
@@ -1846,7 +1847,7 @@ class MessageBubble extends StatelessWidget {
   Future<void> _confirmRecall(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final String recalled = context.t('已撤回');
-    final bool? confirmed = await showDialog<bool>(
+    final bool? confirmed = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('撤回消息')),
@@ -1886,7 +1887,7 @@ class MessageBubble extends StatelessWidget {
   Future<void> _confirmDelete(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final String deleted = context.t('已删除');
-    final bool? confirmed = await showDialog<bool>(
+    final bool? confirmed = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('删除消息')),
@@ -2131,7 +2132,7 @@ class _FileBubbleContent extends StatelessWidget {
         ? null
         : mediaSourceUri!(file.path);
     if (source != null) {
-      await showDialog<void>(
+      await showAppDialog<void>(
         context: context,
         builder: (BuildContext _) => MediaViewerDialog(
           path: file.path,
@@ -2161,7 +2162,7 @@ class _FileBubbleContent extends StatelessWidget {
       }
       return;
     }
-    await showDialog<void>(
+    await showAppDialog<void>(
       context: context,
       builder: (BuildContext _) =>
           MediaViewerDialog(path: file.path, mime: file.mime, title: file.name),

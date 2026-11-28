@@ -9,6 +9,7 @@ import 'profile_image.dart';
 import 'profile_panel.dart';
 import 'scrolling_id_text.dart';
 import 'settings_service.dart';
+import '../../app/app_dialog.dart';
 
 /// 只读资料展示数据：本机资料与联系人公开档案都映射到这里，共用同一套展示样式。
 ///
@@ -306,7 +307,7 @@ Future<void> showProfileViewDialog({
   required CoreAccount? account,
   required SettingsService settings,
 }) {
-  return showDialog<void>(
+  return showAppDialog<void>(
     context: context,
     builder: (BuildContext context) {
       return Dialog.fullscreen(

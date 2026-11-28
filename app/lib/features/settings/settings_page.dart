@@ -33,6 +33,7 @@ import 'scrolling_id_text.dart';
 import 'settings_service.dart';
 import 'settings_sync.dart';
 import 'storage_config.dart';
+import '../../app/app_dialog.dart';
 
 /// 客户端版本号，与 pubspec.yaml 的 `version` 保持一致。
 const String appVersion = '1.1.0';
@@ -399,7 +400,7 @@ class SettingsPage extends StatelessWidget {
       return;
     }
     if (label == '账号与安全') {
-      showDialog<void>(
+      showAppDialog<void>(
         context: context,
         builder: (BuildContext context) =>
             AccountSecurityDialog(backup: backup),
@@ -437,7 +438,7 @@ class SettingsPage extends StatelessWidget {
       return;
     }
     if (label == '多设备同步') {
-      showDialog<void>(
+      showAppDialog<void>(
         context: context,
         builder: (BuildContext context) =>
             SettingsSyncDialog(settings: settings),
@@ -445,7 +446,7 @@ class SettingsPage extends StatelessWidget {
       return;
     }
     if (label == '远程控制') {
-      showDialog<void>(
+      showAppDialog<void>(
         context: context,
         builder: (BuildContext context) => const RemoteSettingsPage(),
       );
@@ -459,7 +460,7 @@ class SettingsPage extends StatelessWidget {
       return;
     }
     if (label == '网络') {
-      showDialog<void>(
+      showAppDialog<void>(
         context: context,
         builder: (BuildContext context) => _NetworkDiagnosticsDialog(
           diagnostics: diagnostics,
@@ -470,7 +471,7 @@ class SettingsPage extends StatelessWidget {
       return;
     }
     if (label == '离线存储') {
-      showDialog<void>(
+      showAppDialog<void>(
         context: context,
         builder: (BuildContext context) =>
             StorageConfigDialog(service: storage),
@@ -478,7 +479,7 @@ class SettingsPage extends StatelessWidget {
       return;
     }
     if (label == '外观') {
-      showDialog<void>(
+      showAppDialog<void>(
         context: context,
         builder: (BuildContext context) =>
             AppearanceDialog(mode: themeMode, onChanged: onThemeModeChanged),
@@ -486,14 +487,14 @@ class SettingsPage extends StatelessWidget {
       return;
     }
     if (label == '语言') {
-      showDialog<void>(
+      showAppDialog<void>(
         context: context,
         builder: (BuildContext context) => const LanguageDialog(),
       );
       return;
     }
     if (label == '关于') {
-      showDialog<void>(
+      showAppDialog<void>(
         context: context,
         builder: (BuildContext context) => _AboutDialog(
           diagnostics: diagnostics,

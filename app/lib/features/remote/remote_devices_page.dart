@@ -19,6 +19,7 @@ import 'remote_geo_controller.dart';
 import 'remote_password.dart';
 import 'remote_group_controller.dart';
 import 'remote_session.dart';
+import '../../app/app_dialog.dart';
 
 /// 由壳层提供的实时远控会话能力。
 ///
@@ -165,7 +166,7 @@ class _RemoteDevicesPageState extends State<RemoteDevicesPage> {
   }
 
   Future<void> _showEditor({RemoteDevice? device}) async {
-    final String? result = await showDialog<String>(
+    final String? result = await showAppDialog<String>(
       context: context,
       builder: (BuildContext context) => _DeviceEditorDialog(device: device),
     );
@@ -220,7 +221,7 @@ class _RemoteDevicesPageState extends State<RemoteDevicesPage> {
   }
 
   Future<void> _remove(RemoteDevice device) async {
-    final bool? confirm = await showDialog<bool>(
+    final bool? confirm = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('删除设备')),
@@ -953,7 +954,7 @@ class _DeviceDiscoverySheetState extends State<DeviceDiscoverySheet> {
       await geo?.setEnabled(false);
       return;
     }
-    final bool? confirmed = await showDialog<bool>(
+    final bool? confirmed = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('启用自动归属地')),

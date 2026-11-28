@@ -16,6 +16,7 @@ import '../../app/pane_header.dart';
 import '../../l10n/l10n.dart';
 import '../settings/settings_service.dart';
 import 'remote_device_directory.dart';
+import '../../app/app_dialog.dart';
 
 /// 腾讯地图 JavaScript GL Key 的本机设置键。Key 只保存在本机 KV，不随代码分发。
 const String deviceMapTencentKeySetting = 'device.map_tencent_key';
@@ -97,7 +98,7 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
   Future<void> _editKey() async {
     final TextEditingController input =
         TextEditingController(text: _key ?? '');
-    final bool? saved = await showDialog<bool>(
+    final bool? saved = await showAppDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: Text(context.t('设置腾讯地图 Key')),
