@@ -68,6 +68,7 @@ import '../features/social/social_hub_page.dart';
 import '../features/social/social_service.dart';
 import '../l10n/l10n.dart';
 import '../transport/transport.dart';
+import 'app_overlay.dart';
 import 'app_toast.dart';
 import 'call_notice_bar.dart';
 import 'message_notification_sound.dart';
@@ -91,6 +92,7 @@ void _logDegradation(String where, Object error, [StackTrace? stack]) {
 class AppShell extends StatefulWidget {
   const AppShell({
     super.key,
+    required this.overlay,
     this.session,
     this.search,
     this.readMarker,
@@ -98,6 +100,9 @@ class AppShell extends StatefulWidget {
     this.onThemeModeChanged,
     this.accountManager,
   });
+
+  /// 根导航浮层控制器：通知条 / 通话页 / 远控页 / toast 都经它提升。
+  final AppOverlayController overlay;
 
   /// 内核会话；为空时保持离线占位（Widget 测试与未配置部署）。
   final CoreSession? session;
@@ -391,7 +396,9 @@ class _AppShellState extends State<AppShell> {
   /// 对端显示名：会话 id 是 `dm:<peer>`，同时兼容按 `item.peer` 匹配。
   String _conversationTitleForPeer(String peer) {
     final String? id = _conversationIdForPeer(peer);
-    final String title = id == null ? '' : (_conversations.byId(id)?.title ?? '');
+    final String title = id == null
+        ? ''
+        : (_conversations.byId(id)?.title ?? '');
     return title;
   }
 
@@ -448,10 +455,9 @@ class _AppShellState extends State<AppShell> {
     if (info.startedAt != null && elapsed.inSeconds >= 1) {
       final String mm = elapsed.inMinutes.toString().padLeft(2, '0');
       final String ss = (elapsed.inSeconds % 60).toString().padLeft(2, '0');
-      return context.t(
-        '通话时长 {0}',
-        [_callIsCaller ? '$kind $mm:$ss' : '$mm:$ss'],
-      );
+      return context.t('通话时长 {0}', [
+        _callIsCaller ? '$kind $mm:$ss' : '$mm:$ss',
+      ]);
     }
     if (_callIsCaller) {
       return switch (info.endReason) {
@@ -466,8 +472,9 @@ class _AppShellState extends State<AppShell> {
     return switch (info.endReason) {
       CallEndReason.rejected => context.t('已拒绝来电'),
       CallEndReason.canceled => context.t('主叫已取消'),
-      CallEndReason.failed || CallEndReason.hangup || CallEndReason.noAnswer =>
-        context.t('未接来电（{0}）', [kind]),
+      CallEndReason.failed ||
+      CallEndReason.hangup ||
+      CallEndReason.noAnswer => context.t('未接来电（{0}）', [kind]),
       CallEndReason.none => null,
     };
   }
@@ -512,8 +519,9 @@ class _AppShellState extends State<AppShell> {
   RemoteGroupController? _remoteGroup;
 
   /// 「远程设备」台账：本机保存的设备、分类与备注。
-  late final RemoteDeviceDirectory _remoteDevices =
-      RemoteDeviceDirectory(createRemoteStorage());
+  late final RemoteDeviceDirectory _remoteDevices = RemoteDeviceDirectory(
+    createRemoteStorage(),
+  );
 
   /// 默认关闭的自动归属地：库下载与查询都在本机完成。
   late final IpLocationService _ipLocation;
@@ -750,16 +758,13 @@ class _AppShellState extends State<AppShell> {
     setState(() => _activeRemotePeer = peer);
     _remoteStarting = true;
     unawaited(
-      remote.request(
-        peer,
-        peerName: name,
-        credential: credential,
-        silent: silent,
-      ).whenComplete(() {
-        if (mounted) {
-          setState(() => _remoteStarting = false);
-        }
-      }),
+      remote
+          .request(peer, peerName: name, credential: credential, silent: silent)
+          .whenComplete(() {
+            if (mounted) {
+              setState(() => _remoteStarting = false);
+            }
+          }),
     );
   }
 
@@ -881,10 +886,13 @@ class _AppShellState extends State<AppShell> {
     super.initState();
     _webNoticeOpen = kIsWeb && !_webNotice.seen;
     unawaited(_remoteDevices.load());
-    final ({IpLocationDownloader download, IpLocationBundledReader readBundled,
+    final ({
+      IpLocationDownloader download,
+      IpLocationBundledReader readBundled,
       Future<Uint8List?> Function() readCache,
-      Future<void> Function(Uint8List bytes) writeCache}) loader =
-      ip_loader.makeIpLocationLoader();
+      Future<void> Function(Uint8List bytes) writeCache,
+    })
+    loader = ip_loader.makeIpLocationLoader();
     _ipLocation = IpLocationService(
       downloader: loader.download,
       readBundled: loader.readBundled,
@@ -902,9 +910,7 @@ class _AppShellState extends State<AppShell> {
     );
     unawaited(_localLocation.load());
     _push = PushController(
-      platform: makePushPlatform(
-        settings: widget.session?.settings,
-      ),
+      platform: makePushPlatform(settings: widget.session?.settings),
       settings: widget.session?.settings ?? const UnavailableSettingsService(),
       pushService: widget.session?.push,
       onOpenConversation: _openNotificationTarget,
@@ -931,13 +937,15 @@ class _AppShellState extends State<AppShell> {
       _showMessage(context.t('会话不存在或已被删除'));
       return;
     }
-    final bool desktop = !Navigator.of(context).mounted ||
+    final bool desktop =
+        !Navigator.of(context).mounted ||
         MediaQuery.sizeOf(context).width >= 720;
     _open(item, desktop);
   }
 
   @override
   void dispose() {
+    widget.overlay.release(this);
     _push.dispose();
     _remoteGeo.dispose();
     _localLocation.dispose();
@@ -1011,9 +1019,7 @@ class _AppShellState extends State<AppShell> {
           return;
         } on NexmemException catch (error) {
           if (error.code == 'UNAUTHORIZED' && mounted) {
-            _showMessage(
-              context.t('访问令牌无效或已轮换，请重新进入并填写 token'),
-            );
+            _showMessage(context.t('访问令牌无效或已轮换，请重新进入并填写 token'));
           }
           if (!error.retryable || attempt == 2) {
             break;
@@ -1090,9 +1096,7 @@ class _AppShellState extends State<AppShell> {
         final String nickname = contact.name.trim();
         final String displayName = remark.isNotEmpty
             ? remark
-            : (nickname.isNotEmpty
-                ? nickname
-                : shortAccountLabel(peer));
+            : (nickname.isNotEmpty ? nickname : shortAccountLabel(peer));
         next[peer] = (displayName: displayName, remark: remark);
       }
       _peerDisplay
@@ -1449,6 +1453,27 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  /// 入站消息的类型标签；内核事件通常只给指针，未知类型统一显示「新消息」。
+  String _incomingMessageKind(Map<String, dynamic> data) {
+    final Object? hint =
+        data['kind'] ?? data['msg_type'] ?? data['message_type'];
+    if (hint is String) {
+      switch (hint.toLowerCase()) {
+        case 'voice':
+        case 'audio':
+          return context.t('语音');
+        case 'video':
+          return context.t('视频');
+        case 'image':
+        case 'picture':
+          return context.t('图片');
+        case 'file':
+          return context.t('文件');
+      }
+    }
+    return context.t('新消息');
+  }
+
   /// 新消息：刷新会话摘要；已打开的会话按 seq 增量补齐（P6-31）。
   Future<void> _onMessageNew(Map<String, dynamic> data) async {
     // 入站消息（文本/语音/图片/文件）统一响一声 QQ 风格提示音；
@@ -1460,13 +1485,26 @@ class _AppShellState extends State<AppShell> {
     if (data['direction'] == 'in' && id is String && id.isNotEmpty) {
       // 事件只有指针没有正文：通知不泄漏消息内容，点击后再拉取密文。
       final ConversationItem? target = _conversations.byId(id);
-      unawaited(_push.onIncomingMessage(
-        conversationId: id,
-        title: target == null
-            ? context.t('新消息')
-            : _peerDisplayFor(target)?.displayName ?? target.title,
-        body: context.t('你有一条新消息，点击查看详情'),
-      ));
+      final String title = target == null
+          ? context.t('新消息')
+          : _peerDisplayFor(target)?.displayName ?? target.title;
+      // 应用内提示走根浮层，聊天页里也能看到；当前正在看的会话不重复弹。
+      // 事件只给指针不泄漏正文，点击「查看」再跳转并解密。
+      if (target != null && id != _push.activeConversationId) {
+        _toasts.show(
+          '$title · ${_incomingMessageKind(data)}',
+          speak: false,
+          actionLabel: context.t('查看详情'),
+          onAction: () => _openNotificationTarget(id),
+        );
+      }
+      unawaited(
+        _push.onIncomingMessage(
+          conversationId: id,
+          title: title,
+          body: context.t('你有一条新消息，点击查看详情'),
+        ),
+      );
     }
     final CoreSession? session = widget.session;
     if (id is! String || id.isEmpty || session == null) {
@@ -1838,8 +1876,9 @@ class _AppShellState extends State<AppShell> {
     // 异步前取本地化器，避免在 await 之后使用 BuildContext。
     final l10n = context.l10n;
     try {
-      final String target =
-          await session.groupFileDownloadPath(attachment.name);
+      final String target = await session.groupFileDownloadPath(
+        attachment.name,
+      );
       final GroupFileDownload result = await session.downloadGroupFile(
         conversationId: conversation.id,
         attachment: attachment,
@@ -2183,13 +2222,12 @@ class _AppShellState extends State<AppShell> {
       onSendMessage: (Contact contact) => _openContact(contact, desktop),
       onOpenContactChat: (Contact contact) =>
           _openContact(contact, desktop, inlineInContacts: true),
-      onOpenGroup: (String groupId, String title) =>
-          _createGroupConversation(
-            groupId,
-            title,
-            desktop,
-            inlineInContacts: true,
-          ),
+      onOpenGroup: (String groupId, String title) => _createGroupConversation(
+        groupId,
+        title,
+        desktop,
+        inlineInContacts: true,
+      ),
       onOpenPane: _openContactsPane,
       onToggleFriends: () {
         // 点「好友」展开左栏分组：若右栏不是聊天/资料，则回到好友面板；
@@ -2316,75 +2354,45 @@ class _AppShellState extends State<AppShell> {
                 constraints.maxWidth >= NexmemMetrics.desktopBreakpoint;
             _desktopLayout = desktop;
             _wideLayout = constraints.maxWidth >= 1080;
+            _registerOverlays(desktop: desktop);
             return CallbackShortcuts(
               bindings: _shortcuts,
               child: Focus(
                 autofocus: true,
-                child: Stack(
-                  children: <Widget>[
-                    Scaffold(
-                      body: SafeArea(
-                        child: Column(
-                          children: <Widget>[
-                            ConnectionStatusBar(status: status),
-                            if (_callInfo != null)
-                              CallNoticeBar(
-                                info: _callInfo!,
-                                peerName: _callDisplayName(),
-                                ringing: !_callPageOpen,
-                                onOpen: _openCallPage,
-                                onReject: _callInfo!.state == CallState.incoming
-                                    ? () => unawaited(_call?.reject())
-                                    : null,
-                              ),
-                            if (_remoteHostInfo != null &&
-                                _remoteHostInfo!.isHost &&
-                                !_remoteHostInfo!.isIncoming &&
-                                !_remoteHostInfo!.isTerminal)
-                              RemoteHostBanner(
-                                info: _remoteHostInfo!,
-                                onPause: () => unawaited(_remoteHost?.pause()),
-                                onResume: () =>
-                                    unawaited(_remoteHost?.resume()),
-                                onStop: () => unawaited(_remoteHost?.end()),
-                              ),
-                            Expanded(
-                              child: desktop ? _buildDesktop() : _buildMobile(),
-                            ),
-                          ],
-                        ),
-                      ),
-                      bottomNavigationBar: desktop ? null : _buildBottomTabs(),
-                    ),
-                    if (_callInfo != null && _callPageOpen)
-                      _buildCallOverlay(),
-                    if ((_remoteHostInfo?.isIncoming ?? false) ||
-                        (_activeRemotePeer != null &&
-                            _remotePeerInfos[_activeRemotePeer] != null))
-                      _buildRemoteOverlay(),
-                    if (_webNoticeOpen)
-                      Positioned(
-                        top: 36,
-                        right: NexmemMetrics.space12,
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 420),
-                          child: Material(
-                            elevation: 3,
-                            borderRadius: BorderRadius.circular(12),
-                            clipBehavior: Clip.antiAlias,
-                            child: WebOnlineNoticeBanner(
-                              onDismiss: _dismissWebNotice,
-                            ),
+                child: Scaffold(
+                  body: SafeArea(
+                    child: Column(
+                      children: <Widget>[
+                        ConnectionStatusBar(status: status),
+                        // 桌面仍是布局内通知条；移动端由根浮层绘制，
+                        // 这样 push 出的聊天页也能看到来电。
+                        if (desktop && _callInfo != null)
+                          CallNoticeBar(
+                            info: _callInfo!,
+                            peerName: _callDisplayName(),
+                            ringing: !_callPageOpen,
+                            onOpen: _openCallPage,
+                            onReject: _callInfo!.state == CallState.incoming
+                                ? () => unawaited(_call?.reject())
+                                : null,
                           ),
+                        if (_remoteHostInfo != null &&
+                            _remoteHostInfo!.isHost &&
+                            !_remoteHostInfo!.isIncoming &&
+                            !_remoteHostInfo!.isTerminal)
+                          RemoteHostBanner(
+                            info: _remoteHostInfo!,
+                            onPause: () => unawaited(_remoteHost?.pause()),
+                            onResume: () => unawaited(_remoteHost?.resume()),
+                            onStop: () => unawaited(_remoteHost?.end()),
+                          ),
+                        Expanded(
+                          child: desktop ? _buildDesktop() : _buildMobile(),
                         ),
-                      ),
-                    AppToastOverlay(
-                      controller: _toasts,
-                      top: _webNoticeOpen
-                          ? 96
-                          : (_callInfo != null ? 80 : 36),
+                      ],
                     ),
-                  ],
+                  ),
+                  bottomNavigationBar: desktop ? null : _buildBottomTabs(),
                 ),
               ),
             );
@@ -2392,6 +2400,63 @@ class _AppShellState extends State<AppShell> {
         );
       },
     );
+  }
+
+  /// 登记壳层浮层到根导航之上。
+  ///
+  /// 移动端聊天页是 `Navigator.push` 出来的独立路由，若浮层留在壳层 Stack
+  /// 里会被整页盖住：来电条看不到、点语音/视频也没法展示通话页。
+  void _registerOverlays({required bool desktop}) {
+    final List<WidgetBuilder> layers = <WidgetBuilder>[
+      if (!desktop && _callInfo != null)
+        (BuildContext context) => Positioned(
+          top: MediaQuery.paddingOf(context).top + 26,
+          left: 0,
+          right: 0,
+          child: CallNoticeBar(
+            info: _callInfo!,
+            peerName: _callDisplayName(),
+            ringing: !_callPageOpen,
+            onOpen: _openCallPage,
+            onReject: _callInfo!.state == CallState.incoming
+                ? () => unawaited(_call?.reject())
+                : null,
+          ),
+        ),
+      if (_callInfo != null && _callPageOpen)
+        (BuildContext context) => _buildCallOverlay(),
+      if ((_remoteHostInfo?.isIncoming ?? false) ||
+          (_activeRemotePeer != null &&
+              _remotePeerInfos[_activeRemotePeer] != null))
+        (BuildContext context) => _buildRemoteOverlay(),
+      if (_webNoticeOpen)
+        (BuildContext context) => Positioned(
+          top: MediaQuery.paddingOf(context).top + 36,
+          right: NexmemMetrics.space12,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Material(
+              elevation: 3,
+              borderRadius: BorderRadius.circular(12),
+              clipBehavior: Clip.antiAlias,
+              child: WebOnlineNoticeBanner(onDismiss: _dismissWebNotice),
+            ),
+          ),
+        ),
+      (BuildContext context) => AppToastOverlay(
+        controller: _toasts,
+        top:
+            MediaQuery.paddingOf(context).top +
+            (_webNoticeOpen ? 96 : (_callInfo != null ? 80 : 36)),
+      ),
+    ];
+    // 通知监听器在浮层宿主里；build 中直接 notify 会触发
+    // 「setState()/markNeedsBuild() called during build」，统一延到帧后。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        widget.overlay.setLayers(this, layers);
+      }
+    });
   }
 
   /// 点击状态栏下方的通话通知条：展开全屏通话页。
@@ -2573,8 +2638,9 @@ class _AppShellState extends State<AppShell> {
   }) {
     final bool showProfile = _profileVisibleFor(current, allowProfile);
     final MentionInsertController mention = _mentionControllerFor(current);
-    final ({String displayName, String remark})? peerDisplay =
-        _peerDisplayFor(current);
+    final ({String displayName, String remark})? peerDisplay = _peerDisplayFor(
+      current,
+    );
     final Widget chat = ChatPage(
       conversation: current,
       store: _chatFor(current),
@@ -2599,14 +2665,14 @@ class _AppShellState extends State<AppShell> {
       onDownloadGroupFile: widget.session == null
           ? null
           : (ConversationItem conversation, ChatMessage message) =>
-              _downloadGroupFile(conversation, message),
+                _downloadGroupFile(conversation, message),
       onSaveFile: widget.session == null
           ? null
           : (ChatMessage message) => _saveChatAttachment(current, message),
       onReadFileBytes: widget.session?.readChatFileBytes == null
           ? null
           : (ChatMessage message) =>
-              widget.session!.readChatFileBytes!(message.attachment!.path),
+                widget.session!.readChatFileBytes!(message.attachment!.path),
       onDeleteMessage: widget.session == null
           ? null
           : (String msgUuid) =>
@@ -2867,7 +2933,8 @@ class _AppShellState extends State<AppShell> {
       unawaited(_confirmExit());
       return;
     }
-    final int section = label == '个人资料' ||
+    final int section =
+        label == '个人资料' ||
             label == '远程设备' ||
             label == '账号发现' ||
             label == '设备地图' ||
@@ -2915,7 +2982,8 @@ class _AppShellState extends State<AppShell> {
             builder: (BuildContext context) => DeviceMapPage(
               devices: _remoteDevices.devices,
               settings:
-                  widget.session?.settings ?? const UnavailableSettingsService(),
+                  widget.session?.settings ??
+                  const UnavailableSettingsService(),
               embedded: false,
             ),
           ),
@@ -3002,14 +3070,14 @@ class _AppShellState extends State<AppShell> {
       embedded: embedded,
       discover: session == null
           ? ({required int limit, required int offset}) async =>
-              DeviceDiscoverPage(
-                items: const <DiscoveredDevice>[],
-                total: 0,
-                offset: offset,
-                limit: limit,
-              )
+                DeviceDiscoverPage(
+                  items: const <DiscoveredDevice>[],
+                  total: 0,
+                  offset: offset,
+                  limit: limit,
+                )
           : ({required int limit, required int offset}) =>
-              session.discoverDevices(limit: limit, offset: offset),
+                session.discoverDevices(limit: limit, offset: offset),
       geo: _remoteGeo,
       localLocation: _localLocation,
       onOpenMap: () => _openSettingsPane('设备地图', desktop),
@@ -3018,11 +3086,13 @@ class _AppShellState extends State<AppShell> {
         if (current == null || device.accountId.isEmpty) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(context.t(
-                current == null
-                    ? '内核尚未启动，社交功能暂不可用'
-                    : '该账号暂无可用的公钥标识',
-              ))),
+              SnackBar(
+                content: Text(
+                  context.t(
+                    current == null ? '内核尚未启动，社交功能暂不可用' : '该账号暂无可用的公钥标识',
+                  ),
+                ),
+              ),
             );
           }
           return false;
@@ -3075,7 +3145,10 @@ class _AppShellState extends State<AppShell> {
       if (session == null) {
         return Center(child: Text(context.t('内核尚未启动，社交功能暂不可用')));
       }
-      return SocialHubPage(key: const ValueKey<String>('social-hub-pane'), session: session);
+      return SocialHubPage(
+        key: const ValueKey<String>('social-hub-pane'),
+        session: session,
+      );
     }
     if (_settingsPane == '账号与安全') {
       return _buildEmbeddedPane(_settingsPane!, withHeader: true);
@@ -3128,7 +3201,10 @@ class _AppShellState extends State<AppShell> {
       if (session == null) {
         return Center(child: Text(context.t('内核尚未启动，社交功能暂不可用')));
       }
-      return SocialHubPage(key: const ValueKey<String>('social-hub-pane'), session: session);
+      return SocialHubPage(
+        key: const ValueKey<String>('social-hub-pane'),
+        session: session,
+      );
     }
     return _buildEmbeddedPane(label, withHeader: false);
   }

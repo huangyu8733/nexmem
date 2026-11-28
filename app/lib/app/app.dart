@@ -8,6 +8,7 @@ import '../features/account/account_manager_page.dart';
 import '../features/account/lock_screen.dart';
 import '../features/settings/settings_service.dart';
 import '../l10n/l10n.dart';
+import 'app_overlay.dart';
 import 'core_session.dart';
 import 'shell.dart';
 import 'startup_gate.dart';
@@ -51,6 +52,10 @@ class NexmemApp extends StatefulWidget {
 }
 
 class _NexmemAppState extends State<NexmemApp> {
+  /// 根浮层：通知、通话、远控与 toast 都挂在 Navigator 之上，
+  /// 避免移动端 push 出的聊天页把提示盖住。
+  final AppOverlayController _overlay = AppOverlayController();
+
   /// 外观主题（ui-spec.md §5）：默认跟随系统，成功后经 `settings.set` 落盘。
   ThemeMode _themeMode = ThemeMode.system;
 
@@ -85,6 +90,7 @@ class _NexmemAppState extends State<NexmemApp> {
     _account.removeListener(_onAccountChanged);
     _account.dispose();
     _locale.dispose();
+    _overlay.dispose();
     super.dispose();
   }
 
@@ -165,9 +171,7 @@ class _NexmemAppState extends State<NexmemApp> {
     if (_account.activeId == null) {
       return AccountGate(
         manager: _account,
-        message: _account.locked
-            ? context.t('锁屏已清除，请重新选择账号')
-            : '',
+        message: _account.locked ? context.t('锁屏已清除，请重新选择账号') : '',
       );
     }
     // 有内核会话时，先探测内核与关键服务就绪，再进入主界面。
@@ -190,6 +194,7 @@ class _NexmemAppState extends State<NexmemApp> {
     return AppShell(
       // 账号切换/解锁后强制重建，清除旧账号的会话、草稿与远控状态。
       key: ValueKey<String>('app-shell-${_account.generation}'),
+      overlay: _overlay,
       session: widget.session,
       accountManager: _account,
       themeMode: _themeMode,
@@ -205,7 +210,8 @@ class _NexmemAppState extends State<NexmemApp> {
         animation: _locale,
         builder: (BuildContext context, Widget? child) {
           final Locale titleLocale =
-              _locale.locale ?? WidgetsBinding.instance.platformDispatcher.locale;
+              _locale.locale ??
+              WidgetsBinding.instance.platformDispatcher.locale;
           return MaterialApp(
             title: appDisplayName(titleLocale),
             debugShowCheckedModeBanner: false,
@@ -218,6 +224,16 @@ class _NexmemAppState extends State<NexmemApp> {
             theme: NexmemTheme.light(),
             darkTheme: NexmemTheme.dark(),
             themeMode: _themeMode,
+            // 浮层与 Navigator 同级且绘制在其上：聊天页 push 后仍可见。
+            builder: (BuildContext context, Widget? child) {
+              return Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  if (child != null) Positioned.fill(child: child),
+                  Positioned.fill(child: AppOverlayHost(controller: _overlay)),
+                ],
+              );
+            },
             home: Listener(
               onPointerDown: (_) => _account.recordActivity(),
               child: _buildHome(),
