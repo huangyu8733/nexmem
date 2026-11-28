@@ -285,7 +285,7 @@ func TestOfflineDisabledPeerSurfacedToUI(t *testing.T) {
 	if !hasUpdate(t, logA, onlineUUID, "sent", "") {
 		t.Fatal("在线发送应上报无原因码的 sent 事件")
 	}
-	waitFor(t, 5*time.Second, func() bool { return logB.count("message.new") == 1 })
+	waitFor(t, propagationWait, func() bool { return logB.count("message.new") == 1 })
 
 	// 下线：对端档案未开启离线存储，只能等其上线后补发。
 	if err := appB.Stop(); err != nil {

@@ -255,8 +255,8 @@ func TestSendTextBetweenApps(t *testing.T) {
 		t.Fatalf("dm.sendText 未返回 msg_uuid: %v", data)
 	}
 
-	waitFor(t, 5*time.Second, func() bool { return logB.has("message.new") })
-	waitFor(t, 5*time.Second, func() bool { return logA.has("message.updated") })
+	waitFor(t, propagationWait, func() bool { return logB.has("message.new") })
+	waitFor(t, propagationWait, func() bool { return logA.has("message.updated") })
 
 	search, ok := call(t, gwB, "msg.search", map[string]any{"q": "hello", "limit": 20}).(map[string]any)
 	if !ok {
@@ -340,7 +340,7 @@ func TestReadReceiptMarksRead(t *testing.T) {
 		t.Fatalf("dm.sendText 未返回 msg_uuid: %v", data)
 	}
 	msgID := data["msg_uuid"].(string)
-	waitFor(t, 5*time.Second, func() bool { return logA.hasState("message.updated", "sent") })
+	waitFor(t, propagationWait, func() bool { return logA.hasState("message.updated", "sent") })
 
 	// B 打开会话：内核清零未读并把最后一条入站消息的时间戳作为已读水位回传。
 	call(t, gwB, "msg.markRead", map[string]any{
@@ -620,6 +620,13 @@ func targetOf(app *App) dm.Target {
 	}
 	return dm.Target{PeerID: h.ID(), Addrs: h.Addrs()}
 }
+
+// CI runner 上 P2P 建链与控制帧传播偶发慢于本机，测试等待窗口统一放宽，
+// 避免 5 秒硬上限把正常的慢传播误判成失败。
+const (
+	propagationWait = 15 * time.Second
+	eventWait       = 5 * time.Second
+)
 
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Helper()

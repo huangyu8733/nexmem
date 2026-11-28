@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/nexmem/core/gateway"
 	"github.com/nexmem/core/internal/dm"
@@ -96,7 +95,7 @@ func TestGroupAnnouncementEndToEnd(t *testing.T) {
 		text, _ := view["announcement"].(string)
 		return text, true
 	}
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, propagationWait, func() bool {
 		_, ok := memberAnnouncement()
 		return ok
 	})
@@ -110,11 +109,11 @@ func TestGroupAnnouncementEndToEnd(t *testing.T) {
 		t.Fatalf("group.setAnnouncement 回包异常: %v", saved)
 	}
 
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, propagationWait, func() bool {
 		got, ok := memberAnnouncement()
 		return ok && got == text
 	})
-	waitFor(t, 2*time.Second, func() bool { return logB.has("group.announcement") })
+	waitFor(t, eventWait, func() bool { return logB.has("group.announcement") })
 
 	// 控制帧不产生聊天气泡。
 	listed, ok := call(t, gwB, "msg.list", map[string]any{

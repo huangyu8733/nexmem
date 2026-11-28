@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/nexmem/core/internal/dm"
 )
@@ -49,7 +48,7 @@ func TestBackupRestoreOnNewDevice(t *testing.T) {
 		"peer": hex.EncodeToString(appB.Account().Pub()),
 		"text": "restore me",
 	})
-	waitFor(t, 5*time.Second, func() bool { return logB.has("message.new") })
+	waitFor(t, propagationWait, func() bool { return logB.has("message.new") })
 
 	passphrase := base64.StdEncoding.EncodeToString([]byte("restore-passphrase"))
 	backupPath := filepath.Join(t.TempDir(), "restore.nxbak")

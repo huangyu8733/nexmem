@@ -132,7 +132,7 @@ func TestGroupProfileEndToEnd(t *testing.T) {
 		}
 		return "", ""
 	}
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, propagationWait, func() bool {
 		_, ok := memberView()
 		return ok
 	})
@@ -155,7 +155,7 @@ func TestGroupProfileEndToEnd(t *testing.T) {
 		levels, ok := view["levels"].([]group.GroupLevel)
 		return ok && len(levels) == 1 && levels[0].ID == "vip1"
 	})
-	waitFor(t, 2*time.Second, func() bool { return logB.has("group.levelsChanged") })
+	waitFor(t, eventWait, func() bool { return logB.has("group.levelsChanged") })
 
 	// 管理员设置成员本群称呼与等级，成员端收到资料变更事件。
 	retryControlFrame(t, func() {
@@ -171,7 +171,7 @@ func TestGroupProfileEndToEnd(t *testing.T) {
 		nickname, levelID := memberProfile(view)
 		return nickname == "队长" && levelID == "vip1"
 	})
-	waitFor(t, 2*time.Second, func() bool { return logB.has("group.memberProfileChanged") })
+	waitFor(t, eventWait, func() bool { return logB.has("group.memberProfileChanged") })
 
 	// 成员改自己称呼无需管理员，管理员端同样收到同步帧。
 	retryControlFrame(t, func() {

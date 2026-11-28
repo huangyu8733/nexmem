@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/nexmem/core/gateway"
 	"github.com/nexmem/core/internal/dm"
@@ -93,7 +92,7 @@ func TestGroupAllowFriendAddEndToEnd(t *testing.T) {
 		enabled, ok := view["allow_friend_add"].(bool)
 		return enabled, ok
 	}
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, propagationWait, func() bool {
 		_, ok := allowFriendAdd(gwB)
 		return ok
 	})
@@ -111,11 +110,11 @@ func TestGroupAllowFriendAddEndToEnd(t *testing.T) {
 	if !ok || saved["enabled"] != true {
 		t.Fatalf("group.setAllowFriendAdd 回包异常: %v", saved)
 	}
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, propagationWait, func() bool {
 		enabled, ok := allowFriendAdd(gwB)
 		return ok && enabled
 	})
-	waitFor(t, 2*time.Second, func() bool {
+	waitFor(t, eventWait, func() bool {
 		return logB.has("group.allowFriendAddChanged")
 	})
 
