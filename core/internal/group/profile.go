@@ -120,7 +120,7 @@ func (s *Service) SetMemberProfile(ctx context.Context, groupID, account []byte,
 	}
 	profile := MemberProfile{Account: encodeAccountID(account), Nickname: nick, LevelID: level}
 	if frame, err := EncodeMemberProfileNotice(profile); err == nil {
-		_, _ = s.PublishEncryptedStored(ctx, groupID, frame)
+		s.publishControlFrame(ctx, groupID, frame)
 	}
 	return profile, nil
 }

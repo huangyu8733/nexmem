@@ -421,6 +421,33 @@ func (s *Service) Peers(groupID []byte) int {
 	return len(topic.ListPeers())
 }
 
+// controlFramePeerWait 是群设置控制帧等待主题邻居的上限。
+const controlFramePeerWait = 1500 * time.Millisecond
+
+// publishControlFrame 广播幂等的群设置控制帧（公告、加好友开关、等级、成员资料）。
+//
+// GossipSub 在主题尚无邻居时 Publish 仍会成功入队，但帧不会送达任何成员；
+// 管理员操作返回成功、成员侧却始终看不到变更的窗口正是从这里产生的。
+// 广播前有界等待 mesh 形成；超时仍按原有语义尽力广播，离线成员由群盘补齐。
+func (s *Service) publishControlFrame(ctx context.Context, groupID []byte, plaintext string) {
+	if s.Peers(groupID) == 0 {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		deadline := time.Now().Add(controlFramePeerWait)
+		for time.Now().Before(deadline) {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			if s.Peers(groupID) > 0 {
+				break
+			}
+		}
+	}
+	_, _ = s.PublishEncryptedStored(ctx, groupID, plaintext)
+}
+
 // ensureTopicLocked 加入主题并注册校验器；调用方必须持有 s.mu。
 func (s *Service) ensureTopicLocked(name string, groupID []byte) (*pubsub.Topic, error) {
 	if t, ok := s.topics[name]; ok {

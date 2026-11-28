@@ -161,7 +161,7 @@ func (s *Service) SetLevelConfig(ctx context.Context, groupID []byte, cfg LevelC
 		}
 	}
 	if frame, err := EncodeLevelsNotice(cfg); err == nil {
-		_, _ = s.PublishEncryptedStored(ctx, groupID, frame)
+		s.publishControlFrame(ctx, groupID, frame)
 	}
 	return cfg, nil
 }

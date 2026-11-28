@@ -80,6 +80,9 @@ func TestEventBufferOverflowDropsOldest(t *testing.T) {
 func TestResumeReplaysMissedEvents(t *testing.T) {
 	srv, ts := newServer(t, Config{})
 	live := mustDial(t, ts, "?token="+testToken, nil)
+	// 握手完成与服务端登记会话之间存在间隙；未登记就广播时事件只进重放缓冲，
+	// 在线连接读不到，整包并行执行时该间隙会被放大。
+	waitConnections(t, srv, 1)
 	if _, err := srv.Broadcast("message.new", map[string]any{"msg_uuid": "u-1"}); err != nil {
 		t.Fatalf("广播 1: %v", err)
 	}

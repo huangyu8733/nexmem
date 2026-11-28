@@ -12,17 +12,33 @@ let stack;
 test.describe.configure({ mode: 'serial' });
 
 async function enableSemantics(page) {
-  // Flutter Web 默认不生成语义树：占位按钮位于视口外 1x1，鼠标点不到，
-  // 需要聚焦后按 Enter 触发 click，引擎才会开启语义树。
-  const enable = page.getByRole('button', { name: 'Enable accessibility' });
+  // Flutter Web 默认不生成语义树，需点亮 flt-semantics-placeholder 才会开启。
+  // 桌面实现的占位元素是视口外 1x1，移动实现则铺满视口且要求点击落点距元素中心
+  // 小于 1px；focus()+Enter 产生的 click 坐标为 (0,0)，在移动实现下偶发激活失败。
+  // 直接在占位元素上派发带其中心坐标的 click：桌面按 target 命中，移动按坐标命中。
+  const placeholder = page.locator('flt-semantics-placeholder');
   try {
-    await enable.first().waitFor({ state: 'attached', timeout: 30000 });
-    await enable.first().focus();
-    await page.keyboard.press('Enter');
+    await placeholder.first().waitFor({ state: 'attached', timeout: 30000 });
   } catch (_) {
-    // 已开启语义树时占位按钮不存在。
+    // 语义树已开启时占位元素不存在。
   }
-  await page.waitForTimeout(600);
+  for (let attempt = 0; attempt < 10; attempt++) {
+    if ((await placeholder.count()) === 0) return;
+    await page.evaluate(() => {
+      const el = document.querySelector('flt-semantics-placeholder');
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      el.dispatchEvent(new MouseEvent('click', {
+        bubbles: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      }));
+    });
+    await page.waitForTimeout(300);
+  }
+  if ((await placeholder.count()) !== 0) {
+    throw new Error('无法启用 Flutter Web 语义树');
+  }
 }
 
 // 启动服务检测门：CI 环境可能无法完成全部探测，用兜底按钮进入主界面。

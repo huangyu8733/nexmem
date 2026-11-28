@@ -31,7 +31,7 @@ func (s *Service) SetAnnouncement(ctx context.Context, groupID []byte, text stri
 		return "", err
 	}
 	if frame, err := EncodeAnnouncementNotice(text); err == nil {
-		_, _ = s.PublishEncryptedStored(ctx, groupID, frame)
+		s.publishControlFrame(ctx, groupID, frame)
 	}
 	return text, nil
 }

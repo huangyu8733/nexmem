@@ -26,7 +26,7 @@ func (s *Service) SetAllowFriendAdd(ctx context.Context, groupID []byte, enabled
 	if err := s.dao.SetGroupAllowFriendAdd(ctx, groupID, enabled); err != nil {
 		return false, err
 	}
-	_, _ = s.PublishEncryptedStored(ctx, groupID, EncodeAllowFriendAddNotice(enabled))
+	s.publishControlFrame(ctx, groupID, EncodeAllowFriendAddNotice(enabled))
 	return enabled, nil
 }
 
