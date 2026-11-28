@@ -284,7 +284,8 @@ class ChatPage extends StatelessWidget {
   final Future<String?> Function(
     ConversationItem conversation,
     ChatMessage message,
-  )? onDownloadGroupFile;
+  )?
+  onDownloadGroupFile;
 
   /// 把附件保存到本机：群聊沿用内核解密下载，私聊 / 媒体直接复制已落盘文件。
   final Future<String?> Function(ChatMessage message)? onSaveFile;
@@ -344,8 +345,10 @@ class ChatPage extends StatelessWidget {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final String selfName = context.t('我');
     final String notImage = context.t('请选择图片文件（png / jpg / gif / webp）');
-    final ChatAttachment? picked =
-        await _pickAttachment(context, title: context.t('发送图片'));
+    final ChatAttachment? picked = await _pickAttachment(
+      context,
+      title: context.t('发送图片'),
+    );
     if (picked == null || picked.path.trim().isEmpty) {
       return;
     }
@@ -374,8 +377,10 @@ class ChatPage extends StatelessWidget {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final String selfName = context.t('我');
     final String notAudio = context.t('请选择音频文件（m4a / mp3 / wav / aac 等）');
-    final ChatAttachment? picked =
-        await _pickAttachment(context, title: context.t('发送语音'));
+    final ChatAttachment? picked = await _pickAttachment(
+      context,
+      title: context.t('发送语音'),
+    );
     if (picked == null || picked.path.trim().isEmpty) {
       return;
     }
@@ -418,9 +423,9 @@ class ChatPage extends StatelessWidget {
       if (!context.mounted) {
         return null;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.t('选择文件失败：{0}', [error]))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.t('选择文件失败：{0}', [error]))));
       return null;
     }
   }
@@ -482,22 +487,20 @@ class ChatPage extends StatelessWidget {
             onSend: (String text, List<String> mentions, int ttlHours) {
               // 不等待通道回执，输入框立即清空；状态由消息行自行刷新。
               // 引用 ID 由 InputArea 在清空前捕获，这里再读一次以带 replyTo（P6-32）。
-              unawaited(
-                () async {
-                  try {
-                    await store.send(
-                      text,
-                      senderName: context.t('我'),
-                      replyTo: store.quoting?.id,
-                      mentions: mentions,
-                      ttlHours: ttlHours,
-                    );
-                    onSent?.call(text);
-                  } on Object catch (error) {
-                    _showSendFailure(messenger, sendFailureTemplate, error);
-                  }
-                }(),
-              );
+              unawaited(() async {
+                try {
+                  await store.send(
+                    text,
+                    senderName: context.t('我'),
+                    replyTo: store.quoting?.id,
+                    mentions: mentions,
+                    ttlHours: ttlHours,
+                  );
+                  onSent?.call(text);
+                } on Object catch (error) {
+                  _showSendFailure(messenger, sendFailureTemplate, error);
+                }
+              }());
             },
             onTypingChanged: onTypingChanged,
             mentionCandidates: mentionCandidates,
@@ -642,21 +645,19 @@ class ChatInputArea extends StatelessWidget {
                 if (onSend != null) {
                   onSend!(text, mentions, ttlHours);
                 } else {
-                  unawaited(
-                    () async {
-                      try {
-                        await store.send(
-                          text,
-                          senderName: context.t('我'),
-                          replyTo: replyTo,
-                          mentions: mentions,
-                          ttlHours: ttlHours,
-                        );
-                      } on Object catch (error) {
-                        _showSendFailure(messenger, sendFailureTemplate, error);
-                      }
-                    }(),
-                  );
+                  unawaited(() async {
+                    try {
+                      await store.send(
+                        text,
+                        senderName: context.t('我'),
+                        replyTo: replyTo,
+                        mentions: mentions,
+                        ttlHours: ttlHours,
+                      );
+                    } on Object catch (error) {
+                      _showSendFailure(messenger, sendFailureTemplate, error);
+                    }
+                  }());
                 }
                 // 引用随本次发送一并清空；无引用时 setQuoting(null) 是无害的空操作。
                 store.setQuoting(null);
@@ -842,8 +843,9 @@ class _ChatHeader extends StatelessWidget {
 
   /// 点击标题打开备注编辑；回调交给壳层落库并回填会话标题。
   Future<void> _openRemark(BuildContext context) async {
-    final TextEditingController controller =
-        TextEditingController(text: remark);
+    final TextEditingController controller = TextEditingController(
+      text: remark,
+    );
     final String? next = await showDialog<String>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
@@ -891,8 +893,8 @@ class _ChatHeader extends StatelessWidget {
     final String name = displayName?.trim().isNotEmpty ?? false
         ? displayName!.trim()
         : (conversation.title.trim().isNotEmpty
-            ? conversation.title.trim()
-            : shortAccountLabel(peer));
+              ? conversation.title.trim()
+              : shortAccountLabel(peer));
     return SizedBox(
       height: 56,
       child: Row(
@@ -1337,16 +1339,16 @@ class _MessageListState extends State<_MessageList> {
               onReadFileBytes: widget.onReadFileBytes,
               mediaSourceUri: widget.mediaSourceUri,
               onRetry: () => unawaited(
-                    widget.store
-                        .retry(message.id)
-                        .catchError(
-                          (Object error) => _showSendFailure(
-                            messenger,
-                            sendFailureTemplate,
-                            error,
-                          ),
-                        ),
-                  ),
+                widget.store
+                    .retry(message.id)
+                    .catchError(
+                      (Object error) => _showSendFailure(
+                        messenger,
+                        sendFailureTemplate,
+                        error,
+                      ),
+                    ),
+              ),
               onDelete: () => _deleteMessage(message),
               onForward: widget.onForwardMessage == null
                   ? null
@@ -2020,8 +2022,7 @@ class _FileBubbleContent extends StatelessWidget {
   /// 两端都可能有真实传输进度（接收端消息状态是 sent，不能只看 sending）。
   /// 发送完成（status 不再是 sending）后即使进度未刷新也不再显示进度条。
   bool get _hasTransfer =>
-      message.transferTotal > 0 &&
-      message.transferDone < message.transferTotal;
+      message.transferTotal > 0 && message.transferDone < message.transferTotal;
 
   bool get _showProgress =>
       message.status == MessageStatus.sending ||
@@ -2055,8 +2056,7 @@ class _FileBubbleContent extends StatelessWidget {
     }
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     // 文案在 await 之前取好，避免跨异步间隔使用 BuildContext。
-    final String downloadedHint =
-        context.t('已下载 {0}，请用本地播放器打开', [file.name]);
+    final String downloadedHint = context.t('已下载 {0}，请用本地播放器打开', [file.name]);
     final String downloadHint = context.t('请下载后使用本地播放器打开');
     if (kIsWeb || file.path.isEmpty) {
       if (onDownload != null) {
@@ -2075,11 +2075,8 @@ class _FileBubbleContent extends StatelessWidget {
     }
     await showDialog<void>(
       context: context,
-      builder: (BuildContext _) => MediaViewerDialog(
-        path: file.path,
-        mime: file.mime,
-        title: file.name,
-      ),
+      builder: (BuildContext _) =>
+          MediaViewerDialog(path: file.path, mime: file.mime, title: file.name),
     );
   }
 
@@ -2096,9 +2093,8 @@ class _FileBubbleContent extends StatelessWidget {
           readBytes: () => reader != null
               ? reader(message)
               : Future<Uint8List>.value(Uint8List(0)),
-          onSave: () => saver != null
-              ? saver(message)
-              : Future<String?>.value(null),
+          onSave: () =>
+              saver != null ? saver(message) : Future<String?>.value(null),
         ),
       ),
     );
@@ -2111,9 +2107,8 @@ class _FileBubbleContent extends StatelessWidget {
     final l10n = context.l10n;
     final String? saved = await saver(message);
     if (!context.mounted || saved == null || saved.isEmpty) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(l10n.t('已保存到：{0}', [saved]))));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(l10n.t('已保存到：{0}', [saved]))));
   }
 
   IconData _icon(String name, String mime) {
@@ -2252,7 +2247,9 @@ class _FileBubbleContent extends StatelessWidget {
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(
-                        key: ValueKey<String>('chat-file-progress-${message.id}'),
+                        key: ValueKey<String>(
+                          'chat-file-progress-${message.id}',
+                        ),
                         value: ratio,
                         strokeWidth: 2,
                         color: Colors.white,
@@ -2304,9 +2301,9 @@ class _FileBubbleContent extends StatelessWidget {
     if (!context.mounted || saved == null || saved.isEmpty) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.t('群文件已保存到：{0}', [saved]))),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(context.t('群文件已保存到：{0}', [saved]))));
   }
 
   @override
@@ -2368,7 +2365,13 @@ class _FileBubbleContent extends StatelessWidget {
       );
     }
     final MediaKind kind = mediaKindOf(file.path, mime: file.mime);
-    if (kind == MediaKind.audio || kind == MediaKind.video) {
+    // 接收端在文件落盘前 path 为空：此时先按普通文件气泡展示，
+    // 等 transfer.progress(done==total) 补全路径后再切换成可预览媒体气泡。
+    // 否则点击会打开一个 path 为空的播放器，看起来就是「点了没反应」。
+    final bool playable =
+        file.path.isNotEmpty &&
+        (kind == MediaKind.audio || kind == MediaKind.video);
+    if (playable) {
       return _mediaContent(context, file, kind);
     }
     final Color fg = mine
@@ -2768,7 +2771,9 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 Text(
                   hours == 0
                       ? context.t('关闭（普通消息）')
-                      : context.t('{0}后销毁', [ephemeralTtlLabel(hours, context.l10n)]),
+                      : context.t('{0}后销毁', [
+                          ephemeralTtlLabel(hours, context.l10n),
+                        ]),
                 ),
               ],
             ),
@@ -2904,7 +2909,9 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 icon: Icons.timer_outlined,
                 tooltip: _ttlHours == 0
                     ? context.t('定时销毁')
-                    : context.t('定时销毁：{0}', [ephemeralTtlLabel(_ttlHours, context.l10n)]),
+                    : context.t('定时销毁：{0}', [
+                        ephemeralTtlLabel(_ttlHours, context.l10n),
+                      ]),
                 onTap: _showTtlPicker,
               ),
               _ToolButton(
@@ -2936,7 +2943,9 @@ class _ChatInputBarState extends State<ChatInputBar> {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    context.t('定时销毁：{0}后', [ephemeralTtlLabel(_ttlHours, context.l10n)]),
+                    context.t('定时销毁：{0}后', [
+                      ephemeralTtlLabel(_ttlHours, context.l10n),
+                    ]),
                     key: const ValueKey<String>('ttl-active-chip'),
                     style: TextStyle(fontSize: 11, color: NexmemColors.warning),
                   ),
@@ -3088,8 +3097,9 @@ class _QuotedStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 自己气泡是主色深底用白字；对方气泡跟随主题，暗色下不能用近黑色。
-    final Color foreground =
-        mine ? Colors.white : Theme.of(context).colorScheme.onSurface;
+    final Color foreground = mine
+        ? Colors.white
+        : Theme.of(context).colorScheme.onSurface;
     return Container(
       key: const ValueKey<String>('chat-quoted-strip'),
       margin: const EdgeInsets.only(bottom: 6),

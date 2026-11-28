@@ -264,6 +264,13 @@ class _AppShellState extends State<AppShell> {
   /// 由 `msg.list` / `msg.listSince` 回包的最大 seq 建立并单调推进。
   final Map<String, int> _lastSeq = <String, int>{};
 
+  /// 已完成传输、需要从内核回包补全附件落盘路径的消息。
+  ///
+  /// 内核在 `message.new` 时消息还没落盘，`transfer.progress(done==total)`
+  /// 之后才把本地路径写回附件，但事件不带路径；此处记录待刷新的 msg_uuid，
+  /// 避免重复拉历史。
+  final Set<String> _attachmentRefreshPending = <String>{};
+
   MessageSearchService get _search =>
       widget.search ??
       widget.session?.search ??
@@ -1668,12 +1675,68 @@ class _AppShellState extends State<AppShell> {
     }
     final Object? done = data['done'];
     final Object? total = data['total'];
-    final ChatStore? store = _chatWithMessage(id);
-    store?.setTransferProgress(
-      id,
-      done is num ? done.toInt() : 0,
-      total is num ? total.toInt() : 0,
-    );
+    final int doneBytes = done is num ? done.toInt() : 0;
+    final int totalBytes = total is num ? total.toInt() : 0;
+    _chatWithMessage(id)?.setTransferProgress(id, doneBytes, totalBytes);
+    // 接收端文件落盘后内核只补写消息附件路径，事件不带 path：
+    // 这里补一次拉取，否则图片没有缩略图、音视频点击时路径为空。
+    if (totalBytes > 0 && doneBytes >= totalBytes) {
+      unawaited(_refreshInboundAttachment(id));
+    }
+  }
+
+  /// 传输完成后从内核重新读取消息，把落盘路径合入本地气泡。
+  Future<void> _refreshInboundAttachment(String msgUuid) async {
+    if (!_attachmentRefreshPending.add(msgUuid)) {
+      return;
+    }
+    try {
+      final CoreSession? session = widget.session;
+      if (session == null) {
+        _attachmentRefreshPending.remove(msgUuid);
+        return;
+      }
+      // 首条进度可能早于 message.new，等气泡入列后再查。
+      ChatStore? store = _chatWithMessage(msgUuid);
+      for (int attempt = 0; store == null && attempt < 4; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        if (!mounted) {
+          return;
+        }
+        store = _chatWithMessage(msgUuid);
+      }
+      if (store == null) {
+        // 气泡还没入列：放开标记，后续进度事件可再试一次。
+        _attachmentRefreshPending.remove(msgUuid);
+        return;
+      }
+      final ConversationItem? item = _conversations.byId(store.conversationId);
+      if (item == null) {
+        _attachmentRefreshPending.remove(msgUuid);
+        return;
+      }
+      final ChatMessage? local = store.byId(msgUuid);
+      final List<ChatMessage> refreshed = local != null && local.seq > 0
+          ? (await session.since(item, afterSeq: local.seq - 1)).messages
+          : await session.history(item, limit: 20);
+      bool merged = false;
+      for (final ChatMessage message in refreshed) {
+        if (message.id == msgUuid &&
+            message.attachment?.path.isNotEmpty == true) {
+          store.merge(message);
+          merged = true;
+          break;
+        }
+      }
+      if (!merged) {
+        // 内核回包滞后：留待下一次进度事件重试。
+        _attachmentRefreshPending.remove(msgUuid);
+      }
+    } catch (error, stack) {
+      // 拉取失败保留重试机会：下一次传输进度仍会再次触发。
+      _logDegradation('补齐附件路径 $msgUuid', error, stack);
+      _attachmentRefreshPending.remove(msgUuid);
+    }
   }
 
   ChatStore? _chatWithMessage(String msgUuid) {
@@ -1891,6 +1954,10 @@ class _AppShellState extends State<AppShell> {
         await toBrowser(result.path, attachment.name);
         return attachment.name;
       }
+      // 群文件落盘后把本地路径合入气泡：图片/音视频随即获得缩略图与播放器。
+      _chatFor(conversation).merge(
+        message.copyWith(attachment: attachment.copyWith(path: result.path)),
+      );
       return result.path;
     } on Object catch (error) {
       _showMessage(l10n.t('群文件下载失败：{0}', [error]));
