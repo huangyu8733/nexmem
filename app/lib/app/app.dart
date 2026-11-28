@@ -12,6 +12,7 @@ import 'app_overlay.dart';
 import 'core_session.dart';
 import 'shell.dart';
 import 'startup_gate.dart';
+import 'system_ui_style.dart';
 import 'theme.dart';
 
 /// 把 [SettingsService] 适配为语言控制器所需的最小接口。
@@ -225,13 +226,17 @@ class _NexmemAppState extends State<NexmemApp> {
             darkTheme: NexmemTheme.dark(),
             themeMode: _themeMode,
             // 浮层与 Navigator 同级且绘制在其上：聊天页 push 后仍可见。
+            // SystemUiStyleScope 放在 Theme 之下，系统导航栏随外观切换，
+            // 避免深色界面底部残留白色系统条。
             builder: (BuildContext context, Widget? child) {
-              return Stack(
-                fit: StackFit.expand,
-                children: <Widget>[
-                  if (child != null) Positioned.fill(child: child),
-                  Positioned.fill(child: AppOverlayHost(controller: _overlay)),
-                ],
+              return SystemUiStyleScope(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: <Widget>[
+                    if (child != null) Positioned.fill(child: child),
+                    Positioned.fill(child: AppOverlayHost(controller: _overlay)),
+                  ],
+                ),
               );
             },
             home: Listener(
