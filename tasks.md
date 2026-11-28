@@ -533,3 +533,11 @@
 - [x] 重建全部内核产物（Android AAR、iOS XCFramework、macOS dylib）与三端 Release 包，安装并核对：Android `22081212C` 为 `1.1.2 (2)` 且 `libgojni.so` 含 `0.2.0-dev`；iOS「卢红娟」为 `1.1.2 (2)` 且 Runner 二进制含 `0.2.0-dev`；macOS `/Applications/nexmem_app.app` 为 `1.1.2 (2)`、内置 dylib 含 `0.2.0-dev`，已重启加载。
 - 坑：本轮 pub.dev 经代理返回 502，但 `https://pub.flutter-io.cn` 可直连；Flutter 命令需带 `PUB_HOSTED_URL=https://pub.flutter-io.cn`，并用 `flutter pub get --offline` 走本地缓存（缓存位于 `~/.pub-cache/hosted/pub.flutter-io.cn`）。
 - 口径：`huangyu的iPhone`（`00008150-00082D643E02401C`）仍 unavailable，未安装；需用户拔掉「卢红娟」改接目标机并解锁信任后再装。
+
+## T66 v1.1.2 全平台发版与 GitHub 旧包清理（已完成）
+- [x] 核实发版状态：此前只发布过 v1.1.1，v1.1.2 的 141 个改动文件与 25 个新文件全部还在本地未提交；GitHub 上 v1.1.1 / v1.1.0 / v1.0.2 / v1.0.0 共 16 个旧安装包从未删除。
+- [x] 提交并推送：一次性提交所有改动为 `c438ffc chore: 发布 v1.1.2，同步客户端与内核版本`。推送时发现远端已有同补丁的重复提交 `928178b`，用 `git rebase --onto origin/main ca50778 main` 只重放 v1.1.2 提交后快进推送，未使用强推。
+- [x] 打标签 `v1.1.2` 触发 `.github/workflows/release.yml` 与 `release-macos.yml`，两个 Release 工作流均成功；`main` 的 CI（Schema/Contract、Flutter analyze/test/web、gomobile android/ios、Web E2E、Go lint、c-shared）全绿。
+- [x] v1.1.2 Release 共 6 个平台资产：`Nexmem-1.1.2-android.apk`、`-linux-x64.deb`、`-linux-x64.tar.gz`、`-macos-arm64.zip`、`-web.zip`、`-windows-x64.zip`。
+- [x] 删除旧安装包 16 个：v1.1.1 的 6 个、v1.1.0 的 4 个、v1.0.2 的 3 个、v1.0.0 的 2 个（其中 v1.0.2 下曾混放 1.0.0 命名的资产）。保留旧 Release 说明与 tag，只清空资产；核对 v1.1.1 及更早 Release 资产数均为 0，v1.1.2 为 6。
+- 口径：本地工作区已干净；目标 iPhone 仍待用户接入后安装。
