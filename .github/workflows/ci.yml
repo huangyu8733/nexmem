@@ -31,6 +31,8 @@ jobs:
       - uses: bufbuild/buf-setup-action@v1
         with:
           version: ${{ env.BUF_VERSION }}
+          # 匿名请求会撞 GitHub API 限流，导致解析下载地址时整个 job 失败。
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: buf lint
         run: buf lint
