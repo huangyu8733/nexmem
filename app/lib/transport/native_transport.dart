@@ -14,30 +14,27 @@ import 'event_buffer.dart';
 import 'event_sequencer.dart';
 import 'transport.dart';
 
-typedef _CallNative =
-    Int32 Function(
-      Pointer<Uint8> request,
-      Int32 requestLen,
-      Pointer<Pointer<Uint8>> out,
-      Pointer<Int32> outLen,
-    );
-typedef _CallDart =
-    int Function(
-      Pointer<Uint8> request,
-      int requestLen,
-      Pointer<Pointer<Uint8>> out,
-      Pointer<Int32> outLen,
-    );
+typedef _CallNative = Int32 Function(
+  Pointer<Uint8> request,
+  Int32 requestLen,
+  Pointer<Pointer<Uint8>> out,
+  Pointer<Int32> outLen,
+);
+typedef _CallDart = int Function(
+  Pointer<Uint8> request,
+  int requestLen,
+  Pointer<Pointer<Uint8>> out,
+  Pointer<Int32> outLen,
+);
 
 typedef _FreeNative = Void Function(Pointer<Uint8>);
 typedef _FreeDart = void Function(Pointer<Uint8>);
 
-typedef _EventCallbackNative =
-    Void Function(
-      Pointer<Utf8> eventType,
-      Pointer<Uint8> payload,
-      Int32 payloadLen,
-    );
+typedef _EventCallbackNative = Void Function(
+  Pointer<Utf8> eventType,
+  Pointer<Uint8> payload,
+  Int32 payloadLen,
+);
 typedef _SetEventCallbackNative = Void Function(
   Pointer<NativeFunction<_EventCallbackNative>>,
 );
@@ -45,18 +42,16 @@ typedef _SetEventCallbackDart = void Function(
   Pointer<NativeFunction<_EventCallbackNative>>,
 );
 
-typedef _ReplayNative =
-    Int32 Function(
-      Uint64 since,
-      Pointer<Pointer<Uint8>> out,
-      Pointer<Int32> outLen,
-    );
-typedef _ReplayDart =
-    int Function(
-      int since,
-      Pointer<Pointer<Uint8>> out,
-      Pointer<Int32> outLen,
-    );
+typedef _ReplayNative = Int32 Function(
+  Uint64 since,
+  Pointer<Pointer<Uint8>> out,
+  Pointer<Int32> outLen,
+);
+typedef _ReplayDart = int Function(
+  int since,
+  Pointer<Pointer<Uint8>> out,
+  Pointer<Int32> outLen,
+);
 
 typedef _LastSeqNative = Uint64 Function();
 typedef _LastSeqDart = int Function();
@@ -157,7 +152,11 @@ class NativeTransport implements CoreTransport {
       throw const NexmemException('NOT_STARTED', '传输已关闭');
     }
     if (!_ready) {
-      throw const NexmemException('NOT_ONLINE', '本地内核事件通道尚未就绪', retryable: true);
+      throw const NexmemException(
+        'NOT_ONLINE',
+        '本地内核事件通道尚未就绪',
+        retryable: true,
+      );
     }
     final Duration limit = timeout ?? requestTimeout;
     final int id = ++_nextId;
@@ -173,18 +172,21 @@ class NativeTransport implements CoreTransport {
     final String libraryPath = _libraryPath;
     final Map<String, dynamic> envelope;
     try {
-      envelope = await Isolate.run(
-        () => _invokeNative(libraryPath, request),
-      ).timeout(
-        limit,
-        onTimeout: () => _errorEnvelope(
-          'NOT_ONLINE',
-          '请求 $method 超时（${limit.inMilliseconds}ms）',
-          retryable: true,
-        ),
-      );
+      envelope = await Isolate.run(() => _invokeNative(libraryPath, request))
+          .timeout(
+            limit,
+            onTimeout: () => _errorEnvelope(
+              'NOT_ONLINE',
+              '请求 $method 超时（${limit.inMilliseconds}ms）',
+              retryable: true,
+            ),
+          );
     } on Object catch (error) {
-      throw NexmemException('NOT_ONLINE', '调用 $method 失败: $error', retryable: true);
+      throw NexmemException(
+        'NOT_ONLINE',
+        '调用 $method 失败: $error',
+        retryable: true,
+      );
     }
     return decodeResponseEnvelope(envelope);
   }
@@ -232,7 +234,11 @@ class NativeTransport implements CoreTransport {
   ///
   /// Go 侧缓冲所有权已随回调移交，解析完成后必须经 `nexmem_free` 释放，
   /// 否则每条事件都会泄漏。
-  void _onEvent(Pointer<Utf8> eventType, Pointer<Uint8> payload, int payloadLen) {
+  void _onEvent(
+    Pointer<Utf8> eventType,
+    Pointer<Uint8> payload,
+    int payloadLen,
+  ) {
     try {
       if (payload == nullptr || payloadLen <= 0) {
         return;
@@ -438,7 +444,9 @@ Map<String, dynamic> nativeStartConfig() {
   const String relayAddrsDefine = String.fromEnvironment('NEXMEM_RELAY_ADDRS');
   const String mdnsDefine = String.fromEnvironment('NEXMEM_MDNS');
   const String publicDhtDefine = String.fromEnvironment('NEXMEM_PUBLIC_DHT');
-  const String manualAddrsDefine = String.fromEnvironment('NEXMEM_MANUAL_ADDRS');
+  const String manualAddrsDefine = String.fromEnvironment(
+    'NEXMEM_MANUAL_ADDRS',
+  );
   final Map<String, String> env = Platform.environment;
   final String dataDir = _firstNotEmpty(<String?>[
     dataDirDefine,
@@ -462,8 +470,10 @@ Map<String, dynamic> nativeStartConfig() {
     env['NEXMEM_RELAY_ADDRS'],
   ]);
   final String mdns = _firstNotEmpty(<String?>[mdnsDefine, env['NEXMEM_MDNS']]);
-  final String publicDht =
-      _firstNotEmpty(<String?>[publicDhtDefine, env['NEXMEM_PUBLIC_DHT']]);
+  final String publicDht = _firstNotEmpty(<String?>[
+    publicDhtDefine,
+    env['NEXMEM_PUBLIC_DHT'],
+  ]);
   final String manualAddrs = _firstNotEmpty(<String?>[
     manualAddrsDefine,
     env['NEXMEM_MANUAL_ADDRS'],
@@ -490,9 +500,7 @@ CoreSession? openNativeSession() {
   final NativeTransport transport;
   try {
     transport = NativeTransport(
-      seqStore: FileEventSeqStore(
-        '$dataDir${Platform.pathSeparator}event_seq',
-      ),
+      seqStore: FileEventSeqStore('$dataDir${Platform.pathSeparator}event_seq'),
     );
   } on Object catch (error) {
     debugPrint('Nexmem 本地内核不可用（$error）');
@@ -507,6 +515,7 @@ CoreSession? openNativeSession() {
     transport,
     startConfig: config,
     pickFile: pickLocalFile,
+    pickImage: pickLocalImage,
     pickDirectory: pickShareDirectory,
   );
 }

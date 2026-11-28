@@ -202,6 +202,7 @@ class ChatPage extends StatelessWidget {
     this.onStartCall,
     this.onStartRemote,
     this.onPickFile,
+    this.onPickImage,
     this.onDownloadGroupFile,
     this.onSaveFile,
     this.onReadFileBytes,
@@ -279,6 +280,10 @@ class ChatPage extends StatelessWidget {
   /// Web / 移动端可注入平台实现。
   final Future<ChatAttachment?> Function()? onPickFile;
 
+  /// 选择相册图片：移动端拉起系统相册，桌面/Web 用图片过滤器。
+  /// 为空时退回 [onPickFile]，保持旧部署可用。
+  final Future<ChatAttachment?> Function()? onPickImage;
+
   /// 下载群文件（A-02）：由壳层注入，参数为消息所属会话与附件元数据。
   /// 返回落盘绝对路径；为空表示回调不可用或用户取消。
   final Future<String?> Function(
@@ -348,6 +353,7 @@ class ChatPage extends StatelessWidget {
     final ChatAttachment? picked = await _pickAttachment(
       context,
       title: context.t('发送图片'),
+      picker: onPickImage ?? onPickFile,
     );
     if (picked == null || picked.path.trim().isEmpty) {
       return;
@@ -409,11 +415,12 @@ class ChatPage extends StatelessWidget {
   Future<ChatAttachment?> _pickAttachment(
     BuildContext context, {
     String? title,
+    Future<ChatAttachment?> Function()? picker,
   }) async {
-    final Future<ChatAttachment?> Function()? picker = onPickFile;
+    final Future<ChatAttachment?> Function()? effective = picker ?? onPickFile;
     try {
-      if (picker != null) {
-        return await picker();
+      if (effective != null) {
+        return await effective();
       }
       return await showDialog<ChatAttachment>(
         context: context,

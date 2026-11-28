@@ -10,11 +10,8 @@ import 'android_transport.dart';
 /// 反向推给 Dart。区别仅在数据目录（应用沙盒 Application Support）与
 /// 无前台服务，因此复用 [AndroidTransport] 的信封/事件逻辑。
 class IOSTransport extends AndroidTransport {
-  IOSTransport({
-    super.channel,
-    super.requestTimeout,
-    super.eventBufferSize,
-  }) : super(platformLabel: 'iOS');
+  IOSTransport({super.channel, super.requestTimeout, super.eventBufferSize})
+    : super(platformLabel: 'iOS');
 }
 
 /// iOS 启动入口（P1-08）：建立 MethodChannel 会话并注入 `core.start` 配置。
@@ -53,5 +50,6 @@ Future<CoreSession?> openIOSSession() async {
     // iOS 重装/备份恢复会改变沙盒容器 UUID，需重定位失效的数据目录。
     rebaseStaleDataDir: true,
     pickFile: transport.pickFile,
+    pickImage: transport.pickImage,
   );
 }

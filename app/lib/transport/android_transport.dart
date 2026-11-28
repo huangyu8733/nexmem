@@ -91,7 +91,11 @@ class AndroidTransport implements CoreTransport {
       throw const NexmemException('NOT_STARTED', '传输已关闭');
     }
     if (!_ready) {
-      throw const NexmemException('NOT_ONLINE', '本地内核事件通道尚未就绪', retryable: true);
+      throw const NexmemException(
+        'NOT_ONLINE',
+        '本地内核事件通道尚未就绪',
+        retryable: true,
+      );
     }
     final Duration limit = timeout ?? requestTimeout;
     final String request = jsonEncode(
@@ -180,10 +184,20 @@ class AndroidTransport implements CoreTransport {
   /// 拉起系统文件选择器并返回本机副本（P2-08）。
   ///
   /// 原生侧把 `content://` 复制到应用缓存目录后回传绝对路径；用户取消返回 null。
-  Future<ChatAttachment?> pickFile() async {
+  Future<ChatAttachment?> pickFile() => _pickViaPlatform('pickFile', '选择文件失败');
+
+  /// 拉起系统相册/图片库（Android ACTION_PICK / iOS PHPicker）。
+  /// 原生侧同样把结果复制到缓存目录后回传绝对路径。
+  Future<ChatAttachment?> pickImage() =>
+      _pickViaPlatform('pickImage', '选择图片失败');
+
+  Future<ChatAttachment?> _pickViaPlatform(
+    String method,
+    String errorLabel,
+  ) async {
     try {
       final Map<String, dynamic>? picked = await _channel
-          .invokeMapMethod<String, dynamic>('pickFile');
+          .invokeMapMethod<String, dynamic>(method);
       if (picked == null) {
         return null;
       }
@@ -202,13 +216,13 @@ class AndroidTransport implements CoreTransport {
     } on PlatformException catch (error) {
       throw NexmemException(
         'NOT_ONLINE',
-        '选择文件失败: ${error.message ?? error.code}',
+        '$errorLabel: ${error.message ?? error.code}',
         retryable: true,
       );
     } on MissingPluginException {
       throw NexmemException(
         'NOT_ONLINE',
-        '$platformLabel 文件选择器未注册',
+        '$platformLabel 图片/文件选择器未注册',
         retryable: true,
       );
     }
@@ -403,6 +417,7 @@ Future<CoreSession?> openAndroidSession({
     // 重装后 filesDir 可能变化，需重定位失效的账号数据目录。
     rebaseStaleDataDir: true,
     pickFile: transport.pickFile,
+    pickImage: transport.pickImage,
     pickDirectory: transport.pickDirectory,
   );
 }
@@ -421,7 +436,9 @@ Map<String, dynamic> androidStartConfig(
   const String relayAddrsDefine = String.fromEnvironment('NEXMEM_RELAY_ADDRS');
   const String mdnsDefine = String.fromEnvironment('NEXMEM_MDNS');
   const String publicDhtDefine = String.fromEnvironment('NEXMEM_PUBLIC_DHT');
-  const String manualAddrsDefine = String.fromEnvironment('NEXMEM_MANUAL_ADDRS');
+  const String manualAddrsDefine = String.fromEnvironment(
+    'NEXMEM_MANUAL_ADDRS',
+  );
   final Map<String, String> env = environment ?? Platform.environment;
   return androidCoreStartConfig(
     dataDir: dataDir,

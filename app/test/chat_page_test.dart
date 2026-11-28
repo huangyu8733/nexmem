@@ -126,15 +126,30 @@ void main() {
   test('时间分隔：间隔满 5 分钟才显示，文案分今天/昨天/更早', () {
     final DateTime base = DateTime(2026, 11, 19, 10, 0);
     expect(shouldShowTimeSeparator(null, base), isTrue);
-    expect(shouldShowTimeSeparator(base, base.add(const Duration(minutes: 4))), isFalse);
-    expect(shouldShowTimeSeparator(base, base.add(const Duration(minutes: 5))), isTrue);
+    expect(
+      shouldShowTimeSeparator(base, base.add(const Duration(minutes: 4))),
+      isFalse,
+    );
+    expect(
+      shouldShowTimeSeparator(base, base.add(const Duration(minutes: 5))),
+      isTrue,
+    );
     // 乱序到达产生负间隔时同样插分隔，避免消息挤在一起。
-    expect(shouldShowTimeSeparator(base, base.subtract(const Duration(minutes: 9))), isTrue);
+    expect(
+      shouldShowTimeSeparator(base, base.subtract(const Duration(minutes: 9))),
+      isTrue,
+    );
 
     final DateTime now = DateTime(2026, 11, 19, 15, 0);
     expect(formatMessageTime(DateTime(2026, 11, 19, 8, 5), now: now), '08:05');
-    expect(formatMessageTime(DateTime(2026, 11, 18, 23, 59), now: now), '昨天 23:59');
-    expect(formatMessageTime(DateTime(2026, 11, 10, 9, 0), now: now), '2026/11/10 09:00');
+    expect(
+      formatMessageTime(DateTime(2026, 11, 18, 23, 59), now: now),
+      '昨天 23:59',
+    );
+    expect(
+      formatMessageTime(DateTime(2026, 11, 10, 9, 0), now: now),
+      '2026/11/10 09:00',
+    );
   });
 
   test('消息按 sent_at 升序插入，同一 msg_uuid 只保留一条', () {
@@ -149,7 +164,11 @@ void main() {
     );
     addTearDown(store.dispose);
 
-    expect(store.messages.map((ChatMessage m) => m.id), <String>['m1', 'm2', 'm3']);
+    expect(store.messages.map((ChatMessage m) => m.id), <String>[
+      'm1',
+      'm2',
+      'm3',
+    ]);
 
     store.receive(_msg('m2', '重复投递', at: base.add(const Duration(minutes: 2))));
     expect(store.length, 3);
@@ -175,7 +194,8 @@ void main() {
 
     expect(find.byType(MessageTimeSeparator), findsNWidgets(2));
 
-    final double width = tester.view.physicalSize.width / tester.view.devicePixelRatio;
+    final double width =
+        tester.view.physicalSize.width / tester.view.devicePixelRatio;
     final double mineX = tester.getCenter(find.text('我发的')).dx;
     final double peerX = tester.getCenter(find.text('早')).dx;
     expect(mineX, greaterThan(width / 2));
@@ -330,9 +350,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byTooltip('聊天信息'), findsOneWidget);
-    await tester.tap(
-      find.byKey(const ValueKey<String>('chat-profile-toggle')),
-    );
+    await tester.tap(find.byKey(const ValueKey<String>('chat-profile-toggle')));
     expect(toggles, 1);
 
     await tester.pumpWidget(
@@ -349,9 +367,7 @@ void main() {
     expect(find.byTooltip('收起聊天信息'), findsOneWidget);
   });
 
-  testWidgets('表情面板：展开后点选插入光标处，可发送并再次点击收起', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('表情面板：展开后点选插入光标处，可发送并再次点击收起', (WidgetTester tester) async {
     final ChatStore store = ChatStore(conversationId: 'alice');
     addTearDown(store.dispose);
 
@@ -524,7 +540,10 @@ void main() {
   });
 
   testWidgets('群盘提示仅在明确未配置的群聊显示，未知/已配置与单聊都不显示', (WidgetTester tester) async {
-    final ChatStore unknown = ChatStore(conversationId: 'group-1', isGroup: true);
+    final ChatStore unknown = ChatStore(
+      conversationId: 'group-1',
+      isGroup: true,
+    );
     addTearDown(unknown.dispose);
     await tester.pumpWidget(
       _wrap(ChatPage(conversation: _groupConversation, store: unknown)),
@@ -716,7 +735,9 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsNothing);
   });
 
-  testWidgets('文件工具经 onPickFile 注入路径后经通道发送，正文为文件名', (WidgetTester tester) async {
+  testWidgets('文件工具经 onPickFile 注入路径后经通道发送，正文为文件名', (
+    WidgetTester tester,
+  ) async {
     final _FakeSender sender = _FakeSender(() async {});
     final ChatStore store = ChatStore(conversationId: 'alice', sender: sender);
     addTearDown(store.dispose);
@@ -749,6 +770,46 @@ void main() {
     expect(find.text('128 B'), findsOneWidget);
   });
 
+  testWidgets('图片工具优先使用 onPickImage 相册选择器', (WidgetTester tester) async {
+    final _FakeSender sender = _FakeSender(() async {});
+    final ChatStore store = ChatStore(conversationId: 'alice', sender: sender);
+    addTearDown(store.dispose);
+    bool filePickerCalled = false;
+
+    await tester.pumpWidget(
+      _wrap(
+        ChatPage(
+          conversation: _peerConversation,
+          store: store,
+          onPickFile: () async {
+            filePickerCalled = true;
+            return const ChatAttachment(
+              name: 'wrong.pdf',
+              size: 8,
+              mime: 'application/pdf',
+              path: '/tmp/wrong.pdf',
+            );
+          },
+          onPickImage: () async => const ChatAttachment(
+            name: 'album.png',
+            size: 256,
+            mime: 'image/png',
+            path: '/tmp/album.png',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('图片'));
+    await tester.pumpAndSettle();
+
+    expect(filePickerCalled, isFalse);
+    expect(sender.lastFile?['path'], '/tmp/album.png');
+    expect(sender.lastFile?['mime'], 'image/png');
+    expect(store.messages.single.text, 'album.png');
+  });
+
   testWidgets('文件发送失败置为可重发，重发沿用同一 msg_uuid 与路径', (WidgetTester tester) async {
     int calls = 0;
     final _FakeSender sender = _FakeSender(() async {
@@ -777,9 +838,7 @@ void main() {
     expect(store.messages.single.status, MessageStatus.failed);
 
     await expectLater(
-      store.sendFile(
-        const ChatAttachment(name: 'x', size: 1, path: ''),
-      ),
+      store.sendFile(const ChatAttachment(name: 'x', size: 1, path: '')),
       throwsArgumentError,
     );
 
@@ -900,9 +959,7 @@ void main() {
     expect(find.text('photo.PNG · 4.0 KB'), findsOneWidget);
   });
 
-  testWidgets('A-01 语音工具选音频经文件通道发送并补齐 MIME', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('A-01 语音工具选音频经文件通道发送并补齐 MIME', (WidgetTester tester) async {
     final _FakeSender sender = _FakeSender(() async {});
     final ChatStore store = ChatStore(conversationId: 'alice', sender: sender);
     addTearDown(store.dispose);
@@ -986,17 +1043,12 @@ void main() {
     await tester.tap(find.byTooltip('语音'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('请选择音频文件（m4a / mp3 / wav / aac 等）'),
-      findsOneWidget,
-    );
+    expect(find.text('请选择音频文件（m4a / mp3 / wav / aac 等）'), findsOneWidget);
     expect(sender.lastFile, isNull);
     expect(store.length, 0);
   });
 
-  testWidgets('接收端图片消息带落盘路径时显示缩略图，无路径回退文件气泡', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('接收端图片消息带落盘路径时显示缩略图，无路径回退文件气泡', (WidgetTester tester) async {
     final ChatStore store = ChatStore(
       conversationId: 'alice',
       initial: <ChatMessage>[
@@ -1038,7 +1090,9 @@ void main() {
     expect(find.text('512 B'), findsOneWidget);
   });
 
-  testWidgets('长按消息弹出复制与删除，删除经 msg.delete 注入后移除消息', (WidgetTester tester) async {
+  testWidgets('长按消息弹出复制与删除，删除经 msg.delete 注入后移除消息', (
+    WidgetTester tester,
+  ) async {
     final ChatStore store = ChatStore(
       conversationId: 'alice',
       initial: <ChatMessage>[
@@ -1058,8 +1112,10 @@ void main() {
       },
     );
     addTearDown(
-      () => tester.binding.defaultBinaryMessenger
-          .setMockMethodCallHandler(SystemChannels.platform, null),
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
     );
 
     await tester.pumpWidget(
@@ -1280,9 +1336,7 @@ void main() {
     expect(find.text('不能丢的消息'), findsOneWidget);
   });
 
-  testWidgets('长按消息菜单包含引用，点选后出现引用预览（P6-32）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('长按消息菜单包含引用，点选后出现引用预览（P6-32）', (WidgetTester tester) async {
     final ChatStore store = ChatStore(
       conversationId: 'alice',
       initial: <ChatMessage>[
@@ -1302,7 +1356,10 @@ void main() {
 
     await tester.tap(find.text('引用'));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey<String>('chat-quote-preview')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('chat-quote-preview')),
+      findsOneWidget,
+    );
     expect(store.quoting?.id, 'q-origin');
   });
 
@@ -1313,9 +1370,7 @@ void main() {
     final ChatStore store = ChatStore(
       conversationId: 'alice',
       sender: _FakeSender(() async {}),
-      initial: <ChatMessage>[
-        _msg('origin-1', '这是原文', at: base),
-      ],
+      initial: <ChatMessage>[_msg('origin-1', '这是原文', at: base)],
     );
     addTearDown(store.dispose);
 
@@ -1326,12 +1381,18 @@ void main() {
     await tester.pumpAndSettle();
 
     // 无引用时不显示预览条。
-    expect(find.byKey(const ValueKey<String>('chat-quote-preview')), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('chat-quote-preview')),
+      findsNothing,
+    );
 
     // 通过 store 设定引用（长按菜单 / 右键菜单调用同一入口）。
     store.setQuoting(store.messages.single);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey<String>('chat-quote-preview')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('chat-quote-preview')),
+      findsOneWidget,
+    );
     expect(find.text('引用 Alice'), findsOneWidget);
 
     // 输入并发送：消息带 replyTo，且引用预览清空。
@@ -1343,16 +1404,20 @@ void main() {
     expect(store.length, 2);
     expect(sender.lastReplyTo, 'origin-1');
     expect(store.messages.last.replyTo, 'origin-1');
-    expect(find.byKey(const ValueKey<String>('chat-quote-preview')), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('chat-quote-preview')),
+      findsNothing,
+    );
 
     // 气泡内引用条展示被引用消息正文。
-    expect(find.byKey(const ValueKey<String>('chat-quoted-strip')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('chat-quoted-strip')),
+      findsOneWidget,
+    );
     expect(find.text('这是原文'), findsWidgets);
   });
 
-  testWidgets('引用预览可取消，取消后发送不带 replyTo（P6-32）', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('引用预览可取消，取消后发送不带 replyTo（P6-32）', (WidgetTester tester) async {
     final ChatStore store = ChatStore(
       conversationId: 'alice',
       sender: _FakeSender(() async {}),
@@ -1370,12 +1435,18 @@ void main() {
 
     store.setQuoting(store.messages.single);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey<String>('chat-quote-preview')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('chat-quote-preview')),
+      findsOneWidget,
+    );
 
     // 取消引用。
     await tester.tap(find.byKey(const ValueKey<String>('chat-quote-cancel')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey<String>('chat-quote-preview')), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('chat-quote-preview')),
+      findsNothing,
+    );
 
     await tester.enterText(find.byType(TextField), '普通回复');
     await tester.pump();
@@ -1384,9 +1455,7 @@ void main() {
     expect(sender.lastReplyTo, isNull);
   });
 
-  testWidgets('七-2 已编辑消息显示标记，长按仅自己的文本消息有编辑入口', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('七-2 已编辑消息显示标记，长按仅自己的文本消息有编辑入口', (WidgetTester tester) async {
     final ChatStore store = ChatStore(
       conversationId: 'alice',
       sender: _FakeSender(() async {}),
@@ -1457,56 +1526,73 @@ void main() {
     expect(sender.lastMentions, <String>['bob-pub']);
   });
 
-  testWidgets('七-3 typing 事件驱动「对方正在输入」提示', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('七-3 typing 事件驱动「对方正在输入」提示', (WidgetTester tester) async {
     final ChatStore store = ChatStore(conversationId: 'alice');
-    store.receive(ChatMessage(
-      id: 'm',
-      conversationId: 'alice',
-      text: 'hi',
-      sentAt: DateTime(2026),
-    ));
+    store.receive(
+      ChatMessage(
+        id: 'm',
+        conversationId: 'alice',
+        text: 'hi',
+        sentAt: DateTime(2026),
+      ),
+    );
     await tester.pumpWidget(
       _wrap(ChatPage(conversation: _peerConversation, store: store)),
     );
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey<String>('typing-indicator')), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('typing-indicator')),
+      findsNothing,
+    );
 
     store.setTyping(true);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey<String>('typing-indicator')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('typing-indicator')),
+      findsOneWidget,
+    );
     expect(find.text('对方正在输入…'), findsOneWidget);
 
     store.setTyping(false);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey<String>('typing-indicator')), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('typing-indicator')),
+      findsNothing,
+    );
   });
 
-  testWidgets('聊天头部显示头像与备注名，点击可改备注', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('聊天头部显示头像与备注名，点击可改备注', (WidgetTester tester) async {
     final ChatStore store = ChatStore(conversationId: 'alice');
     addTearDown(store.dispose);
     String? saved;
     await tester.pumpWidget(
-      _wrap(ChatPage(
-        conversation: _peerConversation,
-        store: store,
-        displayName: '备注名',
-        remark: '备注名',
-        onSetRemark: (String value) => saved = value,
-      )),
+      _wrap(
+        ChatPage(
+          conversation: _peerConversation,
+          store: store,
+          displayName: '备注名',
+          remark: '备注名',
+          onSetRemark: (String value) => saved = value,
+        ),
+      ),
     );
     await tester.pumpAndSettle();
 
     expect(find.byType(AppAvatar), findsWidgets);
     expect(find.text('备注名'), findsWidgets);
-    expect(find.byKey(const ValueKey<String>('chat-header-identity')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('chat-header-identity')),
+      findsOneWidget,
+    );
 
-    await tester.tap(find.byKey(const ValueKey<String>('chat-header-identity')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('chat-header-identity')),
+    );
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey<String>('chat-header-remark-field')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('chat-header-remark-field')),
+      findsOneWidget,
+    );
     await tester.enterText(
       find.byKey(const ValueKey<String>('chat-header-remark-field')),
       '新备注',
@@ -1560,50 +1646,68 @@ void main() {
       ),
     );
 
-    await tester.pumpWidget(_wrap(Column(
-      children: <Widget>[
-        MessageBubble(
-          message: audio,
-          onPreviewMedia: (ChatMessage m) async => previewed.add(m.id),
+    await tester.pumpWidget(
+      _wrap(
+        Column(
+          children: <Widget>[
+            MessageBubble(
+              message: audio,
+              onPreviewMedia: (ChatMessage m) async => previewed.add(m.id),
+            ),
+            MessageBubble(
+              message: video,
+              onPreviewMedia: (ChatMessage m) async => previewed.add(m.id),
+            ),
+          ],
         ),
-        MessageBubble(
-          message: video,
-          onPreviewMedia: (ChatMessage m) async => previewed.add(m.id),
-        ),
-      ],
-    )));
+      ),
+    );
 
-    expect(find.byKey(const ValueKey<String>('chat-media-preview-a1')),
-        findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('chat-media-preview-v1')),
-        findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('chat-media-preview-a1')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('chat-media-preview-v1')),
+      findsOneWidget,
+    );
 
-    await tester.tap(find.byKey(const ValueKey<String>('chat-media-preview-a1')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('chat-media-preview-a1')),
+    );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey<String>('chat-media-preview-v1')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('chat-media-preview-v1')),
+    );
     await tester.pumpAndSettle();
 
     expect(previewed, <String>['a1', 'v1']);
   });
 
   testWidgets('图片气泡点击打开媒体预览弹窗', (WidgetTester tester) async {
-    await tester.pumpWidget(_wrap(MessageBubble(
-      message: ChatMessage(
-        id: 'i1',
-        conversationId: 'alice',
-        text: 'photo.png',
-        sentAt: DateTime(2026, 11, 19, 10, 0),
-        isMine: true,
-        attachment: const ChatAttachment(
-          name: 'photo.png',
-          size: 2048,
-          mime: 'image/png',
-          path: '/tmp/photo.png',
+    await tester.pumpWidget(
+      _wrap(
+        MessageBubble(
+          message: ChatMessage(
+            id: 'i1',
+            conversationId: 'alice',
+            text: 'photo.png',
+            sentAt: DateTime(2026, 11, 19, 10, 0),
+            isMine: true,
+            attachment: const ChatAttachment(
+              name: 'photo.png',
+              size: 2048,
+              mime: 'image/png',
+              path: '/tmp/photo.png',
+            ),
+          ),
         ),
       ),
-    )));
+    );
 
-    await tester.tap(find.byKey(const ValueKey<String>('chat-image-preview-i1')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('chat-image-preview-i1')),
+    );
     await tester.pump();
     expect(find.byType(MediaViewerDialog), findsOneWidget);
   });
@@ -1612,56 +1716,68 @@ void main() {
     final Uri source = Uri.parse(
       'https://example.com/download?token=tk&path=photo.png&disposition=inline',
     );
-    await tester.pumpWidget(_wrap(MessageBubble(
-      message: ChatMessage(
-        id: 'i2',
-        conversationId: 'alice',
-        text: 'photo.png',
-        sentAt: DateTime(2026, 11, 19, 10, 0),
-        isMine: true,
-        attachment: const ChatAttachment(
-          name: 'photo.png',
-          size: 2048,
-          mime: 'image/png',
-          path: '/data/inbox/photo.png',
+    await tester.pumpWidget(
+      _wrap(
+        MessageBubble(
+          message: ChatMessage(
+            id: 'i2',
+            conversationId: 'alice',
+            text: 'photo.png',
+            sentAt: DateTime(2026, 11, 19, 10, 0),
+            isMine: true,
+            attachment: const ChatAttachment(
+              name: 'photo.png',
+              size: 2048,
+              mime: 'image/png',
+              path: '/data/inbox/photo.png',
+            ),
+          ),
+          mediaSourceUri: (String path) => source,
         ),
       ),
-      mediaSourceUri: (String path) => source,
-    )));
+    );
 
-    await tester.tap(find.byKey(const ValueKey<String>('chat-image-preview-i2')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('chat-image-preview-i2')),
+    );
     await tester.pump();
     await tester.pump();
     expect(find.byType(MediaViewerDialog), findsOneWidget);
     expect(
       find.byWidgetPredicate(
         (Widget widget) =>
-            widget is Image && widget.image.runtimeType.toString() == 'NetworkImage',
+            widget is Image &&
+            widget.image.runtimeType.toString() == 'NetworkImage',
       ),
       findsWidgets,
     );
   });
 
-  testWidgets('普通文件气泡仍只复制路径，不显示媒体预览入口',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(_wrap(MessageBubble(
-      message: ChatMessage(
-        id: 'f1',
-        conversationId: 'alice',
-        text: '报告.pdf',
-        sentAt: DateTime(2026, 11, 19, 10, 0),
-        isMine: true,
-        attachment: const ChatAttachment(
-          name: '报告.pdf',
-          size: 2048,
-          mime: 'application/pdf',
-          path: '/tmp/报告.pdf',
+  testWidgets('普通文件气泡仍只复制路径，不显示媒体预览入口', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      _wrap(
+        MessageBubble(
+          message: ChatMessage(
+            id: 'f1',
+            conversationId: 'alice',
+            text: '报告.pdf',
+            sentAt: DateTime(2026, 11, 19, 10, 0),
+            isMine: true,
+            attachment: const ChatAttachment(
+              name: '报告.pdf',
+              size: 2048,
+              mime: 'application/pdf',
+              path: '/tmp/报告.pdf',
+            ),
+          ),
         ),
       ),
-    )));
+    );
 
-    expect(find.byKey(const ValueKey<String>('chat-media-preview-f1')),
-        findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('chat-media-preview-f1')),
+      findsNothing,
+    );
     expect(find.text('报告.pdf'), findsOneWidget);
   });
 }

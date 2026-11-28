@@ -70,6 +70,7 @@ void main() {
             case 'localIp':
               return localIp;
             case 'pickFile':
+            case 'pickImage':
               if (pickFileFails) {
                 throw PlatformException(code: 'PICK_FAILED', message: '选择器不可用');
               }
@@ -108,7 +109,11 @@ void main() {
   Future<void> emitFromNative(String payload) async {
     final ByteData data = codec.encodeMethodCall(MethodCall('event', payload));
     await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .handlePlatformMessage(AndroidTransport.channelName, data, (ByteData? _) {});
+        .handlePlatformMessage(
+          AndroidTransport.channelName,
+          data,
+          (ByteData? _) {},
+        );
   }
 
   test('connect 读取原生水位并按 since 重放事件', () async {
@@ -119,7 +124,9 @@ void main() {
     ];
     final AndroidTransport transport = AndroidTransport(channel: channel);
     final List<CoreEvent> events = <CoreEvent>[];
-    final StreamSubscription<CoreEvent> sub = transport.events.listen(events.add);
+    final StreamSubscription<CoreEvent> sub = transport.events.listen(
+      events.add,
+    );
 
     await transport.connect();
     await pumpEventQueue();
@@ -133,10 +140,7 @@ void main() {
     final MethodCall replay = log.firstWhere(
       (MethodCall c) => c.method == 'replaySince',
     );
-    expect(
-      (replay.arguments as Map<Object?, Object?>)['since'],
-      5,
-    );
+    expect((replay.arguments as Map<Object?, Object?>)['since'], 5);
     // 重放结果同样回写原生水位，避免下一次热重启重复重放。
     expect(ackedSeq, 7);
 
@@ -157,11 +161,9 @@ void main() {
     final MethodCall forwarded = log.firstWhere(
       (MethodCall c) => c.method == 'call',
     );
-    final Map<String, dynamic> request =
-        jsonDecode(
-              (forwarded.arguments as Map<Object?, Object?>)['request'] as String,
-            )
-            as Map<String, dynamic>;
+    final Map<String, dynamic> request = jsonDecode(
+      (forwarded.arguments as Map<Object?, Object?>)['request'] as String,
+    ) as Map<String, dynamic>;
     expect(request['id'], 1);
     expect(request['method'], 'core.ping');
     expect(request['params'], <String, dynamic>{'x': 1});
@@ -173,7 +175,9 @@ void main() {
   test('事件按 seq 去重，重复帧只交付一次', () async {
     final AndroidTransport transport = AndroidTransport(channel: channel);
     final List<CoreEvent> events = <CoreEvent>[];
-    final StreamSubscription<CoreEvent> sub = transport.events.listen(events.add);
+    final StreamSubscription<CoreEvent> sub = transport.events.listen(
+      events.add,
+    );
     await transport.connect();
 
     await emitFromNative(jsonEncode(frame(1, 'message.new')));
@@ -192,7 +196,9 @@ void main() {
     ackedSeq = 5;
     final AndroidTransport transport = AndroidTransport(channel: channel);
     final List<CoreEvent> events = <CoreEvent>[];
-    final StreamSubscription<CoreEvent> sub = transport.events.listen(events.add);
+    final StreamSubscription<CoreEvent> sub = transport.events.listen(
+      events.add,
+    );
     await transport.connect();
 
     await emitFromNative(jsonEncode(frame(8, 'message.new')));
@@ -220,7 +226,9 @@ void main() {
     ];
     final AndroidTransport transport = AndroidTransport(channel: channel);
     final List<CoreEvent> events = <CoreEvent>[];
-    final StreamSubscription<CoreEvent> sub = transport.events.listen(events.add);
+    final StreamSubscription<CoreEvent> sub = transport.events.listen(
+      events.add,
+    );
 
     await transport.connect();
     await pumpEventQueue();
@@ -290,7 +298,10 @@ void main() {
     final AndroidTransport transport = AndroidTransport(channel: channel);
     await transport.connect();
 
-    expect(await transport.appDataDir(), '/data/user/0/io.nexmem.nexmem_app/files');
+    expect(
+      await transport.appDataDir(),
+      '/data/user/0/io.nexmem.nexmem_app/files',
+    );
     expect(await transport.startForegroundService(), true);
     expect(startServiceCalls, 1);
     expect(log.map((MethodCall c) => c.method), contains('startService'));
@@ -302,11 +313,11 @@ void main() {
     // 宿主 shell 可能注入 NEXMEM_* 联调变量，这里显式隔离为发布版默认配置。
     final session = await openAndroidSession(environment: <String, String>{});
     expect(session, isNotNull);
-    expect(
-      session!.startConfig,
-      <String, dynamic>{'data_dir': '/data/user/0/io.nexmem.nexmem_app/files'},
-    );
+    expect(session!.startConfig, <String, dynamic>{
+      'data_dir': '/data/user/0/io.nexmem.nexmem_app/files',
+    });
     expect(session.pickFile, isNotNull);
+    expect(session.pickImage, isNotNull);
     expect(startServiceCalls, 1);
     await session.transport.close();
   });
@@ -315,10 +326,7 @@ void main() {
     localIp = '192.168.10.91';
     final session = await openAndroidSession(environment: <String, String>{});
     expect(session, isNotNull);
-    expect(
-      session!.startConfig!['lan_addrs'],
-      <String>['192.168.10.91'],
-    );
+    expect(session!.startConfig!['lan_addrs'], <String>['192.168.10.91']);
     expect(log.map((MethodCall c) => c.method), contains('localIp'));
     await session.transport.close();
   });
@@ -351,6 +359,24 @@ void main() {
 
     pickedFile = null;
     expect(await transport.pickFile(), isNull);
+
+    await transport.close();
+  });
+
+  test('pickImage 调用原生相册通道并映射为附件', () async {
+    final AndroidTransport transport = AndroidTransport(channel: channel);
+    await transport.connect();
+
+    pickedFile = <String, dynamic>{
+      'name': 'album.jpg',
+      'size': 64,
+      'mime': 'image/jpeg',
+      'path': '/data/cache/nexmem-picked/2-album.jpg',
+    };
+    final attachment = await transport.pickImage();
+    expect(attachment?.name, 'album.jpg');
+    expect(attachment?.path, '/data/cache/nexmem-picked/2-album.jpg');
+    expect(log.map((MethodCall c) => c.method), contains('pickImage'));
 
     await transport.close();
   });

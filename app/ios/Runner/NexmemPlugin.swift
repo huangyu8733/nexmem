@@ -1,4 +1,5 @@
 import Flutter
+import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
 
@@ -10,7 +11,8 @@ import UniformTypeIdentifiers
 ///
 /// `pickFile` 是平台文件选择器（P2-08）：选中后复制到缓存目录，回传
 /// `name/size/mime/path`，内核按绝对路径直接读取。
-final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
+final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
+    PHPickerViewControllerDelegate {
     private static let channelName = "io.nexmem/core"
 
     private let channel: FlutterMethodChannel
@@ -56,6 +58,8 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
             result(Self.en0BroadcastIPv4())
         case "pickFile":
             pickFile(result)
+        case "pickImage":
+            pickImage(result)
         case "startService", "stopService":
             // iOS 没有前台服务，常驻依赖静默推送（P6-02），保持空实现。
             result("")
@@ -146,6 +150,98 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
         picker.allowsMultipleSelection = false
         pendingPick = result
         presenter.present(picker, animated: true)
+    }
+
+    /// 打开系统相册（PHPicker，iOS 14+ 无需照片库权限）。
+    private func pickImage(_ result: @escaping FlutterResult) {
+        if pendingPick != nil {
+            result(FlutterError(code: "PICK_BUSY", message: "已有一个文件选择正在进行", details: nil))
+            return
+        }
+        guard let presenter = NexmemPlugin.topViewController() else {
+            result(FlutterError(code: "NO_ACTIVITY", message: "当前没有可用的界面", details: nil))
+            return
+        }
+        var config = PHPickerConfiguration()
+        config.filter = .images
+        config.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = self
+        pendingPick = result
+        presenter.present(picker, animated: true)
+    }
+
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+        guard let result = pendingPick else { return }
+        pendingPick = nil
+        guard let provider = results.first?.itemProvider else {
+            result(nil)
+            return
+        }
+        // 临时文件在 completion 返回后即失效，必须先复制到 Caches 再回调。
+        provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) {
+            [weak self] url, error in
+            guard self != nil else { return }
+            if let error = error {
+                DispatchQueue.main.async {
+                    result(
+                        FlutterError(
+                            code: "PICK_FAILED",
+                            message: error.localizedDescription,
+                            details: nil
+                        )
+                    )
+                }
+                return
+            }
+            guard let url = url else {
+                DispatchQueue.main.async { result(nil) }
+                return
+            }
+            do {
+                let picked = try NexmemPlugin.copyPickedImage(
+                    url,
+                    suggestedName: provider.suggestedName
+                )
+                DispatchQueue.main.async { result(picked) }
+            } catch {
+                DispatchQueue.main.async {
+                    result(
+                        FlutterError(
+                            code: "PICK_FAILED",
+                            message: error.localizedDescription,
+                            details: nil
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private static func copyPickedImage(_ url: URL, suggestedName: String?) throws -> [String: Any] {
+        let fm = FileManager.default
+        let rawName = suggestedName ?? url.lastPathComponent
+        let name = rawName.isEmpty ? "image.jpg" : rawName
+        let safe = name.replacingOccurrences(
+            of: "[^A-Za-z0-9._-]",
+            with: "_",
+            options: .regularExpression
+        )
+        let cache = fm.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let dir = cache.appendingPathComponent("nexmem-picked", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let target = dir.appendingPathComponent("\(Int(Date().timeIntervalSince1970 * 1000))-\(safe)")
+        try fm.copyItem(at: url, to: target)
+        let size = (try fm.attributesOfItem(atPath: target.path)[.size] as? NSNumber)?.int64Value ?? 0
+        let ext = (name as NSString).pathExtension
+        let mime = UTType(filenameExtension: ext)?.preferredMIMEType ?? "image/jpeg"
+        return [
+            "name": name,
+            "size": size,
+            "mime": mime,
+            "path": target.path,
+        ]
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {

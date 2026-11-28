@@ -1806,6 +1806,7 @@ class _AppShellState extends State<AppShell> {
               onStartCall: (bool video) => _startCall(item, video),
               onStartRemote: item.isGroup ? null : () => _startRemote(item),
               onPickFile: widget.session?.pickFile,
+              onPickImage: widget.session?.pickImage,
               // Web 端内核在网关进程内，媒体走鉴权 inline 链接在线播放。
               mediaSourceUri: kIsWeb ? widget.session?.mediaSourceUri : null,
               onDeleteMessage: widget.session == null
@@ -2727,6 +2728,7 @@ class _AppShellState extends State<AppShell> {
           : null,
       profileOpen: showProfile,
       onPickFile: widget.session?.pickFile,
+      onPickImage: widget.session?.pickImage,
       // Web 端内核在网关进程内，媒体走鉴权 inline 链接在线播放。
       mediaSourceUri: kIsWeb ? widget.session?.mediaSourceUri : null,
       onDownloadGroupFile: widget.session == null

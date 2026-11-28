@@ -75,6 +75,8 @@ Future<CoreSession?> _sessionFromEnvironment() async {
     transport,
     pickFile: () =>
         pickLocalFile(endpoint: transport.endpoint, token: accessToken),
+    pickImage: () =>
+        pickLocalImage(endpoint: transport.endpoint, token: accessToken),
     pickDirectory: () =>
         pickLocalDirectory(endpoint: transport.endpoint, token: accessToken),
     // Web 端内核在网关进程内，群文件落到服务端路径，需经鉴权 /download 取回。
@@ -89,22 +91,22 @@ Future<CoreSession?> _sessionFromEnvironment() async {
     mediaSourceUri: (String serverPath) =>
         webMediaUri(transport.endpoint, accessToken, serverPath),
     readChatFileBytes: (String path) => readChatFileBytes(
-          path: path,
-          endpoint: transport.endpoint,
-          token: accessToken,
-        ),
+      path: path,
+      endpoint: transport.endpoint,
+      token: accessToken,
+    ),
     saveChatFile: (String path, String fileName) => saveChatFileToDevice(
-          sourcePath: path,
-          fileName: fileName,
-          endpoint: transport.endpoint,
-          token: accessToken,
-          downloadToBrowser: (String serverPath, String fileName) =>
-              downloadThroughBrowser(
-                endpoint: transport.endpoint,
-                token: accessToken,
-                serverPath: serverPath,
-                fileName: fileName,
-              ),
-        ),
+      sourcePath: path,
+      fileName: fileName,
+      endpoint: transport.endpoint,
+      token: accessToken,
+      downloadToBrowser: (String serverPath, String fileName) =>
+          downloadThroughBrowser(
+            endpoint: transport.endpoint,
+            token: accessToken,
+            serverPath: serverPath,
+            fileName: fileName,
+          ),
+    ),
   );
 }

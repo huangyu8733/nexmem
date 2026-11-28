@@ -78,8 +78,7 @@ class CoreInfo {
   static const String clientApiVersion = '1.0.0';
 
   /// API 主版本是否与客户端一致（按 `.` 前的数字段比较）。
-  bool get apiMajorCompatible =>
-      _major(apiVersion) == _major(clientApiVersion);
+  bool get apiMajorCompatible => _major(apiVersion) == _major(clientApiVersion);
 
   static String _major(String version) {
     final List<String> parts = version.split('.');
@@ -208,7 +207,9 @@ class DiscoveredDevice {
     return DiscoveredDevice(
       peerId: peer is String ? peer : '',
       addrs: addrs,
-      accountId: json['account_id'] is String ? json['account_id'] as String : '',
+      accountId: json['account_id'] is String
+          ? json['account_id'] as String
+          : '',
       label: json['label'] is String ? json['label'] as String : '',
       ip: json['ip'] is String ? json['ip'] as String : '',
       connected: json['connected'] == true,
@@ -240,7 +241,9 @@ class DiscoveredDevice {
     if (ip.isNotEmpty) {
       return ip;
     }
-    return peerId.isEmpty ? '?' : peerId.substring(0, peerId.length.clamp(0, 12));
+    return peerId.isEmpty
+        ? '?'
+        : peerId.substring(0, peerId.length.clamp(0, 12));
   }
 
   /// 用地址簿中的账号 ID 作为台账首选键；没有时回退到 PeerID。
@@ -300,7 +303,9 @@ class DiscoveryDiagnostics {
       injectedLan: rawInjected is List
           ? rawInjected.whereType<String>().toList(growable: false)
           : const <String>[],
-      mdnsError: json['mdns_error'] is String ? json['mdns_error'] as String : '',
+      mdnsError: json['mdns_error'] is String
+          ? json['mdns_error'] as String
+          : '',
       lanRaw: _intOf(json['lan_raw']),
       lanBeaconActive: json['lan_beacon_active'] == true,
       lanBroadcastError: json['lan_broadcast_error'] is String
@@ -313,8 +318,7 @@ class DiscoveryDiagnostics {
     );
   }
 
-  static int _intOf(Object? value) =>
-      value is num ? value.toInt() : 0;
+  static int _intOf(Object? value) => value is num ? value.toInt() : 0;
 
   final bool mdnsEnabled;
   final int mdnsRaw;
@@ -351,14 +355,16 @@ class DeviceDiscoverPage {
     final Object? rawItems = json['items'];
     final List<DiscoveredDevice> items = rawItems is List
         ? rawItems
-            .whereType<Map<String, dynamic>>()
-            .map(DiscoveredDevice.fromJson)
-            .toList(growable: false)
+              .whereType<Map<String, dynamic>>()
+              .map(DiscoveredDevice.fromJson)
+              .toList(growable: false)
         : <DiscoveredDevice>[];
     final Object? rawDiag = json['diagnostics'];
     return DeviceDiscoverPage(
       items: items,
-      total: json['total'] is num ? (json['total'] as num).toInt() : items.length,
+      total: json['total'] is num
+          ? (json['total'] as num).toInt()
+          : items.length,
       offset: json['offset'] is num ? (json['offset'] as num).toInt() : 0,
       limit: json['limit'] is num ? (json['limit'] as num).toInt() : 200,
       diagnostics: DiscoveryDiagnostics.fromJson(
@@ -411,6 +417,7 @@ class CoreSession {
     this.startConfig,
     this.rebaseStaleDataDir = false,
     this.pickFile,
+    this.pickImage,
     this.pickDirectory,
     this.downloadToBrowser,
     this.mediaSourceUri,
@@ -441,15 +448,18 @@ class CoreSession {
   Map<String, dynamic>? _activeStartConfig;
 
   /// 当前启动配置的副本，供账号管理器复制网络设置后改写 `data_dir`。
-  Map<String, dynamic>? get activeStartConfig =>
-      _activeStartConfig == null
-          ? null
-          : Map<String, dynamic>.from(_activeStartConfig!);
+  Map<String, dynamic>? get activeStartConfig => _activeStartConfig == null
+      ? null
+      : Map<String, dynamic>.from(_activeStartConfig!);
 
   /// 平台文件选择器（P2-08）；为空时聊天页退回本机路径输入框。
   ///
   /// 移动端由原生通道把选中的 `content://` 复制到应用目录后回传绝对路径。
   final Future<ChatAttachment?> Function()? pickFile;
+
+  /// 平台相册/图片库选择器：移动端拉起系统相册，桌面/Web 走图片文件过滤。
+  /// 为空时聊天页退回 [pickFile]（可能出现系统文件管理器而非相册）。
+  final Future<ChatAttachment?> Function()? pickImage;
 
   /// 平台目录选择器（P2P 文件夹共享）；为空时分享页退回本机路径输入框。
   final Future<String?> Function()? pickDirectory;
@@ -458,7 +468,7 @@ class CoreSession {
   /// 回调构造鉴权 `/download` 链接并触发浏览器保存。桌面/移动端为空，
   /// 因为内核已直接落盘到本机下载目录。
   final Future<void> Function(String serverPath, String fileName)?
-      downloadToBrowser;
+  downloadToBrowser;
 
   /// Web 聊天媒体在线播放源：把内核落盘的服务端路径换成鉴权 `/download`
   /// 链接（`disposition=inline`），供图片缩略图与语音/视频播放器直接使用。
@@ -534,10 +544,7 @@ class CoreSession {
     try {
       await transport.call(
         'dm.setTyping',
-        params: <String, dynamic>{
-          'peer': peer,
-          'typing': typing,
-        },
+        params: <String, dynamic>{'peer': peer, 'typing': typing},
         timeout: requestTimeout,
       );
     } on Object {
@@ -880,7 +887,10 @@ class CoreSession {
   Future<FileShare> publishShare(String path, {String name = ''}) async {
     final Map<String, dynamic> data = await transport.call(
       'fs.publish',
-      params: <String, dynamic>{'path': path, if (name.isNotEmpty) 'name': name},
+      params: <String, dynamic>{
+        'path': path,
+        if (name.isNotEmpty) 'name': name,
+      },
       timeout: requestTimeout,
     );
     return FileShare.fromJson(data);
@@ -983,10 +993,7 @@ class CoreSession {
     if (kIsWeb) {
       final String? dataDir = await currentDataDir();
       if (dataDir == null || dataDir.isEmpty) {
-        throw const NexmemException(
-          'NOT_ONLINE',
-          '无法确定内核数据目录，无法下载群文件',
-        );
+        throw const NexmemException('NOT_ONLINE', '无法确定内核数据目录，无法下载群文件');
       }
       return p.join(dataDir, 'web-downloads', fileName);
     }
@@ -1010,10 +1017,7 @@ class CoreSession {
       base = await currentDataDir() ?? '';
     }
     if (base.isEmpty) {
-      throw const NexmemException(
-        'NOT_ONLINE',
-        '无法确定群文件下载目录，请在设置中配置内核数据目录',
-      );
+      throw const NexmemException('NOT_ONLINE', '无法确定群文件下载目录，请在设置中配置内核数据目录');
     }
     return p.join(base, fileName);
   }
@@ -1040,7 +1044,9 @@ class CoreSession {
     );
     return GroupFileDownload(
       path: data['path'] is String ? data['path'] as String : destPath,
-      size: data['size'] is num ? (data['size'] as num).toInt() : attachment.size,
+      size: data['size'] is num
+          ? (data['size'] as num).toInt()
+          : attachment.size,
       sha256: data['sha256'] is String ? data['sha256'] as String : '',
     );
   }
@@ -1097,9 +1103,7 @@ List<ChatMessage> messagesFromItems(
     final Object? seq = item['seq'];
     final Object? replyTo = item['reply_to'];
     final List<String> mentions = item['mentions'] is List
-        ? (item['mentions'] as List)
-            .whereType<String>()
-            .toList(growable: false)
+        ? (item['mentions'] as List).whereType<String>().toList(growable: false)
         : const <String>[];
     final Object? editedAt = item['edited_at'];
     final Object? expiresAt = item['expires_at'];
@@ -1210,9 +1214,12 @@ class FileShareDetail {
     final Object? rawFiles = json['files'];
     final List<FileShareEntry> files = rawFiles is List
         ? rawFiles
-            .whereType<Map>()
-            .map((Map e) => FileShareEntry.fromJson(Map<String, dynamic>.from(e)))
-            .toList()
+              .whereType<Map>()
+              .map(
+                (Map e) =>
+                    FileShareEntry.fromJson(Map<String, dynamic>.from(e)),
+              )
+              .toList()
         : <FileShareEntry>[];
     return FileShareDetail(
       share: FileShare.fromJson(json),
@@ -1285,7 +1292,8 @@ class _SessionChatSender implements ChatSender {
     int ttlHours = 0,
   }) async {
     final Map<String, dynamic> data;
-    final List<String> atList = mentions
+    final List<String> atList =
+        mentions
             ?.where((String e) => e.trim().isNotEmpty)
             .toList(growable: false) ??
         const <String>[];

@@ -62,9 +62,9 @@ SPEC CHECKSUMS:
   integration_test: 4a889634ef21a45d28d50d622cf412dc6d9f586e
   mobile_scanner: 9157936403f5a0644ca3779a38ff8404c5434a93
   video_player_avfoundation: a0f7b0f7f7d91c3d33f7a746bc3fbb57a6fae803
-  WebRTC-SDK: 12a0675004ec5e09c0dcc184db1a1dfcbc138a13
+  WebRTC-SDK: 71bce2be85c3082d24bbfd1a9930ea07d0c494c1
   webview_flutter_wkwebview: 8ebf4fded22593026f7dbff1fbff31ea98573c8d
 
-PODFILE CHECKSUM: 9fa419d77a3e82f41e65cd8709889644399ceb97
+PODFILE CHECKSUM: 3ba3a73b1b12adcf321a227a745625fe0888cc82
 
 COCOAPODS: 1.17.0

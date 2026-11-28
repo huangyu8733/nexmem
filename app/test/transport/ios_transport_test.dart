@@ -47,12 +47,15 @@ void main() {
             case 'dataDir':
               return dataDir;
             case 'pickFile':
+            case 'pickImage':
               return pickedFile;
             case 'call':
               final Map<Object?, Object?> args =
                   (call.arguments as Map<Object?, Object?>?) ??
                   const <Object?, Object?>{};
-              final Object? decoded = jsonDecode(args['request'] as String? ?? '{}');
+              final Object? decoded = jsonDecode(
+                args['request'] as String? ?? '{}',
+              );
               final String id = decoded is Map<String, dynamic>
                   ? decoded['id']?.toString() ?? '0'
                   : '0';
@@ -89,8 +92,10 @@ void main() {
     expect(session, isNotNull);
     expect(session!.startConfig?['data_dir'], dataDir);
     expect(session.pickFile, isNotNull);
-    final List<String> methods =
-        log.map((MethodCall call) => call.method).toList();
+    expect(session.pickImage, isNotNull);
+    final List<String> methods = log
+        .map((MethodCall call) => call.method)
+        .toList();
     expect(methods, isNot(contains('startService')));
     expect(methods, isNot(contains('stopService')));
     await session.close();
