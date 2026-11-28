@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -112,9 +113,13 @@ func TestGroupAllowFriendAddEndToEnd(t *testing.T) {
 	if !ok || saved["enabled"] != true {
 		t.Fatalf("group.setAllowFriendAdd 回包异常: %v", saved)
 	}
-	waitFor(t, propagationWait, func() bool {
+	waitForDiag(t, propagationWait, func() bool {
 		enabled, ok := allowFriendAdd(gwB)
 		return ok && enabled
+	}, func() string {
+		enabled, ok := allowFriendAdd(gwB)
+		return fmt.Sprintf("B加好友开关=%v ok=%v B事件=%v %s", enabled, ok, logB.names(),
+			groupDiag(appA, appB, groupID))
 	})
 	waitFor(t, eventWait, func() bool {
 		return logB.has("group.allowFriendAddChanged")

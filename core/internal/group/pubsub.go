@@ -421,8 +421,12 @@ func (s *Service) Peers(groupID []byte) int {
 	return len(topic.ListPeers())
 }
 
-// controlFramePeerWait 是群设置控制帧等待主题邻居的上限。
-const controlFramePeerWait = 1500 * time.Millisecond
+const (
+	// controlFramePeerWait 是群设置控制帧等待主题邻居的上限。
+	controlFramePeerWait = 1500 * time.Millisecond
+	// controlFrameSettle 覆盖订阅传播后 GossipSub 的一次心跳协商窗口。
+	controlFrameSettle = 1200 * time.Millisecond
+)
 
 // publishControlFrame 广播幂等的群设置控制帧（公告、加好友开关、等级、成员资料）。
 //
@@ -444,6 +448,15 @@ func (s *Service) publishControlFrame(ctx context.Context, groupID []byte, plain
 				break
 			}
 		}
+	}
+	// GossipSub 在主题邻居出现后仍需一次心跳完成 mesh/fanout 协商；
+	// 这段窗口内 Publish 会成功入队却送不到对端，控制帧因此静默丢失。
+	timer := time.NewTimer(controlFrameSettle)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
 	}
 	_, _ = s.PublishEncryptedStored(ctx, groupID, plaintext)
 }

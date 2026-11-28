@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -111,9 +112,13 @@ func TestGroupAnnouncementEndToEnd(t *testing.T) {
 		t.Fatalf("group.setAnnouncement 回包异常: %v", saved)
 	}
 
-	waitFor(t, propagationWait, func() bool {
+	waitForDiag(t, propagationWait, func() bool {
 		got, ok := memberAnnouncement()
 		return ok && got == text
+	}, func() string {
+		got, ok := memberAnnouncement()
+		return fmt.Sprintf("B公告=%q ok=%v B事件=%v %s", got, ok, logB.names(),
+			groupDiag(appA, appB, groupID))
 	})
 	waitFor(t, eventWait, func() bool { return logB.has("group.announcement") })
 

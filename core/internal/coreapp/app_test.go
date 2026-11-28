@@ -1,12 +1,15 @@
 package coreapp
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -45,6 +48,16 @@ func (l *eventLog) has(name string) bool {
 		}
 	}
 	return false
+}
+
+func (l *eventLog) names() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]string, 0, len(l.events))
+	for _, e := range l.events {
+		out = append(out, e.name)
+	}
+	return out
 }
 
 func (l *eventLog) count(name string) int {
@@ -638,6 +651,41 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("等待条件超时")
+}
+
+// groupDiag 汇总群控制帧链路的关键状态，供端到端测试超时时定位。
+func groupDiag(admin, member *App, groupID string) string {
+	raw, err := base64.RawURLEncoding.DecodeString(groupID)
+	if err != nil {
+		return fmt.Sprintf("群 ID 解码失败: %v", err)
+	}
+	a, b := admin.groupService(), member.groupService()
+	if a == nil || b == nil {
+		return "群服务未启动"
+	}
+	av, _, _ := a.LatestKey(raw)
+	bv, _, _ := b.LatestKey(raw)
+	var logs bytes.Buffer
+	_, _ = member.log.Export(&logs)
+	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+	if len(lines) > 10 {
+		lines = lines[len(lines)-10:]
+	}
+	return fmt.Sprintf("A邻居=%d B邻居=%d B订阅=%v A密钥版本=%d B密钥版本=%d B待解帧=%d B日志=%v",
+		a.Peers(raw), b.Peers(raw), b.Subscribed(raw), av, bv, b.PendingCount(), lines)
+}
+
+// waitForDiag 与 waitFor 相同，但超时时输出诊断信息，定位端到端链路卡在哪一环。
+func waitForDiag(t *testing.T, timeout time.Duration, cond func() bool, diag func() string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("等待条件超时: %s", diag())
 }
 
 // waitGroupTopicReady 等待成员已订阅群主题、且管理员侧主题出现邻居。
