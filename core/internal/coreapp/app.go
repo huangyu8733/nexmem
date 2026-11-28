@@ -100,6 +100,10 @@ type Config struct {
 	// Go 的 net.Interfaces() 在 Android 上常被 SELinux 拦截，libp2p 无法展开
 	// /ip4/0.0.0.0，导致 mDNS 无地址可广播；注入后补全宣告地址。
 	LanAddrs []string `json:"lan_addrs"`
+	// LanBroadcastAddr 是子网定向广播地址（如 192.168.10.255）。iOS 禁止向
+	// 255.255.255.255 受限广播发送，必须由原生层注入定向广播地址；留空时
+	// 内核回退到受限广播，兼容 Android/桌面/Web。
+	LanBroadcastAddr string `json:"lan_broadcast_addr"`
 
 	// applyDiscoveryDefaults 仅由 core.start 契约入口设置：客户端未显式配置时
 	// 套用 mDNS / 公共 DHT 默认开启策略。直接调用 Start 的 Go 代码不受影响。
@@ -940,7 +944,7 @@ func startLANBeaconLocked(cfg Config, acc *identity.Account, h host.Host, sm *ne
 	peerID := h.ID().String()
 	addrs := lanBeaconAddrs(lanIPs, port, peerID)
 	name := cfg.DisplayName
-	beacon, err := discovery.StartLANBeacon(acc, peerID, name, addrs)
+	beacon, err := discovery.StartLANBeacon(acc, peerID, name, addrs, cfg.LanBroadcastAddr)
 	if err != nil {
 		return nil
 	}

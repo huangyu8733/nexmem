@@ -37,9 +37,15 @@ Future<CoreSession?> openIOSSession() async {
   }
   // 注入原生局域网 IP，启用同 WiFi 账号发现（UDP 广播签名名片）。
   final String? localIp = await transport.localIp();
+  // iOS 禁止向 255.255.255.255 受限广播发送（sendto: no route to host），
+  // 需注入 en0 的子网定向广播地址，否则 LAN Beacon 只收不发。
+  final String? broadcastIp = await transport.lanBroadcastAddr();
   final Map<String, dynamic> config = <String, dynamic>{'data_dir': dataDir};
   if (localIp != null && localIp.isNotEmpty) {
     config['lan_addrs'] = <String>[localIp];
+  }
+  if (broadcastIp != null && broadcastIp.isNotEmpty) {
+    config['lan_broadcast_addr'] = broadcastIp;
   }
   return CoreSession(
     transport,

@@ -49,7 +49,11 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
         case "dataDir":
             result(NexmemCore.shared.dataDir)
         case "localIp":
-            result(Self.localIPAddress())
+            result(Self.en0IPv4())
+        case "lanBroadcastAddr":
+            // iOS 禁止向 255.255.255.255 受限广播发送（sendto: no route to host），
+            // 必须用 en0 的子网定向广播地址（如 192.168.10.255）。
+            result(Self.en0BroadcastIPv4())
         case "pickFile":
             pickFile(result)
         case "startService", "stopService":
@@ -69,16 +73,28 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
         return (call.arguments as? [String: Any]) ?? [:]
     }
 
-    /// 返回当前 Wi-Fi(en0) 的 IPv4 地址。用于注入内核，在 iOS 上补全
-    /// 局域网发现广播地址（本地网络权限由系统弹窗授权）。
-    private static func localIPAddress() -> String? {
+    /// 返回当前 Wi-Fi(en0) 的 IPv4 单播地址。用于注入内核补全宣告地址
+    /// （本地网络权限由系统弹窗授权）。
+    private static func en0IPv4() -> String? {
+        return en0IPv4(wantBroadcast: false)
+    }
+
+    /// 返回 en0 的子网定向广播地址（如 192.168.10.255）。iOS 不允许向
+    /// 255.255.255.255 受限广播发送（sendto: no route to host），必须注入
+    /// 定向广播，否则 LAN Beacon 只收不发。
+    private static func en0BroadcastIPv4() -> String? {
+        return en0IPv4(wantBroadcast: true)
+    }
+
+    private static func en0IPv4(wantBroadcast: Bool) -> String? {
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return nil }
         defer { freeifaddrs(ifaddr) }
         var ptr: UnsafeMutablePointer<ifaddrs>? = first
         while let current = ptr {
             let iface = String(cString: current.pointee.ifa_name)
-            let addr = current.pointee.ifa_addr
+            // AF_INET 时 ifa_dstaddr 即广播地址（ifa_broadaddr 与其为 union）。
+            let addr = wantBroadcast ? current.pointee.ifa_dstaddr : current.pointee.ifa_addr
             if iface == "en0", let addr = addr, addr.pointee.sa_family == UInt8(AF_INET) {
                 var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                 let ok = getnameinfo(

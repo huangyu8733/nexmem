@@ -24,6 +24,23 @@ func TestLanIPFromMultiaddrs(t *testing.T) {
 	}
 }
 
+func TestBroadcastTargetIP(t *testing.T) {
+	// iOS 注入子网定向广播时必须原样采用。
+	if got := broadcastTargetIP("192.168.10.255").String(); got != "192.168.10.255" {
+		t.Fatalf("定向广播 = %q，期望 192.168.10.255", got)
+	}
+	// 空值或非法值回退到受限广播，兼容 Android/桌面/Web。
+	if got := broadcastTargetIP(""); !got.Equal(net.IPv4bcast) {
+		t.Fatalf("空目标应回退受限广播，实际 %q", got)
+	}
+	if got := broadcastTargetIP("not-an-ip"); !got.Equal(net.IPv4bcast) {
+		t.Fatalf("非法目标应回退受限广播，实际 %q", got)
+	}
+	if got := broadcastTargetIP("::1"); !got.Equal(net.IPv4bcast) {
+		t.Fatalf("IPv6 目标应回退受限广播，实际 %q", got)
+	}
+}
+
 func TestLANBeaconBindsBroadcastToLANIP(t *testing.T) {
 	probe, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: LANBeaconPort})
 	if err != nil {
@@ -34,7 +51,7 @@ func TestLANBeaconBindsBroadcastToLANIP(t *testing.T) {
 	acc, _ := identity.GenerateAccount()
 	b, err := StartLANBeacon(acc, "12D3KooWSelf", "演示", []string{
 		"/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSelf",
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("启动 LAN Beacon: %v", err)
 	}

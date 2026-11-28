@@ -46,19 +46,23 @@ type LANBeacon struct {
 	name    string
 	addrs   []string // 本机局域网宣告地址（含 /p2p/<peerID>）
 
-	mu            sync.RWMutex
-	peers         map[string]LANPeer // key = accountID
-	conn          *net.UDPConn       // 0.0.0.0:5357，负责接收
-	broadcastConn *net.UDPConn       // 绑定局域网 IP 的临时端口，负责发送
-	broadcastAddr string            // 实际绑定的源 IP；空串表示回退到 conn
-	broadcastSent uint64            // 成功广播次数（用于确认 iOS 真的发出过包）
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	broadcastErr  string // 最近一次广播失败原因（iOS 权限/路由问题可观测）
+	mu              sync.RWMutex
+	peers           map[string]LANPeer // key = accountID
+	conn            *net.UDPConn       // 0.0.0.0:5357，负责接收
+	broadcastConn   *net.UDPConn       // 绑定局域网 IP 的临时端口，负责发送
+	broadcastAddr   string             // 实际绑定的源 IP；空串表示回退到 conn
+	broadcastTarget string             // 定向广播地址（如 192.168.10.255）；空串用 255.255.255.255
+	broadcastSent   uint64             // 成功广播次数（用于确认 iOS 真的发出过包）
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	broadcastErr    string // 最近一次广播失败原因（iOS 权限/路由问题可观测）
 }
 
 // StartLANBeacon 启动局域网广播发现。account 为空或无局域网地址时返回错误。
-func StartLANBeacon(account *identity.Account, peerID, displayName string, lanMultiaddrs []string) (*LANBeacon, error) {
+// broadcastAddr 是可选的定向广播地址（如 192.168.10.255）；iOS 不允许向
+// 255.255.255.255 受限广播发送（sendto: no route to host），必须传定向广播。
+// 留空时回退到 255.255.255.255，兼容 Android/桌面/Web。
+func StartLANBeacon(account *identity.Account, peerID, displayName string, lanMultiaddrs []string, broadcastAddr string) (*LANBeacon, error) {
 	if account == nil || len(lanMultiaddrs) == 0 {
 		return nil, &beaconError{"账号或局域网地址为空"}
 	}
@@ -82,12 +86,13 @@ func StartLANBeacon(account *identity.Account, peerID, displayName string, lanMu
 	// 绑定失败时保留旧行为（用接收 socket 发送），并把原因暴露在诊断里。
 	lanIP := lanIPFromMultiaddrs(lanMultiaddrs)
 	b := &LANBeacon{
-		account: account,
-		peerID:  peerID,
-		name:    displayName,
-		addrs:   lanMultiaddrs,
-		peers:   map[string]LANPeer{},
-		conn:    conn,
+		account:         account,
+		peerID:          peerID,
+		name:            displayName,
+		addrs:           lanMultiaddrs,
+		peers:           map[string]LANPeer{},
+		conn:            conn,
+		broadcastTarget: broadcastAddr,
 	}
 	if lanIP != "" {
 		sendConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(lanIP), Port: 0})
@@ -109,6 +114,16 @@ func StartLANBeacon(account *identity.Account, peerID, displayName string, lanMu
 	go b.broadcastLoop(ctx)
 	go b.receiveLoop(ctx)
 	return b, nil
+}
+
+// broadcastTargetIP 返回广播目标地址。iOS 不允许向受限广播 255.255.255.255
+// 发送（sendto: no route to host），必须改用子网定向广播（如 192.168.10.255）。
+// 注入值不是合法 IPv4 时回退到受限广播，兼容 Android/桌面/Web。
+func broadcastTargetIP(target string) net.IP {
+	if ip := net.ParseIP(target); ip != nil && ip.To4() != nil {
+		return ip.To4()
+	}
+	return net.IPv4bcast
 }
 
 // lanIPFromMultiaddrs 从宣告地址中取第一个可用 IPv4。
@@ -169,7 +184,7 @@ func (b *LANBeacon) broadcastOnce() {
 		addr = b.addrs[0]
 	}
 	payload := lanBeaconMagic + card + "|" + base64.RawURLEncoding.EncodeToString([]byte(addr))
-	dst := &net.UDPAddr{IP: net.IPv4bcast, Port: LANBeaconPort}
+	dst := &net.UDPAddr{IP: broadcastTargetIP(b.broadcastTarget), Port: LANBeaconPort}
 	conn := b.conn
 	if b.broadcastConn != nil {
 		conn = b.broadcastConn

@@ -164,6 +164,19 @@ class AndroidTransport implements CoreTransport {
     }
   }
 
+  /// 局域网子网定向广播地址（如 192.168.10.255）。iOS 专用：系统禁止向
+  /// 255.255.255.255 受限广播发送，必须由原生层提供定向广播地址。
+  /// Android/桌面插件未实现该 channel 时返回 null，内核回退到受限广播。
+  Future<String?> lanBroadcastAddr() async {
+    try {
+      return await _channel.invokeMethod<String>('lanBroadcastAddr');
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
   /// 拉起系统文件选择器并返回本机副本（P2-08）。
   ///
   /// 原生侧把 `content://` 复制到应用缓存目录后回传绝对路径；用户取消返回 null。
