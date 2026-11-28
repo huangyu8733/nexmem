@@ -488,7 +488,8 @@ class _ContactDetailPageState extends State<ContactDetailPage> {
             const SizedBox(height: NexmemMetrics.space12),
             OutlinedButton.icon(
               key: const ValueKey<String>('contact-remote-button'),
-              onPressed: _contact.blocked ? null : widget.onStartRemote,
+              // 远控不校验好友/黑名单：聊天发起由对方确认，密码远控由密码授权。
+              onPressed: widget.onStartRemote,
               icon: const Icon(Icons.desktop_windows_outlined, size: 18),
               label: Text(context.t('远程控制')),
             ),

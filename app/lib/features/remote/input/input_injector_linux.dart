@@ -7,6 +7,7 @@ import 'dart:ffi' as ffi;
 import 'dart:io';
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/services.dart';
 
 import '../remote_input_codec.dart';
 import '../remote_session.dart';
@@ -92,6 +93,34 @@ class LinuxInputInjector implements DesktopInputInjector {
   bool get supportsInput => _available && !_wayland;
 
   @override
+  TargetPlatform get hostPlatform => TargetPlatform.linux;
+
+  @override
+  Future<void> combo(String comboKey, {int modifiers = 0}) async {
+    final List<String> mods = RemoteKeyMap.modifierKeysFor(
+      modifiers,
+      platform: TargetPlatform.linux,
+    );
+    for (final String mod in mods) {
+      await key(mod, down: true, modifiers: modifiers);
+    }
+    await key(comboKey, down: true, modifiers: modifiers);
+    await key(comboKey, down: false, modifiers: modifiers);
+    for (final String mod in mods.reversed) {
+      await key(mod, down: false);
+    }
+  }
+
+  @override
+  Future<void> touch(
+    String phase,
+    List<Map<String, int>> points, {
+    int modifiers = 0,
+  }) async {
+    // X11 无通用多点注入 API；触控经 pinch → Ctrl+滚轮路径处理。
+  }
+
+  @override
   String get permissionHint => _wayland
       ? 'Wayland 会话不支持全局输入注入，请切换到 X11 会话'
       : 'X11 下无需额外授权；Wayland 仅能查看屏幕';
@@ -116,9 +145,28 @@ class LinuxInputInjector implements DesktopInputInjector {
     final int x = display.x + (event.xNorm / 65535.0 * (display.width - 1)).round();
     final int y = display.y + (event.yNorm / 65535.0 * (display.height - 1)).round();
     _fakeMotion(_display, -1, x, y, 0);
-    if (event.type == RemotePointerType.wheel) {
+    if (event.type == RemotePointerType.wheel ||
+        event.type == RemotePointerType.pinch) {
+      // pinch 带 control 修饰；X11 下 Ctrl+button4/5 即缩放手势。
+      final List<String> held = RemoteKeyMap.modifierKeysFor(
+        event.modifiers,
+        platform: TargetPlatform.linux,
+      );
+      final List<int> heldCodes = <int>[
+        for (final String mod in held) _keyCode(mod),
+      ];
+      for (final int code in heldCodes) {
+        if (code != 0) {
+          _fakeKey(_display, code, 1, 0);
+        }
+      }
       _wheel(event.wheelY, 4, 5);
       _wheel(event.wheelX, 6, 7);
+      for (final int code in heldCodes.reversed) {
+        if (code != 0) {
+          _fakeKey(_display, code, 0, 0);
+        }
+      }
       _flush(_display);
       return;
     }
@@ -136,6 +184,13 @@ class LinuxInputInjector implements DesktopInputInjector {
     if (changed & RemoteButtons.right != 0) {
       _fakeButton(_display, 3, event.buttons & RemoteButtons.right != 0 ? 1 : 0, 0);
     }
+    // X11 侧键：button 8 = X1（back），button 9 = X2（forward）。
+    if (changed & RemoteButtons.back != 0) {
+      _fakeButton(_display, 8, event.buttons & RemoteButtons.back != 0 ? 1 : 0, 0);
+    }
+    if (changed & RemoteButtons.forward != 0) {
+      _fakeButton(_display, 9, event.buttons & RemoteButtons.forward != 0 ? 1 : 0, 0);
+    }
     _buttons = event.buttons;
     _flush(_display);
   }
@@ -152,30 +207,35 @@ class LinuxInputInjector implements DesktopInputInjector {
     }
   }
 
-  @override
-  Future<void> key(String key, {required bool down, int modifiers = 0}) async {
-    if (!supportsInput) {
-      return;
-    }
+  /// 逻辑键名 → X11 keycode；不支持或解析失败返回 0。
+  int _keyCode(String key) {
     final String? keysym = RemoteKeyMap.x11Keysyms[key];
     if (keysym == null) {
-      return;
+      return 0;
     }
     final ffi.Pointer<ffi.Char> name = keysym.toNativeUtf8().cast<ffi.Char>();
     try {
       final int sym = _stringToKeysym(name);
       if (sym == 0) {
-        return;
+        return 0;
       }
-      final int code = _keysymToKeycode(_display, sym);
-      if (code == 0) {
-        return;
-      }
-      _fakeKey(_display, code, down ? 1 : 0, 0);
-      _flush(_display);
+      return _keysymToKeycode(_display, sym);
     } finally {
       calloc.free(name);
     }
+  }
+
+  @override
+  Future<void> key(String key, {required bool down, int modifiers = 0}) async {
+    if (!supportsInput) {
+      return;
+    }
+    final int code = _keyCode(key);
+    if (code == 0) {
+      return;
+    }
+    _fakeKey(_display, code, down ? 1 : 0, 0);
+    _flush(_display);
   }
 
   @override

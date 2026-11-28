@@ -111,6 +111,7 @@ class AccountSecurityDialog extends StatelessWidget {
     return AlertDialog(
       title: Text(context.t('账号与安全')),
       content: responsiveDialogContent(
+        context: context,
         maxWidth: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -251,6 +252,7 @@ class _BackupFlowDialogState extends State<_BackupFlowDialog> {
     return AlertDialog(
       title: Text(_isExport ? context.t('导出备份') : context.t('导入备份')),
       content: responsiveDialogContent(
+        context: context,
         maxWidth: 360,
         child: SingleChildScrollView(
           child: Column(

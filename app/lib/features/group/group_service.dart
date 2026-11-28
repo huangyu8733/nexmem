@@ -15,6 +15,8 @@ class GroupSummary {
     this.storageConfigured = false,
     this.announcement = '',
     this.alias = '',
+    this.avatarB64 = '',
+    this.description = '',
   });
 
   factory GroupSummary.fromJson(Map<String, dynamic> json) {
@@ -35,6 +37,8 @@ class GroupSummary {
       storageConfigured: json['storage_configured'] == true,
       announcement: json['announcement'] is String ? json['announcement'] as String : '',
       alias: json['alias'] is String ? json['alias'] as String : '',
+      avatarB64: json['avatar_b64'] is String ? json['avatar_b64'] as String : '',
+      description: json['description'] is String ? json['description'] as String : '',
     );
   }
 
@@ -56,7 +60,25 @@ class GroupSummary {
   /// 本机群备注；空串表示未设置，仅本机可见（P6-27）。
   final String alias;
 
+  /// 群头像（512x512 JPEG base64）；空串表示未设置。
+  final String avatarB64;
+
+  /// 群介绍正文；空串表示未设置。
+  final String description;
+
   bool get isAdmin => role == 'admin';
+
+  /// 解码后的群头像字节；base64 非法时返回 null，UI 回退为图标占位。
+  Uint8List? get avatarBytes {
+    if (avatarB64.isEmpty) {
+      return null;
+    }
+    try {
+      return base64.decode(avatarB64);
+    } on FormatException {
+      return null;
+    }
+  }
 
   /// 展示标题：群备注优先于群名，均为空时回退占位（P6-27）。
   String get displayTitle {
@@ -245,6 +267,8 @@ class GroupInfo {
     this.allowFriendAdd = false,
     this.levelEnabled = false,
     this.levels = const <GroupLevel>[],
+    this.avatarB64 = '',
+    this.description = '',
   });
 
   factory GroupInfo.fromJson(Map<String, dynamic> json) {
@@ -273,6 +297,8 @@ class GroupInfo {
       allowFriendAdd: json['allow_friend_add'] == true,
       levelEnabled: json['level_enabled'] == true,
       levels: GroupLevels.fromJson(json).items,
+      avatarB64: json['avatar_b64'] is String ? json['avatar_b64'] as String : '',
+      description: json['description'] is String ? json['description'] as String : '',
       members: members,
     );
   }
@@ -297,7 +323,25 @@ class GroupInfo {
   final bool levelEnabled;
   final List<GroupLevel> levels;
 
+  /// 群头像（512x512 JPEG base64）；空串表示未设置。
+  final String avatarB64;
+
+  /// 群介绍正文；空串表示未设置。
+  final String description;
+
   final List<GroupMember> members;
+
+  /// 解码后的群头像字节；base64 非法时返回 null，UI 回退为图标占位。
+  Uint8List? get avatarBytes {
+    if (avatarB64.isEmpty) {
+      return null;
+    }
+    try {
+      return base64.decode(avatarB64);
+    } on FormatException {
+      return null;
+    }
+  }
 
   /// 局部更新群资料，避免界面保存公告/备注时漏掉等级与群设置字段。
   GroupInfo copyWith({
@@ -309,6 +353,8 @@ class GroupInfo {
     bool? allowFriendAdd,
     bool? levelEnabled,
     List<GroupLevel>? levels,
+    String? avatarB64,
+    String? description,
     List<GroupMember>? members,
   }) =>
       GroupInfo(
@@ -321,6 +367,8 @@ class GroupInfo {
         allowFriendAdd: allowFriendAdd ?? this.allowFriendAdd,
         levelEnabled: levelEnabled ?? this.levelEnabled,
         levels: levels ?? this.levels,
+        avatarB64: avatarB64 ?? this.avatarB64,
+        description: description ?? this.description,
         members: members ?? this.members,
       );
 
@@ -403,6 +451,37 @@ class GroupStorageConfig {
   }
 }
 
+/// `group.invite` 的详细回包。
+///
+/// 新内核会在目标档案/XPub 暂不可用时返回 [pending]：成员已写入本机群成员表、
+/// 邀请通知已尽量投递，但群密钥信封还在等待目标补齐档案。客户端应提示
+/// 「待同步」而不是简单报「拉人失败」。旧内核缺少可选字段时按成功处理。
+class GroupInviteResult {
+  const GroupInviteResult({
+    required this.keyVersion,
+    this.failed = 0,
+    this.inviteSent = false,
+    this.pending = false,
+    this.deliveryError = '',
+    this.inviteError = '',
+  });
+
+  final int keyVersion;
+  final int failed;
+  final bool inviteSent;
+  final bool pending;
+  final String deliveryError;
+  final String inviteError;
+
+  /// 给管理员展示的主因；优先展示邀请通知失败，其次展示密钥投递失败。
+  String get detail {
+    if (inviteError.isNotEmpty) {
+      return inviteError;
+    }
+    return deliveryError;
+  }
+}
+
 /// 群聊数据源：`group.create` / `group.list` / `group.members` / `group.invite`
 /// / `group.remove` / `group.leave` / `group.dissolve`。
 abstract class GroupService {
@@ -417,6 +496,12 @@ abstract class GroupService {
 
   /// 邀请账号入群（仅管理员），返回新的密钥版本。
   Future<int> invite(String groupId, String account);
+
+  /// 邀请账号入群并返回投递状态；旧内核/假实现默认退化为 [invite]。
+  Future<GroupInviteResult> inviteDetailed(String groupId, String account) async {
+    final int version = await invite(groupId, account);
+    return GroupInviteResult(keyVersion: version);
+  }
 
   /// 把成员移出群并轮换密钥（仅管理员），返回新的密钥版本。
   Future<int> remove(String groupId, String account);
@@ -435,6 +520,14 @@ abstract class GroupService {
 
   /// 设置群公告（仅管理员）：空串表示清除，最多 512 字；返回内核保存的文本（P6-26）。
   Future<String> setAnnouncement(String groupId, String announcement);
+
+  /// 设置群头像（仅管理员）：512x512 JPEG 的 base64，空串表示清除。
+  Future<String> setAvatar(String groupId, String avatarB64) =>
+      throw UnimplementedError('setAvatar 未实现');
+
+  /// 设置群介绍（仅管理员）：空串表示清除，最多 512 字。
+  Future<String> setDescription(String groupId, String description) =>
+      throw UnimplementedError('setDescription 未实现');
 
   /// 开关「允许群成员互加好友」（仅管理员），返回内核保存的开关值。
   Future<bool> setAllowFriendAdd(String groupId, bool enabled);
@@ -517,8 +610,37 @@ class TransportGroupService implements GroupService {
   }
 
   @override
-  Future<int> invite(String groupId, String account) =>
-      _memberMutation('group.invite', groupId, account);
+  Future<int> invite(String groupId, String account) async =>
+      (await inviteDetailed(groupId, account)).keyVersion;
+
+  @override
+  Future<GroupInviteResult> inviteDetailed(String groupId, String account) async {
+    final Map<String, dynamic> data = await transport.call(
+      'group.invite',
+      params: <String, dynamic>{'group_id': groupId, 'account': account},
+    );
+    final Object? version = data['key_version'];
+    if (version is! num) {
+      throw const NexmemException('BAD_RESPONSE', 'group.invite 缺少 key_version');
+    }
+    final Object? failed = data['failed'];
+    final bool inviteSent = data['invite_sent'] == true;
+    final bool pending = data.containsKey('pending')
+        ? data['pending'] == true
+        : failed is num && failed.toInt() > 0;
+    return GroupInviteResult(
+      keyVersion: version.toInt(),
+      failed: failed is num ? failed.toInt() : 0,
+      inviteSent: inviteSent,
+      pending: pending,
+      deliveryError: data['delivery_error'] is String
+          ? data['delivery_error'] as String
+          : '',
+      inviteError: data['invite_error'] is String
+          ? data['invite_error'] as String
+          : '',
+    );
+  }
 
   @override
   Future<int> remove(String groupId, String account) =>
@@ -576,6 +698,44 @@ class TransportGroupService implements GroupService {
       );
     }
     return text;
+  }
+
+  @override
+  Future<String> setAvatar(String groupId, String avatarB64) async {
+    final Map<String, dynamic> data = await transport.call(
+      'group.setAvatar',
+      params: <String, dynamic>{
+        'group_id': groupId,
+        'avatar_b64': avatarB64,
+      },
+    );
+    final Object? saved = data['avatar_b64'];
+    if (saved is! String) {
+      throw const NexmemException(
+        'BAD_RESPONSE',
+        'group.setAvatar 缺少 avatar_b64',
+      );
+    }
+    return saved;
+  }
+
+  @override
+  Future<String> setDescription(String groupId, String description) async {
+    final Map<String, dynamic> data = await transport.call(
+      'group.setDescription',
+      params: <String, dynamic>{
+        'group_id': groupId,
+        'description': description,
+      },
+    );
+    final Object? saved = data['description'];
+    if (saved is! String) {
+      throw const NexmemException(
+        'BAD_RESPONSE',
+        'group.setDescription 缺少 description',
+      );
+    }
+    return saved;
   }
 
   @override
@@ -708,6 +868,11 @@ class UnavailableGroupService implements GroupService {
   }
 
   @override
+  Future<GroupInviteResult> inviteDetailed(String groupId, String account) async {
+    throw const NexmemException('NOT_STARTED', '群聊服务尚未接入内核');
+  }
+
+  @override
   Future<int> remove(String groupId, String account) async {
     throw const NexmemException('NOT_STARTED', '群聊服务尚未接入内核');
   }
@@ -737,6 +902,16 @@ class UnavailableGroupService implements GroupService {
 
   @override
   Future<String> setAnnouncement(String groupId, String announcement) async {
+    throw const NexmemException('NOT_STARTED', '群聊服务尚未接入内核');
+  }
+
+  @override
+  Future<String> setAvatar(String groupId, String avatarB64) async {
+    throw const NexmemException('NOT_STARTED', '群聊服务尚未接入内核');
+  }
+
+  @override
+  Future<String> setDescription(String groupId, String description) async {
     throw const NexmemException('NOT_STARTED', '群聊服务尚未接入内核');
   }
 

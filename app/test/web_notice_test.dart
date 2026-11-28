@@ -22,6 +22,10 @@ void main() {
     );
 
     expect(find.byKey(const ValueKey<String>('web-online-notice')), findsOne);
+    final Container banner = tester.widget<Container>(
+      find.byKey(const ValueKey<String>('web-online-notice')),
+    );
+    expect(banner.color?.a, 1.0, reason: 'Web 提示条必须是不透明实色');
     expect(find.text('浏览器关闭后不再实时接收消息，离线消息将在下次打开时补齐。'), findsOne);
 
     await tester.tap(

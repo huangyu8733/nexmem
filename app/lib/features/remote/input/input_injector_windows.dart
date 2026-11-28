@@ -5,6 +5,8 @@
 
 import 'dart:ffi' as ffi;
 
+import 'package:flutter/services.dart';
+
 import '../remote_input_codec.dart';
 import '../remote_session.dart';
 import 'desktop_input_injector.dart';
@@ -44,11 +46,43 @@ class WindowsInputInjector implements DesktopInputInjector {
   static const int _middleUp = 0x0040;
   static const int _wheel = 0x0800;
   static const int _hwheel = 0x01000;
+  static const int _xDown = 0x0080;
+  static const int _xUp = 0x0100;
+  static const int _xButton1 = 0x0001;
+  static const int _xButton2 = 0x0002;
   static const int _keyUp = 0x0002;
   static const int _extended = 0x0001;
 
   @override
   bool get supportsInput => _available;
+
+  @override
+  TargetPlatform get hostPlatform => TargetPlatform.windows;
+
+  @override
+  Future<void> combo(String comboKey, {int modifiers = 0}) async {
+    final List<String> mods = RemoteKeyMap.modifierKeysFor(
+      modifiers,
+      platform: TargetPlatform.windows,
+    );
+    for (final String mod in mods) {
+      await key(mod, down: true, modifiers: modifiers);
+    }
+    await key(comboKey, down: true, modifiers: modifiers);
+    await key(comboKey, down: false, modifiers: modifiers);
+    for (final String mod in mods.reversed) {
+      await key(mod, down: false);
+    }
+  }
+
+  @override
+  Future<void> touch(
+    String phase,
+    List<Map<String, int>> points, {
+    int modifiers = 0,
+  }) async {
+    // Windows 无通用多点注入 API；触控经 pinch → Ctrl+滚轮路径处理。
+  }
 
   @override
   String get permissionHint => '无需额外授权；UAC 提权窗口无法被普通权限的远控操作';
@@ -72,13 +106,11 @@ class WindowsInputInjector implements DesktopInputInjector {
     final int x = _xFor(display, event.xNorm);
     final int y = _yFor(display, event.yNorm);
     _setCursorPos(x, y);
-    if (event.type == RemotePointerType.wheel) {
-      if (event.wheelY != 0) {
-        _mouseEvent(_wheel, 0, 0, event.wheelY * 120, 0);
-      }
-      if (event.wheelX != 0) {
-        _mouseEvent(_hwheel, 0, 0, event.wheelX * 120, 0);
-      }
+    if (event.type == RemotePointerType.wheel ||
+        event.type == RemotePointerType.pinch) {
+      // pinch 带 control 修饰位；Windows 上 Ctrl+滚轮是通用缩放手势，
+      // _wheelWithModifiers 会临时按下修改键以保证应用识别为缩放。
+      _wheelWithModifiers(event);
       return;
     }
     if (event.type == RemotePointerType.move) {
@@ -112,6 +144,25 @@ class WindowsInputInjector implements DesktopInputInjector {
         0,
       );
     }
+    // X1/X2 侧键：mouse_event 的 XDOWN/XUP + XBUTTON1/2 数据位。
+    if (changed & RemoteButtons.back != 0) {
+      _mouseEvent(
+        event.buttons & RemoteButtons.back != 0 ? _xDown : _xUp,
+        0,
+        0,
+        _xButton1,
+        0,
+      );
+    }
+    if (changed & RemoteButtons.forward != 0) {
+      _mouseEvent(
+        event.buttons & RemoteButtons.forward != 0 ? _xDown : _xUp,
+        0,
+        0,
+        _xButton2,
+        0,
+      );
+    }
     _buttons = event.buttons;
   }
 
@@ -136,6 +187,32 @@ class WindowsInputInjector implements DesktopInputInjector {
     throw UnsupportedError('Windows 端文本输入经剪贴板粘贴实现');
   }
 
+  /// 滚动事件：pinch 带 control 修饰时临时按住 Ctrl，使应用识别为缩放。
+  void _wheelWithModifiers(RemotePointerEvent event) {
+    final List<String> held = RemoteKeyMap.modifierKeysFor(
+      event.modifiers,
+      platform: TargetPlatform.windows,
+    );
+    for (final String mod in held) {
+      final int? code = RemoteKeyMap.windowsVirtualKeys[mod];
+      if (code != null) {
+        _keybdEvent(code, 0, 0, 0);
+      }
+    }
+    if (event.wheelY != 0) {
+      _mouseEvent(_wheel, 0, 0, event.wheelY * 120, 0);
+    }
+    if (event.wheelX != 0) {
+      _mouseEvent(_hwheel, 0, 0, event.wheelX * 120, 0);
+    }
+    for (final String mod in held.reversed) {
+      final int? code = RemoteKeyMap.windowsVirtualKeys[mod];
+      if (code != null) {
+        _keybdEvent(code, 0, _keyUp, 0);
+      }
+    }
+  }
+
   static bool _isExtended(String key) => const <String>{
         'arrowUp',
         'arrowDown',
@@ -146,8 +223,14 @@ class WindowsInputInjector implements DesktopInputInjector {
         'pageUp',
         'pageDown',
         'delete',
+        'insert',
         'controlRight',
         'altRight',
+        'metaLeft',
+        'metaRight',
+        'contextMenu',
+        'numPadEnter',
+        'numPadDivide',
       }.contains(key);
 
   static int _xFor(RemoteDisplay display, int norm) {

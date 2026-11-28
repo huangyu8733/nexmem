@@ -50,10 +50,20 @@ class _FakeGroupService implements RemoteGroupService {
   Future<void> sendKey(String key, {required bool down, int modifiers = 0}) async {}
 
   @override
+  Future<void> sendCombo(String key, {int modifiers = 0}) async {}
+
+  @override
   Future<void> sendText(String text) async {}
 
   @override
   Future<void> sendPointer(RemotePointerEvent event) async {}
+
+  @override
+  Future<void> sendTouch(
+    String phase,
+    List<Map<String, int>> points, {
+    int modifiers = 0,
+  }) async {}
 
   @override
   Future<void> sendClipboardText(String text) async {}
@@ -284,6 +294,75 @@ void main() {
     expect(find.byType(RemoteGroupSheet), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('remote-group-type')), findsOneWidget);
     expect(find.byKey(const ValueKey<String>('remote-device-p1')), findsOneWidget);
+  });
+
+  testWidgets('会话掉线后重建页面会同步群控开关，避免出现假群控中',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final RemoteDeviceDirectory dir = RemoteDeviceDirectory(_MemoryStorage());
+    await dir.load();
+    await dir.add(peer: 'p1', name: '设备一', type: RemoteDeviceType.macos, nowMs: 1);
+    await dir.add(peer: 'p2', name: '设备二', type: RemoteDeviceType.macos, nowMs: 2);
+
+    final Map<String, RemoteGroupService> services = <String, RemoteGroupService>{
+      'p1': _FakeGroupService(_activeInfo('p1', '设备一')),
+      'p2': _FakeGroupService(_activeInfo('p2', '设备二')),
+    };
+    final RemoteGroupController group = RemoteGroupController(
+      services: services,
+      deviceTypeOf: (String peer) => dir.find(peer)?.type ?? RemoteDeviceType.other,
+    );
+    group.setGroupType(RemoteDeviceType.macos);
+    group.setEnabled(true);
+    expect(group.enabled, isTrue);
+
+    Widget buildPage() => MaterialApp(
+          home: RemoteDevicesPage(
+            directory: dir,
+            embedded: false,
+            actions: RemoteDevicesActions(
+              sessions: <String, RemoteInfo>{
+                'p1': _activeInfo('p1', '设备一'),
+                'p2': _activeInfo('p2', '设备二'),
+              },
+              groupController: group,
+            ),
+          ),
+        );
+    await tester.pumpWidget(buildPage());
+    await tester.pumpAndSettle();
+    final SwitchListTile enabledTile = tester.widget<SwitchListTile>(
+      find.byKey(const ValueKey<String>('remote-devices-group-enabled')),
+    );
+    expect(enabledTile.value, isTrue);
+
+    // 两台设备掉线：壳层重建时会对控制器调用 sync，目标不足两台自动退出群控。
+    services['p1'] = _FakeGroupService(null);
+    services['p2'] = _FakeGroupService(null);
+    group.sync();
+    expect(group.enabled, isFalse);
+
+    // 父级以新的会话快照重建页面（State 复用，不重跑 initState）。
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RemoteDevicesPage(
+          directory: dir,
+          embedded: false,
+          actions: RemoteDevicesActions(
+            sessions: const <String, RemoteInfo>{},
+            groupController: group,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final SwitchListTile afterTile = tester.widget<SwitchListTile>(
+      find.byKey(const ValueKey<String>('remote-devices-group-enabled')),
+    );
+    expect(afterTile.value, isFalse);
   });
 
   testWidgets('添加远程设备必须填写密码并只保存校验值', (WidgetTester tester) async {

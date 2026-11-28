@@ -459,3 +459,77 @@
 - 数据与权限：内核设置快照加入白名单，只导出/导入 `ui./profile./push./developer./device./startup.` 与显式中继键，不再覆盖 `net.peerbook`、`fs.shares` 等内部 KV；`GroupInfo.copyWith()` 保留等级/群设置字段，公告与群备注保存不再丢数据；账号删除弹窗的「同时删除本机数据」勾选真正传入 `deleteAccount()`；启动按活跃档案的 `data_dir` 恢复内核，`syncCurrentAccount()` 不再用内核当前账号覆盖已有档案 ID；管理员可给自己设置非空等级，UI 与内核权限一致。
 - 验证：`flutter analyze --no-pub` 零问题；Flutter 全量 **694 通过 + 3 跳过**（干净环境）；`go test ./... -count=1` 全绿、`go vet ./...` 零问题；Web 重建并加缓存戳 `?v=20261127213657`。
 - 仍未覆盖：FCM/APNs/VAPID 真实凭证与宿主通道需二次开发者接入；群控真机测试需至少两台同类型在线被控端；文件共享授权仍只依赖 libp2p 身份与清单签名。
+
+## T57 拉人进群失败与邀请通知缺失修复（已完成）
+- [x] 根因：管理员拉人时 `group.invite` 先把目标账号解析为密钥信封地址，X25519 公钥只从信令服务器公开档案读取；局域网加好友、未配置目录服务或档案未发布时，`ResolveTarget` 直接失败并返回 `PEER_UNREACHABLE`，管理员端显示「拉人失败」，对方完全不知道被邀请。
+- [x] 好友控制帧交换公钥：`friend.request` / `friend.accept` 的 `Extra` 携带本机 `account_x_pub`；接收方写入本地联系人新列 `account_x_pub`（迁移 `0013_contact_x_pub.sql`）。升级前的老好友由新增 `key.xpubRequest` / `key.xpubResponse` 控制帧在拉群时按需握手补齐。`coreapp` 的群目标 XPub 解析改为「目录服务/注入解析器 → 本地联系人缓存 → 在线好友按需握手」回退，好友拉群在有局域网连接、无公开档案时也能封装密钥信封。
+- [x] 显式邀请通知：新增社交控制帧 `group.invited`（`KindGroupInvited`），管理员主动拉人后由 `group.Gateway.OnInvite` 接到 `social.SendGroupInvite()`；被邀请人落系统通知并收到 `group.invited` 事件，社交中心即时刷新。契约事件同步增加 `group.invited`。
+- [x] 待同步语义：`group.invite` 不再因新成员 XPub/地址解析失败直接硬失败；成员写入本机成员表，回包新增 `invite_sent` / `pending` / `delivery_error` / `invite_error`，客户端 `GroupInviteResult.inviteDetailed()` 区分「已邀请、待同步」与真正失败；旧内核缺少可选字段时按成功兼容。
+- [x] 测试：新增 `TestGroupGatewayInvitePendingNotice`、`TestGroupInviteNoticeFlow`、`TestFriendRequestCarriesXPub`、`TestXPubRequestResponse`，Dart 新增待同步回包解析用例；六语补 1 条「待同步」文案；README 同步说明。
+- 验证：`flutter analyze` 零问题；Flutter 全量 **783 passed / 3 skipped**；`go -C core test ./...` 全绿；契约已重生成。
+
+## T58 聊天图片发送格式扩展（已完成）
+- [x] 用户反馈「发送图片格式太少」。桌面/Web 图片选择器由 `FileType.image` 改为统一扩展名白名单，避免各平台默认图片过滤器只放行 JPEG/PNG；手机端继续走系统相册的 `image/*` / PHPicker images，覆盖相册内全部图片类型。
+- [x] `chat_message.dart` 的图片扩展名与 MIME 映射补齐：PNG、JPEG/JFIF、GIF、WebP、BMP、HEIC/HEIF、TIFF、AVIF、ICO；发送前自动补齐 MIME，接收端据此识别为图片附件。TIFF/AVIF 等内核解码不了的格式仍可发送，气泡解码失败时降级为占位图标并保留打开/保存入口。
+- [x] `media_viewer.dart` 图片分类与附件图标正则同步补齐新格式；非图片提示文案六语同步新增 1 条；README 说明支持的图片格式。
+- [x] 测试：`media_viewer_fullscreen_test.dart` 新增常用格式统一识别用例，`chat_page_test.dart` 更新提示文案断言。
+- 验证：`flutter analyze` 零问题；Flutter 全量 **784 passed / 3 skipped**。
+
+## T59 保存类弹窗统一关闭逻辑（已完成）
+- [x] 用户要求「设置成员资料，点击保存应该要关闭弹框。其他地方也要是这样的逻辑，检查一下」。全局审计 `app/lib` 中所有 `showAppDialog` / `showPaneDialog` / `AlertDialog` 的保存按钮，按「保存成功关闭、失败保留并显示错误」统一。
+- [x] 群成员资料与群等级弹窗原本已有成功 pop，但错误分支未兜底空 message：新增 `_describeSaveError()`，`NexmemException.message` 为空时回退错误码；成员资料/等级保存统一走 `Navigator.of(context, rootNavigator: true).pop(...)`，避免嵌套导航时弹错上层路由。成员资料保存失败时弹窗保留并显示错误码。
+- [x] 窄屏「个人资料」编辑弹窗此前保存后停留在全屏 Dialog：`ProfileBody` 新增 `onTextSaved` 回调，仅文本字段保存成功后触发；`showProfileEditorDialog()` 传入关闭回调，宽屏内嵌面板不传，保持原地编辑。图片保存/移除仍按即时保存处理，不误触发关闭。
+- [x] 中继设置、发现设置、离线存储配置弹窗保存成功后自动 `Navigator.pop()`；失败分支保持弹窗并继续显示原有错误文案。群备注/群公告/群介绍、好友备注、设备编辑等「弹窗先返回输入值、调用方再落库」的入口保留既有交互，失败由调用方 toast 提示；开发者配置为内嵌面板而非弹窗，保持 SnackBar 反馈。
+- [x] 测试：`group_profile_test.dart` 新增成员资料保存失败保留弹窗且显示错误码；`settings_test.dart` 新增窄屏个人资料保存后自动关闭；`relay_settings_test.dart` 新增独立弹窗保存后自动关闭；中继/离线存储原有「保存后提示」断言改为「弹窗已关闭」。
+- 验证：`flutter analyze` 零问题；Flutter 全量 **787 passed / 3 skipped**；`go -C core test ./...` 全绿。
+
+## T60 Web/桌面/手机/平板全端交互、显示与实时性修正（已完成）
+- [x] 用户要求「检查整个系统在 web 下，电脑下，手机下，平板下，有没有操作不合理，显示不合理，信息不实时更新的，全部要修正」。按显示、交互、实时性三条线并行审计后逐项修复。
+- 显示与布局：`theme.dart` 的 `responsiveDialogContent()` 新增 `BuildContext? context`，对可滚动内容按屏幕高度限高（120~560），修复群成员/群等级、中继、发现、离线存储、联系人分组、远程设备/本机位置、群邀请、群头像/介绍、二维码结果等弹窗在窄屏撑满并顶掉按钮的问题；桌面「账号与安全」去掉重复标题栏；设备发现断点统一；Web 内置浏览器窄屏隐藏前进/刷新但保留地址栏；`onPrimary` / `bubbleSelf` 改深色提升白字对比度；PWA `manifest.json` 改为 `orientation: any`，不再锁竖屏。
+- 交互：Web 内置浏览器 iframe 补 `load` 回执、本地历史栈、刷新 nonce 与 Android 返回键优先回退网页；`buildBrowserViewport` 全平台统一 `Key? key`；按住说话用 serial + pending future 修复权限弹窗期间松手竞态，录音过短提示「录音时间太短，未发送」；图片二维码识别增加 `qrImageDecodeSupported` 能力探测，Web/桌面提示改用摄像头扫码；媒体查看器视频旋转按钮只在移动端显示；`.tar` 附件改用 `TarDecoder()`；Web 文件保存区分「开始下载」与最终保存并补失败提示；iOS 隐藏不可用的本地文件夹发布入口；语音气泡播放按钮触控区扩到 48×48 并用 `Flexible` 防止窄气泡溢出。
+- 实时性：Web `WsTransport` 接入 `seqStore` + `localStorage` 事件水位，账号切换时清空；`AppShell` 注册生命周期观察，前后台切换后重拉会话/联系人/群/当前消息；`group.avatarChanged` / `group.descriptionChanged` / `group.dissolved` / `group.invited` / `group.joinResolved` 全部触发群资料刷新；`error` 事件弹 toast；`resync_required` 同时清空当前 `ChatStore` 与索引；`message.edited` / `message.expired` 刷新会话列表摘要；切到非消息分区时关闭活跃会话避免通知被抑制；社交中心事件白名单补 `group.invited` / `moment.new` / `poll.updated`。
+- 会话草稿：`ChatPage` / `ChatInputArea` / `ChatInputBar` 贯通 `initialDraft` / `onDraftChanged`，壳层按 `conversation.id` 保存，切换会话不串台、退出不丢失、发送后清空。
+- 测试与回归：新增「会话草稿回填/同步/发送后清空」用例；`storage_config_test.dart` 改用 `ensureVisible` 适配限高滚动弹窗。验证：`flutter analyze` 零问题；Flutter 全量 **788 passed / 3 skipped**；`go -C core test ./...` 全绿。
+- 口径：延续用户此前「先不要构建」要求，本轮未重建 Android / iOS / Web 安装包。
+
+## T61 聊天支持发送文件夹（已完成）
+- [x] 用户要求「发送文件可以选择发送文件夹」。在聊天输入工具条新增「文件夹」入口，选中目录后打包成 ZIP，作为普通附件走现有 `dm.sendFile` 通道，复用进度、重发、预览、保存与跨端传输链路。
+- [x] 新增 `folder_attachment.dart` / `folder_attachment_io.dart` / `folder_attachment_io_stub.dart`：原生端由平台选择器给出绝对路径，递归读取文件并保留相对目录结构生成 ZIP，写到临时目录；Web 端用 `<input webkitdirectory>` 读取文件字节，在内存打包后经鉴权 `/upload` 上传，把服务端路径交给内核。
+- [x] `CoreSession` 新增 `pickFolder` 注入点；Android 复用 MethodChannel `pickDirectory`，桌面复用系统目录对话框，Web 注入 `pickFolderAttachment`，iOS 新增 `pickDirectory` 原生目录选择器并把选中目录树复制到 Caches 固定路径。`shell.dart` 两处 `ChatPage` 均透传 `onPickFolder`。
+- [x] `ChatPage` / `ChatInputArea` / `ChatInputBar` 贯通 `onPickFolder`，仅在回调可用时显示 `Icons.folder_outlined` 按钮；选择取消静默返回，打包/发送失败显示「文件夹发送失败：{0}」。六语各补 3 条文案。
+- [x] 顺带修复 iOS 文件共享页：既然已有原生目录选择器，「选择文件夹 / 发布」入口不再对 iOS 隐藏，移除过时的「iOS 不支持发布本地文件夹」提示。
+- [x] 测试：`folder_attachment_test.dart` 验证目录递归打包、相对路径与取消选择；`chat_page_test.dart` 验证工具条入口、ZIP 附件透传与 `onSent` 回调；`l10n_test.dart` 校验六语一致。
+- 验证：`flutter analyze` 零问题；Flutter 全量 **791 passed / 3 skipped**；`go -C core test ./...` 全绿。
+- 口径：延续「先不要构建」，本轮未重建 Android / iOS / Web 安装包；iOS 原生目录选择器需下次构建安装后才可在真机验证。
+
+## T62 群分享与加群链路修复（已完成）
+- [x] 用户反馈「用户无法加群，发给他分享的群信息他也无法加入群」。审计定位四个高置信根因：群主账号只接受 hex 而分享文本用 base64url；入群申请控制帧未携带申请人 XPub；管理员同意入群时群 ID 只按 hex 解码；分享文本只有人类可读内容，缺少机器可解析链接与直接申请入口。
+- [x] 内核编码兼容：`social.decodeAccountPub()` 同时接受 32 字节 hex / base64url 群主账号，`RequestGroupJoin()` 统一把控制帧 `To` 归一为 hex；`coreapp.decodeGroupIDString()` 同时接受 hex / base64url 群 ID，`inviteGroupApplicant()` 可直接处理契约群 ID。
+- [x] 入群申请帧 `Extra` 携带申请人账号 X25519 公钥，管理员处理 `KindGroupJoinReq` 时调用 `rememberXPub()` 落本地联系人缓存；同意入群时无需好友关系或目录公开档案即可封装群密钥信封。
+- [x] 客户端新增 `group_share_link.dart`：构造/解析 `nexmem://group/join?g=...&o=...&n=...`，兼容旧版「群号 / 群主」纯文本。群资料页「分享群信息」复制文本同时附带可读说明和可点击/可解析链接。
+- [x] 聊天消息长按群分享内容出现「申请入群」菜单，壳层 `_requestGroupJoin()` 调用 `group.join.request` 并刷新群列表；社交中心「入群申请」页新增「加入群聊」按钮，粘贴分享信息后可直接提交申请，弹窗按 `responsiveDialogContent()` 限高。
+- [x] 六语补齐 7 条入群文案；测试覆盖 base64url 账号/群 ID、入群申请携带 XPub、管理员缓存 XPub、分享链接构造与解析、旧文本兼容、群资料复制、聊天菜单与社交中心粘贴入群。
+- 验证：`flutter analyze` 零问题；Flutter 全量 **797 passed / 3 skipped**；`go -C core test ./...` 全绿。
+- 口径：延续「先不要构建」，本轮未重建 Android / iOS / Web 安装包；需下次构建安装后才能做双端真机入群复验。
+
+## T63 最新版三端安装（已完成）
+- [x] 用户要求给苹果手机、安卓手机和本机 Mac 安装最新版用于手动测试，解除此前「先不要构建」限制。
+- [x] Android：补齐 `ANDROID_SDK_ROOT` / `ANDROID_HOME` / `ANDROID_NDK_HOME` / `JAVA_HOME` 后重建 AAR，`flutter build apk --release` 生成 229.9MB APK，通过无线 adb 安装到 `22081212C`，版本核对 `1.1.1`。
+- [x] iOS：重建 XCFramework，`flutter build ios --release` 自动签名（团队 `5TF5SYS3BC`），安装到在线设备「卢红娟」（`00008101-000670DE3E80001E`），版本核对 `1.1.1`；另一台「huangyu的iPhone」当前离线，未安装。
+- [x] macOS：重建 `bin/libnexmem.dylib` 并内置到 App；因 Xcode 解析空 `FlutterGeneratedPluginSwiftPackage` 时触发 `sandbox-exec: Operation not permitted`，从 `macos/Runner.xcodeproj/project.pbxproj` 移除该空 SPM 引用（插件仍由 CocoaPods 提供，工程已备份到 `/tmp/nexmem_macos_project.pbxproj.bak`），随后构建成功。App 安装到 `/Applications/nexmem_app.app`，ad-hoc 重签并启动验证，版本 `1.1.1`。
+- 验证：三端均已安装并核对版本；Android/iOS 已通过设备管理器确认，macOS 进程已启动。
+
+## T64 群语音/视频发起报错修复（已完成）
+- [x] 用户反馈群语音/视频提示“群 ID 必须为 16 字节的十六进制或 base64url 编码”。定位为 `shell.dart` 的 `_startCall()` 群聊分支把完整会话 ID `group:<base64url>` 直接传给 `_startGroupCall()`，后者又把它作为 `group_id` 传给 `group.members`，内核解析失败。
+- [x] 修复调用点为 `_startGroupCall(call, groupIdOf(item.id), video)`，与拉取群成员、@ 候选、群资料入口统一使用 `groupIdOf()` 去掉 `group:` 前缀。
+- [x] 验证：`flutter analyze` 零问题；通话相关测试通过；Flutter 全量 **797 passed / 3 skipped**。重建并重新安装 Android APK、iOS App（卢红娟）与 macOS App，Mac 端已重启加载修复版。
+- 口径：`huangyu的iPhone`（iPhone Air）仍显示 unavailable，未能安装；等待目标机真正接入后再装。
+
+## T65 版本号递增与三端重装（已完成）
+- [x] 用户反馈「关于我们的版本号，内核版本号都没有变化」。定位根因：客户端版本在 `settings_page.dart` 被硬编码为 `1.1.0`（与 pubspec 的 `1.1.1+1` 不一致），内核 `CoreVersion` 仍为 `0.1.0-dev`；两处都不会随修复自动变化。
+- [x] 版本统一：客户端 `app/pubspec.yaml` 从 `1.1.1+1` 递增到 `1.1.2+2`（Android versionCode=2 / versionName=1.1.2，iOS/macOS CFBundleShortVersionString=1.1.2 / CFBundleVersion=2）；About 页 `appVersion` 同步为 `1.1.2`；内核 `core/gateway/envelope.go` 的 `CoreVersion` 从 `0.1.0-dev` 递增到 `0.2.0-dev`。`APIVersion` 保持 `1.0.0`，契约未发生不兼容变更，避免误伤端内核协商。
+- [x] 同步契约用例 `core/contract/cases/baseline.json` 与 Flutter 测试中的内核版本期望；新增 `settings_test.dart` 版本一致性守卫，直接比对 `appVersion` 与 `pubspec.yaml` 的 `version`，防止以后再次出现「改了版本但关于页不变」。
+- [x] 验证：`flutter analyze` 零问题；Flutter 全量 **798 passed / 3 skipped**；`go -C core test ./...` 全绿。
+- [x] 重建全部内核产物（Android AAR、iOS XCFramework、macOS dylib）与三端 Release 包，安装并核对：Android `22081212C` 为 `1.1.2 (2)` 且 `libgojni.so` 含 `0.2.0-dev`；iOS「卢红娟」为 `1.1.2 (2)` 且 Runner 二进制含 `0.2.0-dev`；macOS `/Applications/nexmem_app.app` 为 `1.1.2 (2)`、内置 dylib 含 `0.2.0-dev`，已重启加载。
+- 坑：本轮 pub.dev 经代理返回 502，但 `https://pub.flutter-io.cn` 可直连；Flutter 命令需带 `PUB_HOSTED_URL=https://pub.flutter-io.cn`，并用 `flutter pub get --offline` 走本地缓存（缓存位于 `~/.pub-cache/hosted/pub.flutter-io.cn`）。
+- 口径：`huangyu的iPhone`（`00008150-00082D643E02401C`）仍 unavailable，未安装；需用户拔掉「卢红娟」改接目标机并解锁信任后再装。

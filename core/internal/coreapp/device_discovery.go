@@ -418,6 +418,8 @@ func (d *discoveryDiagnostics) toJSON() map[string]any {
 		"lan_raw":              d.LANRaw,
 		"lan_beacon_active":    d.LANBeaconActive,
 		"lan_broadcast_error":  d.LANBroadcastErr,
+		"lan_broadcast_addr":   d.LANBroadcastAddr,
+		"lan_broadcast_sent":   d.LANBroadcastSent,
 	}
 }
 

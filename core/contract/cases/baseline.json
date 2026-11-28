@@ -65,7 +65,7 @@
         "ok": true,
         "data": {
           "api_version": "1.0.0",
-          "core_version": "0.1.0-dev",
+          "core_version": "0.2.0-dev",
           "features": [
             "core.ping",
             "core.info"
@@ -2500,6 +2500,48 @@
         "total": "int",
         "offset": "int",
         "limit": "int"
+      }
+    },
+    {
+      "id": "group.setAvatar.missing-avatar-b64",
+      "request": {
+        "id": 117,
+        "method": "group.setAvatar",
+        "params": {
+          "group_id": "00112233445566778899aabbccddeeff"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 avatar_b64",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "group.setDescription.missing-description",
+      "request": {
+        "id": 118,
+        "method": "group.setDescription",
+        "params": {
+          "group_id": "00112233445566778899aabbccddeeff"
+        }
+      },
+      "expect": {
+        "error": "INVALID_ARG"
+      },
+      "response": {
+        "ok": false,
+        "error": {
+          "code": "INVALID_ARG",
+          "message": "缺少必填参数 description",
+          "retryable": false
+        }
       }
     }
   ]

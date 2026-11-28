@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'package:nexmem_app/app/core_session.dart';
+import 'package:nexmem_app/features/group/group_share_link.dart';
 import 'package:nexmem_app/features/settings/settings_page.dart';
 import 'package:nexmem_app/features/settings/settings_pane.dart';
 import 'package:nexmem_app/features/social/social_hub_page.dart';
@@ -14,6 +15,7 @@ class _SocialTransport implements CoreTransport {
   final List<Map<String, dynamic>> joins = <Map<String, dynamic>>[];
   final List<Map<String, dynamic>> notifs = <Map<String, dynamic>>[];
   final List<String> calls = <String>[];
+  final List<Map<String, dynamic>> joinRequests = <Map<String, dynamic>>[];
 
   @override
   Stream<CoreEvent> get events => const Stream<CoreEvent>.empty();
@@ -33,6 +35,9 @@ class _SocialTransport implements CoreTransport {
         return <String, dynamic>{'items': friends};
       case 'group.join.list':
         return <String, dynamic>{'items': joins};
+      case 'group.join.request':
+        joinRequests.add(Map<String, dynamic>.from(params ?? const <String, dynamic>{}));
+        return <String, dynamic>{'id': 'join-new'};
       case 'notification.list':
         return <String, dynamic>{'items': notifs, 'unread': 0};
       case 'friend.request.delete':
@@ -258,5 +263,77 @@ void main() {
         theme.colorScheme.surface;
     expect(background.a, greaterThan(0));
     expect(theme.dialogTheme.elevation, greaterThan(0));
+  });
+
+  testWidgets('同意好友申请后通知外层刷新联系人列表', (
+    WidgetTester tester,
+  ) async {
+    final _SocialTransport transport = _SocialTransport();
+    transport.friends.add(<String, dynamic>{
+      'id': 'accept-me',
+      'from': 'a' * 64,
+      'to': 'b' * 64,
+      'message': '你好',
+      'status': 0,
+      'direction': 'in',
+      'created_at': 1,
+    });
+    int refreshes = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SocialHubPage(
+            session: CoreSession(transport),
+            onFriendAccepted: () => refreshes++,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('friend-req-accept-accept-me')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(refreshes, 1);
+    expect(transport.calls, contains('friend.request.respond'));
+  });
+
+  testWidgets('粘贴分享信息可发起入群申请', (WidgetTester tester) async {
+    final _SocialTransport transport = _SocialTransport();
+    final String shareText = buildGroupShareLink(
+      groupId: 'Z3JvdXA',
+      owner: 'b3duZXI',
+      title: '周末爬山',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SocialHubPage(session: CoreSession(transport)),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('入群申请'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('social-join-by-text')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('social-join-input')),
+      shareText,
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('social-join-submit')));
+    await tester.pumpAndSettle();
+
+    expect(transport.calls, contains('group.join.request'));
+    expect(transport.joinRequests, hasLength(1));
+    expect(transport.joinRequests.first['group_id'], 'Z3JvdXA');
+    expect(transport.joinRequests.first['owner'], 'b3duZXI');
+    expect(transport.joinRequests.first['group_title'], '周末爬山');
   });
 }

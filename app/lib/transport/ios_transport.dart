@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 
 import '../app/core_session.dart';
 import '../features/chat/voice_recorder.dart';
+import '../features/files/chat_file_actions.dart';
+import '../features/files/folder_attachment.dart';
 import 'android_transport.dart';
 
 /// iOS 端传输实现（P1-08）。
@@ -53,6 +55,15 @@ Future<CoreSession?> openIOSSession() async {
     pickFile: transport.pickFile,
     pickImage: transport.pickImage,
     pickMedia: transport.pickMedia,
+    pickVideo: transport.pickVideo,
+    pickAudio: transport.pickAudio,
     voiceRecorder: makeVoiceRecorder(),
+    pickDirectory: transport.pickDirectory,
+    pickFolder: () =>
+        pickFolderAttachment(directoryPicker: transport.pickDirectory),
+    readChatFileBytes: (String path) =>
+        readChatFileBytes(path: path),
+    saveChatFile: (String path, String fileName) =>
+        saveChatFileToDevice(sourcePath: path, fileName: fileName),
   );
 }

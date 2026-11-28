@@ -1,4 +1,6 @@
 // 远控输入编码、键位映射与坐标归一化测试。
+import 'dart:convert';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -66,5 +68,79 @@ void main() {
     expect(RemoteKeyMap.fromLogicalKey(LogicalKeyboardKey.controlLeft),
         'controlLeft');
     expect(RemoteKeyMap.fromLogicalKey(LogicalKeyboardKey.f12), 'f12');
+  });
+
+  test('侧键 back/forward 编解码往返', () {
+    final RemotePointerEvent decoded = RemotePointerCodec.decode(
+      RemotePointerCodec.encode(const RemotePointerEvent(
+        type: RemotePointerType.button,
+        xNorm: 10,
+        yNorm: 20,
+        buttons: RemoteButtons.back | RemoteButtons.forward,
+      )),
+    )!;
+    expect(decoded.buttons & RemoteButtons.back, RemoteButtons.back);
+    expect(decoded.buttons & RemoteButtons.forward, RemoteButtons.forward);
+  });
+
+  test('pinch 类型编解码往返', () {
+    final RemotePointerEvent decoded = RemotePointerCodec.decode(
+      RemotePointerCodec.encode(const RemotePointerEvent(
+        type: RemotePointerType.pinch,
+        xNorm: 100,
+        yNorm: 200,
+        wheelY: 3,
+        modifiers: RemoteModifiers.control,
+      )),
+    )!;
+    expect(decoded.type, RemotePointerType.pinch);
+    expect(decoded.wheelY, 3);
+    expect(decoded.modifiers, RemoteModifiers.control);
+  });
+
+  test('组合键消息携带主键与修饰位', () {
+    final Map<String, dynamic> msg =
+        jsonDecode(RemoteControlMessage.combo('c',
+                modifiers: RemoteModifiers.control | RemoteModifiers.shift))
+            as Map<String, dynamic>;
+    expect(msg['t'], 'combo');
+    expect(msg['key'], 'c');
+    expect(msg['mod'], RemoteModifiers.control | RemoteModifiers.shift);
+  });
+
+  test('触摸消息携带触点数组', () {
+    final Map<String, dynamic> msg = jsonDecode(
+      RemoteControlMessage.touch('down', <Map<String, int>>[
+        <String, int>{'x': 10, 'y': 20, 'id': 0},
+        <String, int>{'x': 30, 'y': 40, 'id': 1},
+      ]),
+    ) as Map<String, dynamic>;
+    expect(msg['t'], 'touch');
+    expect((msg['points'] as List).length, 2);
+  });
+
+  test('常见组合键表包含复制/粘贴/全选/锁屏', () {
+    final Set<String> keys = RemoteCombos.common.map((RemoteComboSpec c) =>
+        '${c.key}:${c.modifiers}').toSet();
+    expect(keys, contains('c:${RemoteModifiers.control}'));
+    expect(keys, contains('v:${RemoteModifiers.control}'));
+    expect(keys, contains('a:${RemoteModifiers.control}'));
+    expect(keys, contains('l:${RemoteModifiers.meta}'));
+  });
+
+  test('主修饰键在 macOS 解析为 Cmd，Windows 解析为 Ctrl', () {
+    expect(
+      RemoteKeyMap.primaryControlKey(TargetPlatform.macOS),
+      'metaLeft',
+    );
+    expect(
+      RemoteKeyMap.primaryControlKey(TargetPlatform.windows),
+      'controlLeft',
+    );
+    final List<String> mods = RemoteKeyMap.modifierKeysFor(
+      RemoteModifiers.control | RemoteModifiers.shift,
+      platform: TargetPlatform.macOS,
+    );
+    expect(mods, <String>['metaLeft', 'shiftLeft']);
   });
 }

@@ -98,6 +98,14 @@ Future<void> _fillRequired(WidgetTester tester) async {
   );
 }
 
+/// 弹窗内容现在按屏幕高度限高滚动，操作前先滚动到目标控件。
+Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
 void main() {
   test('C-06 主密钥形态识别：高置信前缀与默认 root 凭证被拒', () {
     for (final String ak in <String>[
@@ -320,14 +328,16 @@ void main() {
     await _pumpDialog(tester, fake);
     await _fillRequired(tester);
 
-    await tester.tap(
+    await _tapVisible(
+      tester,
       find.byKey(const ValueKey<String>('storage-provider-minio')),
     );
-    await tester.pumpAndSettle();
     expect(find.text('us-east-1'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey<String>('storage-selftest')));
-    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('storage-selftest')),
+    );
 
     expect(fake.lastRequest!.provider, StorageProvider.minio);
     expect(fake.lastRequest!.region, 'us-east-1');
@@ -341,10 +351,10 @@ void main() {
     final _FakeStorageTestService fake = _FakeStorageTestService();
     await _pumpDialog(tester, fake);
 
-    await tester.tap(
+    await _tapVisible(
+      tester,
       find.byKey(const ValueKey<String>('storage-provider-backblazeB2')),
     );
-    await tester.pumpAndSettle();
     expect(find.text('us-west-001'), findsOneWidget);
 
     await tester.enterText(
@@ -363,18 +373,22 @@ void main() {
       find.byKey(const ValueKey<String>('storage-sk')),
       'b2-secret',
     );
-    await tester.tap(find.byKey(const ValueKey<String>('storage-selftest')));
-    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('storage-selftest')),
+    );
     expect(fake.lastRequest!.provider, StorageProvider.backblazeB2);
     expect(fake.lastRequest!.pathStyle, isFalse);
 
-    await tester.tap(
+    await _tapVisible(
+      tester,
       find.byKey(const ValueKey<String>('storage-provider-nas')),
     );
-    await tester.pumpAndSettle();
     expect(find.text('us-east-1'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey<String>('storage-selftest')));
-    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('storage-selftest')),
+    );
     expect(fake.lastRequest!.provider, StorageProvider.nas);
     expect(fake.lastRequest!.pathStyle, isTrue);
   });
@@ -459,7 +473,9 @@ void main() {
     expect(publicToggle.value, isTrue);
   });
 
-  testWidgets('保存配置：参数完整、提示重启生效', (WidgetTester tester) async {
+  testWidgets('保存配置：参数完整且保存成功后关闭弹窗', (
+    WidgetTester tester,
+  ) async {
     final _FakeStorageTestService fake = _FakeStorageTestService();
     await _pumpDialog(tester, fake);
     await _fillRequired(tester);
@@ -477,7 +493,8 @@ void main() {
     expect(fake.lastSave!.toParams()['public'], isTrue);
     // C-02：默认 lifecycle 模式，不删除云端对象。
     expect(fake.lastSave!.deleteAfterRead, isFalse);
-    expect(find.text('已保存，重启应用后生效'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('storage-save')), findsNothing);
+    expect(find.byType(StorageConfigDialog), findsNothing);
   });
 
   testWidgets('C-02 已读后删除云端密文开关：开启后保存 delete_after_read=true', (
@@ -490,19 +507,20 @@ void main() {
       const ValueKey<String>('storage-delete-after-read'),
     );
     expect(toggle, findsOneWidget);
-    await tester.tap(toggle);
-    await tester.pumpAndSettle();
+    await _tapVisible(tester, toggle);
 
     await _fillRequired(tester);
-    await tester.tap(find.byKey(const ValueKey<String>('storage-save')));
-    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('storage-save')),
+    );
 
     expect(fake.saveCalls, 1);
     expect(fake.lastSave!.deleteAfterRead, isTrue);
     expect(fake.lastSave!.toParams()['delete_after_read'], isTrue);
   });
 
-  testWidgets('关闭对外公开后保存 public=false，并提示重启生效', (WidgetTester tester) async {
+  testWidgets('关闭对外公开后保存 public=false 并关闭弹窗', (WidgetTester tester) async {
     final _FakeStorageTestService fake = _FakeStorageTestService(
       snapshot: const StorageConfigSnapshot(
         configured: true,
@@ -517,19 +535,23 @@ void main() {
     );
     await _pumpDialog(tester, fake);
 
-    await tester.tap(find.byKey(const ValueKey<String>('storage-public')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey<String>('storage-save')));
-    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('storage-public')),
+    );
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('storage-save')),
+    );
 
     expect(fake.saveCalls, 1);
     expect(fake.lastSave!.enabled, isTrue);
     expect(fake.lastSave!.public, isFalse);
     expect(fake.lastSave!.toParams()['public'], isFalse);
-    expect(find.text('已关闭对外公开，重启应用后生效'), findsOneWidget);
+    expect(find.byType(StorageConfigDialog), findsNothing);
   });
 
-  testWidgets('已有凭证可留空 SK 保存，关闭开关后保存 enabled=false', (
+  testWidgets('已有凭证可留空 SK 保存，关闭开关后 enabled=false 且关闭弹窗', (
     WidgetTester tester,
   ) async {
     final _FakeStorageTestService fake = _FakeStorageTestService(
@@ -545,16 +567,19 @@ void main() {
       ),
     );
     await _pumpDialog(tester, fake);
-    await tester.tap(find.byKey(const ValueKey<String>('storage-enabled')));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const ValueKey<String>('storage-save')));
-    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('storage-enabled')),
+    );
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey<String>('storage-save')),
+    );
 
     expect(fake.saveCalls, 1);
     expect(fake.lastSave!.secretKey, isEmpty);
     expect(fake.lastSave!.enabled, isFalse);
-    expect(find.text('已关闭离线存储，重启应用后生效'), findsOneWidget);
+    expect(find.byType(StorageConfigDialog), findsNothing);
   });
 
   testWidgets('保存校验：空表单被拦截且不调用内核', (WidgetTester tester) async {

@@ -46,6 +46,19 @@ class _FakeInjector implements DesktopInputInjector {
   Future<void> key(String key, {required bool down, int modifiers = 0}) async {}
 
   @override
+  TargetPlatform get hostPlatform => TargetPlatform.windows;
+
+  @override
+  Future<void> combo(String comboKey, {int modifiers = 0}) async {}
+
+  @override
+  Future<void> touch(
+    String phase,
+    List<Map<String, int>> points, {
+    int modifiers = 0,
+  }) async {}
+
+  @override
   Future<void> text(String text) async {}
 
   @override

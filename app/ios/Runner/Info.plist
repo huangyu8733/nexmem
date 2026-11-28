@@ -31,6 +31,9 @@
 	<string>Nexmem 需要使用摄像头扫描好友二维码，以及进行视频通话。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Nexmem 需要使用麦克风进行语音和视频通话。</string>
+	<!-- MPMediaPickerController 展示系统音乐库必须提供用途说明，否则 iOS 会直接终止进程。 -->
+	<key>NSAppleMusicUsageDescription</key>
+	<string>Nexmem 需要访问您的音乐库，以便选择本地音频文件发送给好友。</string>
 	<!-- 设备发现使用 mDNS 局域网广播，iOS 14+ 需要本地网络用途说明。 -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Nexmem 需要通过局域网发现同一网络下的可远程控制设备，不会访问其他本地服务。</string>

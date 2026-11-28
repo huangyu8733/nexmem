@@ -5,6 +5,7 @@
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../contacts/contact.dart';
 import '../contacts/contact_service.dart';
@@ -179,8 +180,8 @@ class _GroupInviteDialogState extends State<_GroupInviteDialog> {
     return AlertDialog(
       key: const ValueKey<String>('group-invite-dialog'),
       title: Text(context.t('拉人进群')),
-      content: SizedBox(
-        width: 460,
+      content: responsiveDialogContent(
+        maxWidth: 460,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,

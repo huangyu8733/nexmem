@@ -78,6 +78,9 @@ class _RemoteSettingsPageState extends State<RemoteSettingsPage> {
     if (!value) {
       _prefs.enabled = false;
       await _save();
+      // 关闭只影响静默远控：立即断开进行中的静默会话，
+      // 聊天框发起、需同意的远控不受影响。
+      _prefs.onSilentRemoteDisabled?.call();
       return;
     }
     final bool firstTime = _prefs.passwordCredential.isEmpty;
@@ -237,7 +240,7 @@ class _RemoteSettingsPageState extends State<RemoteSettingsPage> {
                 ? (bool value) => unawaited(_toggleEnabled(value))
                 : null,
             title: Text(context.t('允许被远程控制')),
-            subtitle: Text(context.t('开启前必须设置密码；关闭后拒绝所有远控请求')),
+            subtitle: Text(context.t('开启前必须设置密码；关闭只断开密码静默远控，聊天里发起的远控不受影响')),
           ),
           ListTile(
             key: const ValueKey<String>('remote-password-change'),

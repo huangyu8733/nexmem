@@ -6,6 +6,10 @@ import 'package:material_ui/material_ui.dart';
 
 import 'package:nexmem_app/app/app.dart';
 import 'package:nexmem_app/app/core_session.dart';
+import 'package:nexmem_app/features/remote/remote_prefs.dart';
+import 'package:nexmem_app/features/remote/remote_incoming_dialog.dart';
+import 'package:nexmem_app/features/remote/remote_signal.dart';
+import 'package:nexmem_app/features/remote/remote_session.dart';
 import 'package:nexmem_app/features/rtc/call_page.dart';
 import 'package:nexmem_app/features/rtc/rtc_signal.dart';
 import 'package:nexmem_app/transport/transport.dart';
@@ -152,5 +156,52 @@ void main() {
     await tester.tap(find.byKey(const ValueKey<String>('call-notice-bar')));
     await tester.pumpAndSettle();
     expect(find.byType(CallPage), findsOneWidget);
+  });
+
+  testWidgets('聊天页中远控来电通知条可见，点击先展开授权框，条上可直接拒绝',
+      (WidgetTester tester) async {
+    final _OverlayTransport transport = _OverlayTransport();
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.reset);
+    // 被控端需已开启远控，否则请求会被直接拒绝。
+    RemotePrefs.instance
+      ..enabled = true
+      ..loaded = true
+      ..passwordCredential = 'hash-only';
+    await tester.pumpWidget(
+      NexmemApp(session: CoreSession(transport), enableStartupCheck: false),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('会话甲'));
+    await tester.pumpAndSettle();
+
+    final String payload = RemoteSignal(
+      type: RemoteSignalType.request,
+      sid: 'r-e2e',
+      name: '张三',
+      permissions: RemotePermissions.all,
+    ).toPayloadB64();
+    transport.emit(
+      CoreEvent(
+        seq: 9,
+        type: 'rtc.signal',
+        ts: 1700000003000,
+        data: <String, dynamic>{'peer': 'a', 'payload_b64': payload},
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 来电先给通知条，不再直接弹出全屏授权框。
+    expect(
+      find.byKey(const ValueKey<String>('remote-notice-bar')),
+      findsOneWidget,
+    );
+    expect(find.byType(RemoteIncomingDialog), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey<String>('remote-notice-bar')));
+    await tester.pumpAndSettle();
+    expect(find.byType(RemoteIncomingDialog), findsOneWidget);
   });
 }

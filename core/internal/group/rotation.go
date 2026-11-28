@@ -82,6 +82,19 @@ func (s *Service) RemoveMember(ctx context.Context, groupID, memberAccount []byt
 // InviteMember 把新成员加入成员表，并把当前版本密钥信封分发给全部成员。
 // targets 必须包含新成员；其余成员用于同步更新后的成员表。
 func (s *Service) InviteMember(ctx context.Context, groupID, memberAccount []byte, targets []KeyTarget) (GroupKey, []KeyDelivery, error) {
+	return s.inviteMember(ctx, groupID, memberAccount, targets, false)
+}
+
+// InviteMemberAllowPending 与 InviteMember 相同，但允许新成员暂时无法解析投递目标。
+//
+// 管理员主动拉人时，即使目录服务尚未公开该账号的 X25519 公钥，也应先把成员
+// 写入本机成员表并向对方投递邀请通知；密钥信封记为待补发，避免管理员端直接
+// 收到「拉人失败」而对方完全不知道发生了什么。
+func (s *Service) InviteMemberAllowPending(ctx context.Context, groupID, memberAccount []byte, targets []KeyTarget) (GroupKey, []KeyDelivery, error) {
+	return s.inviteMember(ctx, groupID, memberAccount, targets, true)
+}
+
+func (s *Service) inviteMember(ctx context.Context, groupID, memberAccount []byte, targets []KeyTarget, allowPending bool) (GroupKey, []KeyDelivery, error) {
 	if len(memberAccount) != memberIDSize {
 		return GroupKey{}, nil, fmt.Errorf("%w: 成员账号长度 %d", ErrKeyEnvelopeInvalid, len(memberAccount))
 	}
@@ -114,7 +127,16 @@ func (s *Service) InviteMember(ctx context.Context, groupID, memberAccount []byt
 	}
 	filtered := filterTargets(targets, meta.Members)
 	if !hasTarget(filtered, memberAccount) {
-		return GroupKey{}, nil, ErrMemberTargetMissing
+		if !allowPending {
+			return GroupKey{}, nil, ErrMemberTargetMissing
+		}
+		// 仍把更新后的成员表写到本机，并把新成员标为待补发。
+		reports, err := s.DistributeKeys(ctx, current, meta, filtered)
+		if err != nil {
+			return GroupKey{}, reports, err
+		}
+		reports = append(reports, KeyDelivery{AccountPub: memberAccount, Err: ErrMemberTargetMissing})
+		return current, reports, nil
 	}
 	reports, err := s.DistributeKeys(ctx, current, meta, filtered)
 	if err != nil {

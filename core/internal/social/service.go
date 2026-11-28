@@ -2,9 +2,11 @@ package social
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -25,8 +27,11 @@ type Emit func(name string, data any)
 
 // Options 是社交服务的依赖。
 type Options struct {
-	DAO    *store.DAO
-	Self   func() []byte
+	DAO  *store.DAO
+	Self func() []byte
+	// XPub 返回本机账号 X25519 公钥；随好友申请/同意控制帧发给对端，
+	// 让双方在局域网或无目录服务时也能为群密钥信封封装对方公钥。
+	XPub   func() []byte
 	Send   Sender
 	Online Resolver
 	Emit   Emit
@@ -34,6 +39,9 @@ type Options struct {
 	OnFriendAccepted func(ctx context.Context, peer []byte) error
 	// OnGroupInvite 在同意入群后由 coreapp 回调，实际投递群密钥。
 	OnGroupInvite func(ctx context.Context, groupID string, applicant []byte) error
+	// OnXPubReceived 在好友控制帧或公钥应答里学到对端账号 X25519 公钥后回调，
+	// coreapp 用它唤醒正在等待该公钥的群拉人请求。
+	OnXPubReceived func(ctx context.Context, accountPub, xpub []byte)
 }
 
 // Service 提供好友申请、入群审批、通知、动态、投票等业务。
@@ -56,6 +64,63 @@ func New(o Options) (*Service, error) {
 
 func newID() string { return uuid.NewString() }
 
+// selfXPubHex 返回可随控制帧发出的本机账号 X25519 公钥。
+func (s *Service) selfXPubHex() string {
+	if s.opts.XPub == nil {
+		return ""
+	}
+	xpub := s.opts.XPub()
+	if len(xpub) != 32 {
+		return ""
+	}
+	return hex.EncodeToString(xpub)
+}
+
+// rememberXPub 记录好友控制帧携带的对端 X25519 公钥。控制帧走已验签的
+// 端到端单聊通道，因此比目录服务公开档案更适合局域网内的群密钥分发。
+func (s *Service) rememberXPub(ctx context.Context, from []byte, hexText string) {
+	if hexText == "" || len(from) != 32 {
+		return
+	}
+	xpub, err := hex.DecodeString(hexText)
+	if err != nil || len(xpub) != 32 {
+		return
+	}
+	_ = s.dao.SetContactXPub(ctx, from, xpub, time.Now().Unix())
+	if s.opts.OnXPubReceived != nil {
+		s.opts.OnXPubReceived(ctx, from, xpub)
+	}
+}
+
+// frameExtra 把可选 XPub 合并进控制帧 Extra，不改变已有 fields。
+func (s *Service) frameExtra(extra map[string]string) map[string]string {
+	xpub := s.selfXPubHex()
+	if xpub == "" {
+		return extra
+	}
+	if extra == nil {
+		extra = make(map[string]string, 1)
+	}
+	extra["xpub"] = xpub
+	return extra
+}
+
+// decodeAccountPub 同时接受契约里的 base64url 账号与内部 hex 账号。
+// 群资料页分享出来的群主账号是 base64url，入群申请必须能直接使用，
+// 否则申请会卡在「群主账号非法」而无法送达。
+func decodeAccountPub(text string) ([]byte, error) {
+	if text == "" {
+		return nil, errors.New("账号为空")
+	}
+	if raw, err := hex.DecodeString(text); err == nil && len(raw) == 32 {
+		return raw, nil
+	}
+	if raw, err := base64.RawURLEncoding.DecodeString(text); err == nil && len(raw) == 32 {
+		return raw, nil
+	}
+	return nil, errors.New("账号必须为 32 字节的十六进制或 base64url 编码")
+}
+
 // ---- 好友申请 ----
 
 // SendFriendRequest 发起好友申请：本机落一条 out 记录，并向对方投递控制帧。
@@ -72,7 +137,8 @@ func (s *Service) SendFriendRequest(ctx context.Context, peer []byte, message st
 	}); err != nil {
 		return "", err
 	}
-	frame := Frame{Kind: KindFriendRequest, ID: id, From: hex.EncodeToString(self), To: hex.EncodeToString(peer), Text: message, Timestamp: now}
+	frame := Frame{Kind: KindFriendRequest, ID: id, From: hex.EncodeToString(self), To: hex.EncodeToString(peer), Text: message, Timestamp: now,
+		Extra: s.frameExtra(nil)}
 	if s.send != nil {
 		if _, err := s.send(ctx, peer, Encode(frame)); err != nil {
 			// 投递失败不回滚本机记录：对端上线后可通过离线补发收到。
@@ -107,7 +173,8 @@ func (s *Service) RespondFriendRequest(ctx context.Context, id string, accept bo
 	if req.Direction == "out" {
 		peer = req.ToPub // 自己发出的申请，对端才是响应方
 	}
-	frame := Frame{Kind: kind, ID: id, From: hex.EncodeToString(self), To: hex.EncodeToString(peer), Timestamp: time.Now().Unix()}
+	frame := Frame{Kind: kind, ID: id, From: hex.EncodeToString(self), To: hex.EncodeToString(peer), Timestamp: time.Now().Unix(),
+		Extra: s.frameExtra(nil)}
 	if s.send != nil && len(peer) > 0 {
 		_, _ = s.send(ctx, peer, Encode(frame))
 	}
@@ -116,6 +183,10 @@ func (s *Service) RespondFriendRequest(ctx context.Context, id string, accept bo
 			if err := s.opts.OnFriendAccepted(ctx, peer); err != nil {
 				return err
 			}
+		}
+		// 通讯录已写入，通知客户端立即刷新好友列表。
+		if len(peer) > 0 && s.emit != nil {
+			s.emit("contact.new", map[string]any{"peer": hex.EncodeToString(peer)})
 		}
 		// 写一条系统通知。
 		_ = s.dao.InsertNotification(ctx, store.Notification{
@@ -140,8 +211,19 @@ func (s *Service) HandleFrame(ctx context.Context, f Frame) error {
 		return errors.New("控制帧发送方非法")
 	}
 	switch f.Kind {
+	case KindXPubReq:
+		// 老好友没有本地公钥缓存时由拉群方按需发起；收到即回自己的公钥。
+		s.rememberXPub(ctx, from, f.Extra["xpub"])
+		if s.send != nil {
+			resp := Frame{Kind: KindXPubResp, ID: f.ID, From: hex.EncodeToString(s.self()),
+				To: f.From, Timestamp: time.Now().Unix(), Extra: s.frameExtra(nil)}
+			_, _ = s.send(ctx, from, Encode(resp))
+		}
+	case KindXPubResp:
+		s.rememberXPub(ctx, from, f.Extra["xpub"])
 	case KindFriendRequest:
 		// 对端发来的好友申请：落一条 in 记录 + 通知 + 事件。
+		s.rememberXPub(ctx, from, f.Extra["xpub"])
 		if f.ID == "" {
 			f.ID = newID()
 		}
@@ -159,10 +241,15 @@ func (s *Service) HandleFrame(ctx context.Context, f Frame) error {
 			s.emit("friend.request.new", map[string]any{"id": f.ID, "peer": f.From, "message": f.Text})
 		}
 	case KindFriendAccept:
+		s.rememberXPub(ctx, from, f.Extra["xpub"])
 		if s.opts.OnFriendAccepted != nil {
 			if err := s.opts.OnFriendAccepted(ctx, from); err != nil {
 				return err
 			}
+		}
+		// 发起方收到同意帧后同样已写入通讯录，通知本机刷新好友列表。
+		if s.emit != nil {
+			s.emit("contact.new", map[string]any{"peer": f.From})
 		}
 		if f.ID != "" {
 			_ = s.dao.SetFriendRequestStatus(ctx, f.ID, 1)
@@ -181,8 +268,33 @@ func (s *Service) HandleFrame(ctx context.Context, f Frame) error {
 		if s.emit != nil {
 			s.emit("friend.request.resolved", map[string]any{"id": f.ID, "accepted": false})
 		}
+	case KindGroupInvited:
+		// 管理员主动拉人：落一条系统通知并让社交中心立即刷新。
+		title := f.Extra["group_title"]
+		if title == "" {
+			title = "群聊"
+		}
+		if f.ID == "" {
+			f.ID = newID()
+		}
+		payload, _ := json.Marshal(map[string]string{
+			"id": f.ID, "group_id": f.GroupID, "peer": f.From,
+		})
+		_ = s.dao.InsertNotification(ctx, store.Notification{
+			ID: newID(), Kind: "group.invited", Title: "群邀请",
+			Body:    fmt.Sprintf("你被邀请加入群聊「%s」", title),
+			Payload: string(payload),
+		})
+		if s.emit != nil {
+			s.emit("group.invited", map[string]any{
+				"id": f.ID, "group_id": f.GroupID, "peer": f.From,
+			})
+		}
 	case KindGroupJoinReq:
 		// 有人申请加入我管理的群（由群管理员端处理，这里记录 + 事件）。
+		// 申请帧携带申请人 XPub，管理员同意时无需依赖好友关系或目录服务
+		// 即可封装群密钥信封。
+		s.rememberXPub(ctx, from, f.Extra["xpub"])
 		if f.ID == "" {
 			f.ID = newID()
 		}
@@ -236,14 +348,63 @@ func (s *Service) HandleFrame(ctx context.Context, f Frame) error {
 	return nil
 }
 
+// ---- 账号公钥按需交换 ----
+
+// RequestXPub 向老好友请求其账号 X25519 公钥，用于本地缓存缺失时的群密钥封装。
+func (s *Service) RequestXPub(ctx context.Context, peer []byte) error {
+	if len(peer) != 32 || hex.EncodeToString(peer) == hex.EncodeToString(s.self()) {
+		return errors.New("公钥请求目标非法")
+	}
+	if s.send == nil {
+		return errors.New("单聊投递通道未接入")
+	}
+	frame := Frame{Kind: KindXPubReq, ID: newID(), From: hex.EncodeToString(s.self()),
+		To: hex.EncodeToString(peer), Timestamp: time.Now().Unix(), Extra: s.frameExtra(nil)}
+	_, err := s.send(ctx, peer, Encode(frame))
+	return err
+}
+
+// ---- 管理员主动拉人 ----
+
+// SendGroupInvite 给被拉入群落的账号投递一条显式邀请通知。
+//
+// 群密钥信封仍由 group.invite 单独投递；这条通知只负责让对方明确知道
+// 「谁邀请我进了哪个群」，因此即使 XPub/档案暂时不可用、密钥待补发，
+// 邀请信息本身也应尽量送达。
+func (s *Service) SendGroupInvite(ctx context.Context, groupID, groupTitle string, peer []byte) (string, error) {
+	self := s.self()
+	if len(peer) == 0 || hex.EncodeToString(peer) == hex.EncodeToString(self) {
+		return "", errors.New("邀请目标非法")
+	}
+	if groupID == "" {
+		return "", errors.New("群 ID 非法")
+	}
+	id := newID()
+	now := time.Now().Unix()
+	frame := Frame{
+		Kind: KindGroupInvited, ID: id, From: hex.EncodeToString(self),
+		To: hex.EncodeToString(peer), GroupID: groupID, Text: groupTitle,
+		Timestamp: now, Extra: map[string]string{"group_title": groupTitle},
+	}
+	if s.send == nil {
+		return id, errors.New("单聊投递通道未接入")
+	}
+	msgID, err := s.send(ctx, peer, Encode(frame))
+	if err != nil {
+		return msgID, err
+	}
+	return id, nil
+}
+
 // ---- 入群申请（本机发起）----
 
 // RequestGroupJoin 向群主发起入群申请。
 func (s *Service) RequestGroupJoin(ctx context.Context, groupID, groupTitle, ownerPubHex, message string) (string, error) {
-	owner, err := hex.DecodeString(ownerPubHex)
-	if err != nil || len(owner) == 0 {
+	owner, err := decodeAccountPub(ownerPubHex)
+	if err != nil {
 		return "", errors.New("群主账号非法")
 	}
+	ownerHex := hex.EncodeToString(owner)
 	id := newID()
 	now := time.Now().Unix()
 	if err := s.dao.InsertGroupJoinRequest(ctx, store.GroupJoinRequest{
@@ -252,8 +413,9 @@ func (s *Service) RequestGroupJoin(ctx context.Context, groupID, groupTitle, own
 	}); err != nil {
 		return "", err
 	}
-	frame := Frame{Kind: KindGroupJoinReq, ID: id, From: hex.EncodeToString(s.self()), To: ownerPubHex,
-		GroupID: groupID, Text: message, Timestamp: now, Extra: map[string]string{"group_title": groupTitle}}
+	frame := Frame{Kind: KindGroupJoinReq, ID: id, From: hex.EncodeToString(s.self()), To: ownerHex,
+		GroupID: groupID, Text: message, Timestamp: now,
+		Extra: s.frameExtra(map[string]string{"group_title": groupTitle})}
 	if s.send != nil {
 		_, _ = s.send(ctx, owner, Encode(frame))
 	}

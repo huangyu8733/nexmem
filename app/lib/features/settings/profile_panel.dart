@@ -59,6 +59,7 @@ class ProfileBody extends StatefulWidget {
     required this.account,
     required this.settings,
     this.onSaved,
+    this.onTextSaved,
   });
 
   final CoreAccount? account;
@@ -66,6 +67,10 @@ class ProfileBody extends StatefulWidget {
 
   /// 保存成功后的回调，用于显示提示或刷新外部状态。
   final VoidCallback? onSaved;
+
+  /// 文本字段保存成功后的回调。窄屏编辑弹窗用它关闭自身；
+  /// 宽屏内嵌面板不传，保存后继续停留编辑。
+  final VoidCallback? onTextSaved;
 
   @override
   State<ProfileBody> createState() => _ProfileBodyState();
@@ -183,6 +188,7 @@ class _ProfileBodyState extends State<ProfileBody> {
       // 头像变更即时同步到全局缓存，左栏 / 我的页头像无需重建即可刷新。
       unawaited(ProfileAvatarStore.instance.reload());
       widget.onSaved?.call();
+      widget.onTextSaved?.call();
     } on Object catch (error) {
       if (!mounted) {
         return;
@@ -798,7 +804,13 @@ Future<void> showProfileEditorDialog({
               backgroundColor: scheme.surface,
             ),
             Expanded(
-              child: ProfileBody(account: account, settings: settings),
+              child: ProfileBody(
+                account: account,
+                settings: settings,
+                // 窄屏是独立编辑弹窗：文本保存成功后立即关闭，
+                // 失败时 ProfileBody 会保留弹窗并显示错误。
+                onTextSaved: () => Navigator.of(context).pop(),
+              ),
             ),
           ],
         ),

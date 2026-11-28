@@ -116,9 +116,12 @@ class _CallNoticeBarState extends State<CallNoticeBar> {
         ? '$kind · $stateLabel'
         : '$name · $kind · $stateLabel';
 
+    // 通知条必须是不透明实色：半透明会把下方聊天内容透出来，文字难以辨认。
+    final Color background = scheme.primaryContainer;
+    final Color foreground = scheme.onPrimaryContainer;
     return Material(
       key: const ValueKey<String>('call-notice-bar'),
-      color: scheme.primary.withValues(alpha: 0.10),
+      color: background,
       child: InkWell(
         onTap: widget.onOpen,
         child: Container(
@@ -126,12 +129,17 @@ class _CallNoticeBarState extends State<CallNoticeBar> {
           padding: const EdgeInsets.symmetric(
             horizontal: NexmemMetrics.space16,
           ),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: scheme.outline.withValues(alpha: 0.4)),
+            ),
+          ),
           child: Row(
             children: <Widget>[
               Icon(
                 info.video ? Icons.videocam_outlined : Icons.call_outlined,
                 size: 18,
-                color: scheme.primary,
+                color: foreground,
               ),
               const SizedBox(width: NexmemMetrics.space8),
               Expanded(
@@ -144,7 +152,7 @@ class _CallNoticeBarState extends State<CallNoticeBar> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: scheme.onSurface,
+                            color: foreground,
                             fontWeight: FontWeight.w600,
                           ),
                     ),
@@ -152,7 +160,7 @@ class _CallNoticeBarState extends State<CallNoticeBar> {
                       context.t('点击打开通话界面'),
                       maxLines: 1,
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurface.withValues(alpha: 0.7),
+                            color: foreground.withValues(alpha: 0.82),
                           ),
                     ),
                   ],
@@ -162,12 +170,13 @@ class _CallNoticeBarState extends State<CallNoticeBar> {
                 TextButton(
                   key: const ValueKey<String>('call-notice-reject'),
                   onPressed: widget.onReject,
+                  style: TextButton.styleFrom(foregroundColor: foreground),
                   child: Text(context.t('拒绝')),
                 ),
               Icon(
                 Icons.chevron_right,
                 size: 18,
-                color: scheme.onSurface.withValues(alpha: 0.6),
+                color: foreground.withValues(alpha: 0.75),
               ),
             ],
           ),

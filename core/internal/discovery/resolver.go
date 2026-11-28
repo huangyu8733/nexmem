@@ -28,8 +28,17 @@ var PublicBootstraps = []string{
 	"/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ",
 }
 
-// CascadingResolver 按优先级串联多个发现源，实现 dm.PeerResolver。
-// 命中顺序：本地地址簿 -> 已连接/mDNS -> 私有 DHT -> 公共 DHT。
+// peerIDSource 只需把账号映射到设备 PeerID，不负责查地址。
+// 信令服务器的这一能力是公网 DHT 检索的前置：DHT 按 PeerID 而非账号查找。
+type peerIDSource interface {
+	ResolvePeerIDs(ctx context.Context, accountPub []byte) ([]peer.ID, error)
+}
+
+// CascadingResolver 按网络范围从小到大串联发现源，实现 dm.PeerResolver。
+//
+// 局域网广播（LAN Beacon / mDNS / 已连接）无法跨路由器，所以先在本地网段内
+// 找；找不到再用公网 DHT 按 PeerID 查；两者都拿不到地址时最后走信令/索引服务。
+// 命中顺序：本地地址簿/局域网 -> 公网 DHT -> 私有 DHT -> 信令服务器。
 type CascadingResolver struct {
 	peerbook   *Peerbook
 	mdns       *MDNS
@@ -37,7 +46,8 @@ type CascadingResolver struct {
 	host       host.Host
 	privateDHT *dht.IpfsDHT
 	publicDHT  *dht.IpfsDHT
-	// Fallback 是原有的 directoryResolver（账号->设备->地址），可为 nil。
+	// fallback 是原有的 directoryResolver（账号->设备->地址），可为 nil。
+	// 只在局域网与 DHT 都失败时调用，避免中心服务器抢在分布式发现之前。
 	fallback dm.PeerResolver
 	timeout  time.Duration
 }
@@ -60,7 +70,14 @@ func (r *CascadingResolver) SetLANBeacon(b *LANBeacon) {
 	r.lanBeacon = b
 }
 
-// ResolvePeer 实现 dm.PeerResolver：依次尝试各发现源。
+// ResolvePeer 实现 dm.PeerResolver：按网络范围从小到大依次尝试各发现源。
+//
+// 阶段一（局域网）：地址簿、LAN Beacon、mDNS / 已连接节点，都不跨路由器，
+// 但同网段直连最快且不依赖任何中心服务。
+// 阶段二（公网 DHT）：局域网找不到时，先向信令服务器取账号对应的设备 PeerID
+// （仅身份映射，不查地址），再依次查公共 DHT、私有 DHT 拿到公网地址。
+// 阶段三（信令服务器）：DHT 都没有地址时，最后走 directoryResolver 的
+// 完整链路（档案 + DHT 重试）兜底。
 func (r *CascadingResolver) ResolvePeer(ctx context.Context, accountPub []byte) (dm.Target, error) {
 	if len(accountPub) != 32 {
 		return dm.Target{}, dm.ErrInvalidTarget
@@ -68,15 +85,15 @@ func (r *CascadingResolver) ResolvePeer(ctx context.Context, accountPub []byte) 
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
-	// 1) 本地地址簿：完全离线可用，最高优先级。
+	// 阶段一：本地地址簿，完全离线可用。
 	if infos, ok := r.peerbook.Discover(ctx, accountPub); ok && len(infos) > 0 {
 		info := infos[0]
 		r.warmConnect(ctx, info)
 		return dm.Target{PeerID: info.ID, Addrs: info.Addrs, AccountPub: accountPub}, nil
 	}
 
-	// 1b) 同 WiFi 局域网发现：对端 UDP 广播的签名名片自带 accountID，
-	// 不依赖目录服务。同网段直连，命中后优先于公网 DHT。
+	// 阶段一：同 WiFi 局域网发现。对端 UDP 广播的签名名片自带 accountID，
+	// 不依赖目录服务；同网段直连，命中后优先于任何公网发现。
 	wantAccount := strings.ToLower(hex.EncodeToString(accountPub))
 	if r.lanBeacon != nil {
 		for _, lp := range r.lanBeacon.Snapshot() {
@@ -94,39 +111,65 @@ func (r *CascadingResolver) ResolvePeer(ctx context.Context, accountPub []byte) 
 		}
 	}
 
-	// 2) 原有 directory + DHT 链路：得到账号对应的 PeerID 候选。
-	var candidate dm.Target
-	var baseErr error
+	// 阶段二：先取 PeerID（DHT 检索的前置），再按公共 DHT -> 私有 DHT 查地址。
+	// 两个 DHT 都只做分布式地址发现，不接触消息内容。
+	ids, idErr := r.resolvePeerIDs(ctx, accountPub)
+	for _, id := range ids {
+		for _, kad := range []*dht.IpfsDHT{r.publicDHT, r.privateDHT} {
+			if kad == nil {
+				continue
+			}
+			info, err := kad.FindPeer(ctx, id)
+			if err != nil || len(info.Addrs) == 0 {
+				continue
+			}
+			// DHT 可能返回过期地址，同网段时用 mDNS / 已连接地址补齐。
+			if local := r.enhanceWithLocal(ctx, info.ID, info.Addrs); len(local.Addrs) > 0 {
+				return dm.Target{PeerID: local.ID, Addrs: local.Addrs, AccountPub: accountPub}, nil
+			}
+			return dm.Target{PeerID: info.ID, Addrs: info.Addrs, AccountPub: accountPub}, nil
+		}
+	}
+
+	// 阶段三：信令服务器兜底。若 DHT 已拿到 PeerID 但没有地址，仍把 PeerID
+	// 交给下层（relay / 离线投递）使用；否则才把错误抛给调用方。
 	if r.fallback != nil {
-		candidate, baseErr = r.fallback.ResolvePeer(ctx, accountPub)
-		if baseErr == nil && len(candidate.Addrs) > 0 {
-			// DHT 可能返回过期地址（对端重启后端口变化），同网段时把 mDNS /
-			// 已连接地址合并进来，避免拨号到陈旧地址后一直等 ACK 超时。
+		candidate, err := r.fallback.ResolvePeer(ctx, accountPub)
+		if err == nil && len(candidate.Addrs) > 0 {
 			if info := r.enhanceWithLocal(ctx, candidate.PeerID, candidate.Addrs); len(info.Addrs) > 0 {
 				return dm.Target{PeerID: info.ID, Addrs: info.Addrs, AccountPub: accountPub}, nil
 			}
 			return candidate, nil
 		}
-	}
-
-	// 3) mDNS / 已连接对等：若已知 PeerID，补充局域网地址。
-	if candidate.PeerID != "" {
-		if info := r.enhanceWithLocal(ctx, candidate.PeerID, candidate.Addrs); len(info.Addrs) > 0 {
-			return dm.Target{PeerID: info.ID, Addrs: info.Addrs, AccountPub: accountPub}, nil
+		if candidate.PeerID != "" {
+			return dm.Target{PeerID: candidate.PeerID, AccountPub: accountPub}, nil
+		}
+		if err != nil {
+			return dm.Target{}, err
 		}
 	}
 
-	// 4) 公共 DHT 兜底：使用与私有 DHT 相同的 PeerID（设备身份一致）。
-	if candidate.PeerID != "" && r.publicDHT != nil {
-		if info, err := r.publicDHT.FindPeer(ctx, candidate.PeerID); err == nil && len(info.Addrs) > 0 {
-			return dm.Target{PeerID: info.ID, Addrs: info.Addrs, AccountPub: accountPub}, nil
-		}
-	}
-
-	if baseErr != nil {
-		return dm.Target{}, baseErr
+	if idErr != nil {
+		return dm.Target{}, idErr
 	}
 	return dm.Target{}, fmt.Errorf("%w: 所有发现源均未命中", dm.ErrPeerUnreached)
+}
+
+// resolvePeerIDs 从信令服务器的身份映射能力取账号对应的设备 PeerID。
+// fallback 未实现 peerIDSource 时（例如测试替身或旧实现），退回用其
+// ResolvePeer 结果里的 PeerID，保证级联对任意 dm.PeerResolver 都能工作。
+func (r *CascadingResolver) resolvePeerIDs(ctx context.Context, accountPub []byte) ([]peer.ID, error) {
+	if src, ok := r.fallback.(peerIDSource); ok {
+		return src.ResolvePeerIDs(ctx, accountPub)
+	}
+	if r.fallback != nil {
+		target, err := r.fallback.ResolvePeer(ctx, accountPub)
+		if target.PeerID != "" {
+			return []peer.ID{target.PeerID}, err
+		}
+		return nil, err
+	}
+	return nil, nil
 }
 
 // enhanceWithLocal 合并 mDNS 发现地址与已连接地址。

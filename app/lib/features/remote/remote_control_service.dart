@@ -80,8 +80,8 @@ class RemoteControlService implements RemoteGroupService {
     this.requestTimeout = const Duration(seconds: 60),
     this.connectTimeout = const Duration(seconds: 45),
     this.idleTimeout = const Duration(minutes: 15),
-    this.isContact,
     this.canAccept,
+    this.onInputPermissionRequired,
     this.onFileOffer,
   })  : _geometry = geometry ?? createDisplayGeometryProvider(),
         _storage = storage ?? createRemoteStorage(),
@@ -104,11 +104,12 @@ class RemoteControlService implements RemoteGroupService {
   final Duration connectTimeout;
   Duration idleTimeout;
 
-  /// 仅联系人可发起（由壳层注入通讯录判断）。
-  final Future<bool> Function(String peer)? isContact;
-
   /// 当前是否允许接受远控（例如正在通话时拒绝）。
   final bool Function()? canAccept;
+
+  /// 被控端请求了键鼠控制但本机能力未就绪（如 Android 无障碍服务未开启）。
+  /// 由壳层弹出明确指引，避免控制端只看到「仅查看」而不知道原因。
+  final Future<void> Function()? onInputPermissionRequired;
 
   /// 被控端文件接收确认；为空时按权限自动接受。
   Future<bool> Function(RemoteFileOffer offer)? onFileOffer;
@@ -229,6 +230,10 @@ class RemoteControlService implements RemoteGroupService {
     );
     debugPrint('[rc] accept wanted=${wanted.set} allowed=${allowed.set} '
         'inputReady=$inputReady granted=${granted.set}');
+    if (wanted.input && !inputReady) {
+      // 不阻塞连接建立，由壳层在被控端提示如何开启键鼠能力。
+      unawaited(onInputPermissionRequired?.call());
+    }
     _token = _randomToken(32);
     _emit(info.copyWith(
       state: RemoteState.connecting,
@@ -283,7 +288,8 @@ class RemoteControlService implements RemoteGroupService {
   /// 被控端拒绝请求。
   Future<void> reject({String reason = '对方拒绝了远程控制'}) async {
     final RemoteInfo? info = _current;
-    if (info == null) {
+    // 弹窗倒计时与服务超时会同时触发拒绝；进入终态后不再重复发 reject 与审计。
+    if (info == null || info.isTerminal) {
       return;
     }
     await _send(RemoteSignal(
@@ -308,6 +314,18 @@ class RemoteControlService implements RemoteGroupService {
       reason: reason,
     ));
     _finish(RemoteState.ended, reason: reason);
+  }
+
+  /// 关闭「允许被远程控制」时调用：立即终止进行中的静默会话并通知控制端。
+  ///
+  /// 只处理被控端的静默会话（台账密码方式）；聊天框发起、需同意的远控
+  /// 不受该开关影响，因此这里刻意跳过 [RemoteInfo.silent] 为 false 的会话。
+  Future<void> endSilentSession({String reason = '已关闭静默远程控制'}) async {
+    final RemoteInfo? info = _current;
+    if (info == null || !info.isHost || !info.silent || info.isTerminal) {
+      return;
+    }
+    await end(reason: reason);
   }
 
   /// 被控端暂停控制（保留画面）。
@@ -359,9 +377,14 @@ class RemoteControlService implements RemoteGroupService {
     if (info == null || info.peer != peer || info.sid != signal.sid) {
       return;
     }
+    // 被控端可能在发出 accept（把 token 交给控制端）之前就失败，例如本机没有
+    // 可采集屏幕或媒体启动异常。此时它发出的 end 携带的是被控端自己生成的 token，
+    // 控制端 _token 仍为空、无从校验；放行这类 end 让控制端立即收尾，避免空等
+    // requestTimeout（60s）才失败。已拿到 token 后仍严格校验，杜绝伪造 end。
     final bool tokenRequired = signal.type != RemoteSignalType.accept &&
         signal.type != RemoteSignalType.reject &&
-        signal.type != RemoteSignalType.request;
+        signal.type != RemoteSignalType.request &&
+        !(_token.isEmpty && signal.type == RemoteSignalType.end);
     if (tokenRequired && signal.token != _token) {
       return;
     }
@@ -456,18 +479,21 @@ class RemoteControlService implements RemoteGroupService {
       ));
       return;
     }
-    if (!_prefs.enabled) {
+    final bool silent = signal.silent;
+    // 「允许被远程控制」开关只管台账密码的静默远控：关闭时拒绝静默请求，
+    // 但聊天框发起、需对方同意的远控不受影响（仍走通知条由用户确认）。
+    if (silent && !_prefs.enabled) {
       await _sendRaw(peer, RemoteSignal(
         type: RemoteSignalType.reject,
         sid: signal.sid,
-        reason: '被控端未开启远程控制',
+        reason: '静默远程控制未开启',
       ));
       return;
     }
-    final bool silent = signal.silent;
     final String expectedCredential = _prefs.passwordCredential;
     if (silent) {
-      // 静默控制只认「开启远控 + 密码 + 台账中保存的校验值」，不弹确认。
+      // 静默控制只认「开启远控 + 密码 + 台账中保存的校验值」，不弹确认，
+      // 不做好友/黑名单校验（台账 = 已授权设备 + 密码即凭证）。
       if (expectedCredential.isEmpty) {
         await _sendRaw(peer, RemoteSignal(
           type: RemoteSignalType.reject,
@@ -493,16 +519,8 @@ class RemoteControlService implements RemoteGroupService {
       ));
       return;
     }
-    // 聊天发起的请求始终需要对方确认，且不依赖台账密码；静默请求走设备信息 + 密码，
-    // 属于已授权的台账设备，因此不再重复做联系人校验。
-    if (!silent && isContact != null && !await isContact!(peer)) {
-      await _sendRaw(peer, RemoteSignal(
-        type: RemoteSignalType.reject,
-        sid: signal.sid,
-        reason: '仅联系人可以发起远程控制',
-      ));
-      return;
-    }
+    // 聊天发起的请求始终需要对方确认，静默请求走设备信息 + 密码；
+    // 两类请求都不再校验好友关系/黑名单，由对方确认或密码本身授权。
     _resetSessionState();
     final RemotePermissions requested = RemotePermissions(
       input: signal.permissions.input && _prefs.allowInput,
@@ -517,6 +535,7 @@ class RemoteControlService implements RemoteGroupService {
       state: RemoteState.incoming,
       requested: requested,
       quality: _prefs.quality,
+      silent: silent,
     ));
     await _audit.add(RemoteAuditEntry(
       timeMs: DateTime.now().millisecondsSinceEpoch,
@@ -860,6 +879,38 @@ class RemoteControlService implements RemoteGroupService {
   }
 
   @override
+  Future<void> sendCombo(String key, {int modifiers = 0}) async {
+    if (!_canInput) {
+      return;
+    }
+    _resetIdle();
+    await _media?.sendControl(
+      RemoteControlMessage.combo(key, modifiers: modifiers),
+    );
+  }
+
+  /// 控制端下发多点触摸手势（触屏操作远程设备）。
+  @override
+  Future<void> sendTouch(
+    String phase,
+    List<Map<String, int>> points, {
+    int modifiers = 0,
+  }) async {
+    if (!_canInput || points.isEmpty) {
+      return;
+    }
+    _resetIdle();
+    await _media?.sendControl(
+      RemoteControlMessage.touch(
+        phase,
+        points,
+        modifiers: modifiers,
+        displayIndex: _current?.display?.index ?? 0,
+      ),
+    );
+  }
+
+  @override
   Future<void> sendText(String text) async {
     if (!_canInput || text.isEmpty) {
       return;
@@ -965,6 +1016,38 @@ class RemoteControlService implements RemoteGroupService {
         await injector.key(
           '${decoded['key'] ?? ''}',
           down: decoded['down'] == true,
+          modifiers: (decoded['mod'] as num?)?.toInt() ?? 0,
+        );
+      case 'combo':
+        if (!info.permissions.input || info.state != RemoteState.active) {
+          return;
+        }
+        _resetIdle();
+        await injector.combo(
+          '${decoded['key'] ?? ''}',
+          modifiers: (decoded['mod'] as num?)?.toInt() ?? 0,
+        );
+      case 'touch':
+        if (!info.permissions.input || info.state != RemoteState.active) {
+          return;
+        }
+        _resetIdle();
+        final Object? rawPoints = decoded['points'];
+        final List<Map<String, int>> points = <Map<String, int>>[];
+        if (rawPoints is List) {
+          for (final Object? point in rawPoints) {
+            if (point is Map<String, dynamic>) {
+              points.add(<String, int>{
+                'x': (point['x'] as num?)?.toInt() ?? 0,
+                'y': (point['y'] as num?)?.toInt() ?? 0,
+                'id': (point['id'] as num?)?.toInt() ?? 0,
+              });
+            }
+          }
+        }
+        await injector.touch(
+          '${decoded['phase'] ?? ''}',
+          points,
           modifiers: (decoded['mod'] as num?)?.toInt() ?? 0,
         );
       case 'text':

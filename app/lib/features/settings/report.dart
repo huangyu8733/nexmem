@@ -185,6 +185,7 @@ class _ReportDialogState extends State<ReportDialog> {
     return AlertDialog(
       title: Text(context.t('举报')),
       content: responsiveDialogContent(
+        context: context,
         maxWidth: 360,
         child: SingleChildScrollView(
           child: Column(

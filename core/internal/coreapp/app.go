@@ -179,6 +179,9 @@ type App struct {
 	// groupTargets 可由平台层注入，未注入时基于索引服务档案 + DHT 默认实现。
 	groupTargets group.TargetResolver
 	groupXPub    group.XPubResolver
+	// xpubWaiters 让群拉人按需向老好友请求账号 X25519 公钥时同步等待应答。
+	xpubWaitMu  sync.Mutex
+	xpubWaiters map[string][]chan []byte
 	// offline 是公开档案与上传票据的刷新器；未接入索引服务时为 nil。
 	offline *offlinePublisher
 	// dir 是索引服务客户端；未配置 directory_url 时为 nil（举报等上行能力降级）。
@@ -225,7 +228,11 @@ func New(g *gateway.Gateway, sink EventSink) (*App, error) {
 		{"dm", func() error { return dm.Bind(g, &dm.Gateway{Service: a.dmService, Resolve: a.resolvePeer}) }},
 		{"fs", func() error { return fspkg.BindProvider(g, a.fsService) }},
 		{"group", func() error {
-			return group.Bind(g, &group.Gateway{Service: a.groupService, Resolve: a.resolveGroupTarget})
+			return group.Bind(g, &group.Gateway{
+				Service:  a.groupService,
+				Resolve:  a.resolveGroupTarget,
+				OnInvite: a.sendGroupInviteNotice,
+			})
 		}},
 		{"social", func() error { return social.BindProvider(g, a.socialService) }},
 	}
@@ -477,7 +484,7 @@ func (a *App) Start(ctx context.Context, cfg Config) (string, error) {
 		return "", err
 	}
 	if !hadInjected {
-		// 用级联解析器包装：本地簿 -> 原链路(directory+DHT) -> mDNS/已连接 -> 公共 DHT。
+		// 用级联解析器包装：本地簿/局域网 -> 公网 DHT -> 私有 DHT -> 信令服务器兜底。
 		lookup = discovery.NewCascadingResolver(h, book, md, kad, publicKad, lookup)
 		a.lookup = lookup
 	}
@@ -808,6 +815,7 @@ func (a *App) newSocialService(dao *store.DAO, contactSvc *contacts.Service) *so
 	svc, err := social.New(social.Options{
 		DAO:  dao,
 		Self: a.accountPub,
+		XPub: a.accountXPub,
 		Send: func(ctx context.Context, accountPub []byte, text string) (string, error) {
 			dmSvc := a.dmService()
 			if dmSvc == nil {
@@ -856,6 +864,7 @@ func (a *App) newSocialService(dao *store.DAO, contactSvc *contacts.Service) *so
 		OnGroupInvite: func(ctx context.Context, groupID string, applicant []byte) error {
 			return a.inviteGroupApplicant(ctx, groupID, applicant)
 		},
+		OnXPubReceived: a.notifyXPub,
 	})
 	if err != nil {
 		a.log.Warn("core", "社交服务初始化失败", map[string]any{"error": err.Error()})
@@ -1051,6 +1060,79 @@ func (a *App) accountPub() []byte {
 	return acc.Pub()
 }
 
+func (a *App) accountXPub() []byte {
+	acc := a.accountHandle()
+	if acc == nil {
+		return nil
+	}
+	return acc.XPub()
+}
+
+// registerXPubWaiter 登记一次等待对端账号 X25519 公钥的请求。
+func (a *App) registerXPubWaiter(accountPub []byte) (<-chan []byte, func()) {
+	key := hex.EncodeToString(accountPub)
+	ch := make(chan []byte, 1)
+	a.xpubWaitMu.Lock()
+	if a.xpubWaiters == nil {
+		a.xpubWaiters = make(map[string][]chan []byte)
+	}
+	a.xpubWaiters[key] = append(a.xpubWaiters[key], ch)
+	a.xpubWaitMu.Unlock()
+	return ch, func() {
+		a.xpubWaitMu.Lock()
+		waiters := a.xpubWaiters[key]
+		for i, candidate := range waiters {
+			if candidate == ch {
+				a.xpubWaiters[key] = append(waiters[:i], waiters[i+1:]...)
+				break
+			}
+		}
+		if len(a.xpubWaiters[key]) == 0 {
+			delete(a.xpubWaiters, key)
+		}
+		a.xpubWaitMu.Unlock()
+	}
+}
+
+// notifyXPub 唤醒所有等待该账号公钥的拉人请求。
+func (a *App) notifyXPub(_ context.Context, accountPub, xpub []byte) {
+	if len(xpub) != 32 {
+		return
+	}
+	key := hex.EncodeToString(accountPub)
+	a.xpubWaitMu.Lock()
+	waiters := append([]chan []byte(nil), a.xpubWaiters[key]...)
+	a.xpubWaitMu.Unlock()
+	for _, ch := range waiters {
+		select {
+		case ch <- append([]byte(nil), xpub...):
+		default:
+		}
+	}
+}
+
+// requestXPub 按需向老好友索取账号 X25519 公钥；对方不在线或超时则返回错误，
+// 由 group.invite 的 pending 语义兜底。
+func (a *App) requestXPub(ctx context.Context, accountPub []byte) ([]byte, error) {
+	svc := a.socialService()
+	if svc == nil {
+		return nil, errors.New("社交服务尚未接入")
+	}
+	ch, cancel := a.registerXPubWaiter(accountPub)
+	defer cancel()
+	if err := svc.RequestXPub(ctx, accountPub); err != nil {
+		return nil, err
+	}
+	waitCtx, cancelWait := context.WithTimeout(ctx, 3*time.Second)
+	defer cancelWait()
+	select {
+	case xpub := <-ch:
+		return xpub, nil
+	case <-waitCtx.Done():
+		return nil, fmt.Errorf("等待对端账号公钥: %w", waitCtx.Err())
+	}
+}
+
 func (a *App) backupService() *backup.Service {
 	return &backup.Service{
 		DB:      a.dbHandle,
@@ -1127,21 +1209,24 @@ func (a *App) buildResolvers(cfg Config, acc *identity.Account, kad *dht.IpfsDHT
 		client = c
 	}
 
+	localXPub := contactXPub{dao: a.daoHandle, wait: a.requestXPub}
+	withLocalFallback := func(primary group.XPubResolver) group.XPubResolver {
+		if primary == nil {
+			return localXPub
+		}
+		return fallbackXPub{primary: primary, fallback: localXPub}
+	}
 	if injected != nil {
 		xpub := injectedXPub
 		if xpub == nil && client != nil {
 			xpub = directoryXPub{client: client}
 		}
-		return injected, xpub, client, nil
+		return injected, withLocalFallback(xpub), client, nil
 	}
 	if client == nil || kad == nil {
-		xpub := injectedXPub
-		if xpub == nil && client != nil {
-			xpub = directoryXPub{client: client}
-		}
-		return nil, xpub, client, nil
+		return nil, withLocalFallback(injectedXPub), client, nil
 	}
-	return newDirectoryResolver(client, kad), directoryXPub{client: client}, client, nil
+	return newDirectoryResolver(client, kad), withLocalFallback(directoryXPub{client: client}), client, nil
 }
 
 // buildBucket 按启动配置创建本机离线存储客户端；未配置时返回 nil。
@@ -1229,16 +1314,43 @@ func (a *App) resolveGroupTarget(ctx context.Context, accountPub []byte) (group.
 	return t, nil
 }
 
+// sendGroupInviteNotice 把管理员主动拉人的邀请通知接到社交控制帧通道。
+// 群 ID 使用契约统一的 base64url 编码，便于客户端直接用于 group.members。
+func (a *App) sendGroupInviteNotice(ctx context.Context, groupID, accountPub []byte, title string) (bool, error) {
+	svc := a.socialService()
+	if svc == nil {
+		return false, errors.New("社交服务尚未接入")
+	}
+	_, err := svc.SendGroupInvite(ctx, base64.RawURLEncoding.EncodeToString(groupID), title, accountPub)
+	return err == nil, err
+}
+
+// decodeGroupIDString 与 group.parseGroupID 对齐：同时接受 16 字节群 ID 的
+// hex 与 base64url 形式。社交入群申请帧里带的是契约编码（base64url），
+// 旧实现只做 hex.DecodeString，导致管理员同意后无法加入申请人。
+func decodeGroupIDString(s string) ([]byte, error) {
+	if s == "" {
+		return nil, errors.New("群 ID 为空")
+	}
+	if raw, err := hex.DecodeString(s); err == nil && len(raw) == group.GroupIDSize {
+		return raw, nil
+	}
+	if raw, err := base64.RawURLEncoding.DecodeString(s); err == nil && len(raw) == group.GroupIDSize {
+		return raw, nil
+	}
+	return nil, fmt.Errorf("非法群 ID: %s", s)
+}
+
 // inviteGroupApplicant 在管理员同意入群申请后，实际把申请人加入群并投递群密钥。
-// groupID 支持 hex 编码与原始字符串两种形式（与 group.parseGroupID 对齐）。
+// groupID 支持 hex 与 base64url 两种编码（与 group.parseGroupID 对齐）。
 func (a *App) inviteGroupApplicant(ctx context.Context, groupID string, applicant []byte) error {
 	svc := a.groupService()
 	if svc == nil {
 		return errors.New("群聊服务尚未接入")
 	}
-	gid, err := hex.DecodeString(groupID)
-	if err != nil || len(gid) == 0 {
-		return fmt.Errorf("非法群 ID: %s", groupID)
+	gid, err := decodeGroupIDString(groupID)
+	if err != nil {
+		return err
 	}
 	target, err := a.resolveGroupTarget(ctx, applicant)
 	if err != nil {
@@ -1276,6 +1388,14 @@ func (a *App) onGroupMessage(ev group.Received) {
 	}
 	if text, ok := group.ParseAnnouncementNotice(ev.Plaintext); ok {
 		a.handleGroupAnnouncement(ev, text)
+		return
+	}
+	if avatarB64, ok := group.ParseGroupAvatarNotice(ev.Plaintext); ok {
+		a.handleGroupAvatar(ev, avatarB64)
+		return
+	}
+	if text, ok := group.ParseGroupDescriptionNotice(ev.Plaintext); ok {
+		a.handleGroupDescription(ev, text)
 		return
 	}
 	if enabled, ok := group.ParseAllowFriendAddNotice(ev.Plaintext); ok {
@@ -1417,6 +1537,63 @@ func (a *App) handleGroupAnnouncement(ev group.Received, text string) {
 	a.emit("group.announcement", map[string]any{
 		"group_id":     base64.RawURLEncoding.EncodeToString(ev.GroupID),
 		"announcement": text,
+	})
+}
+
+// handleGroupAvatar 处理入站群头像控制帧：仅接受本地成员表里登记的管理员发来的头像。
+func (a *App) handleGroupAvatar(ev group.Received, avatarB64 string) {
+	svc := a.groupService()
+	if svc == nil {
+		return
+	}
+	ctx := context.Background()
+	applied, err := svc.ApplyAvatar(ctx, ev.GroupID, ev.SenderAccount, avatarB64)
+	if err != nil {
+		a.log.Warn("group", "群头像本地处理失败", map[string]any{
+			"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+			"sender":   base64.RawURLEncoding.EncodeToString(ev.SenderAccount),
+			"error":    err.Error(),
+		})
+		return
+	}
+	if !applied {
+		a.log.Warn("group", "忽略非管理员群头像", map[string]any{
+			"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+			"sender":   base64.RawURLEncoding.EncodeToString(ev.SenderAccount),
+		})
+		return
+	}
+	a.emit("group.avatarChanged", map[string]any{
+		"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+	})
+}
+
+// handleGroupDescription 处理入站群介绍控制帧：仅接受本地成员表里登记的管理员发来的介绍。
+func (a *App) handleGroupDescription(ev group.Received, text string) {
+	svc := a.groupService()
+	if svc == nil {
+		return
+	}
+	ctx := context.Background()
+	applied, err := svc.ApplyDescription(ctx, ev.GroupID, ev.SenderAccount, text)
+	if err != nil {
+		a.log.Warn("group", "群介绍本地处理失败", map[string]any{
+			"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+			"sender":   base64.RawURLEncoding.EncodeToString(ev.SenderAccount),
+			"error":    err.Error(),
+		})
+		return
+	}
+	if !applied {
+		a.log.Warn("group", "忽略非管理员群介绍", map[string]any{
+			"group_id": base64.RawURLEncoding.EncodeToString(ev.GroupID),
+			"sender":   base64.RawURLEncoding.EncodeToString(ev.SenderAccount),
+		})
+		return
+	}
+	a.emit("group.descriptionChanged", map[string]any{
+		"group_id":    base64.RawURLEncoding.EncodeToString(ev.GroupID),
+		"description": text,
 	})
 }
 

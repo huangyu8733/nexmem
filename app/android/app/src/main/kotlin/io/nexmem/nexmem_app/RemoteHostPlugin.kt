@@ -60,6 +60,7 @@ class RemoteHostPlugin(
                 val yNorm = (call.argument<Int>("y") ?: 0).coerceIn(0, 65535)
                 val buttons = call.argument<Int>("buttons") ?: 0
                 val wheelY = call.argument<Int>("wheelY") ?: 0
+                val wheelX = call.argument<Int>("wheelX") ?: 0
                 val (width, height) = screenSize()
                 service.handlePointer(
                     type,
@@ -67,7 +68,30 @@ class RemoteHostPlugin(
                     yNorm / 65535f * height,
                     buttons,
                     wheelY,
+                    wheelX,
                 )
+                result.success(true)
+            }
+            "injectTouch" -> {
+                val service = RemoteControlAccessibilityService.instance
+                if (service == null) {
+                    result.success(false)
+                    return
+                }
+                val phase = call.argument<String>("phase") ?: "move"
+                val raw = call.argument<List<Map<String, Any>>>("points") ?: emptyList()
+                val (width, height) = screenSize()
+                val points = raw.mapNotNull { p ->
+                    val x = (p["x"] as? Number)?.toInt() ?: return@mapNotNull null
+                    val y = (p["y"] as? Number)?.toInt() ?: return@mapNotNull null
+                    val id = (p["id"] as? Number)?.toInt() ?: 0
+                    Triple(
+                        x / 65535f * width,
+                        y / 65535f * height,
+                        id,
+                    )
+                }
+                service.handleTouch(phase, points)
                 result.success(true)
             }
             "injectKey" -> {

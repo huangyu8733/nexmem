@@ -6,7 +6,7 @@
     "background_color": "#0A78C8",
     "theme_color": "#0A78C8",
     "description": "Nexmem (奈讯联) decentralized P2P messenger",
-    "orientation": "portrait-primary",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {

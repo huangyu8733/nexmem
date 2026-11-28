@@ -49,6 +49,10 @@ void main() {
     ));
 
     expect(find.byKey(const ValueKey<String>('call-notice-bar')), findsOneWidget);
+    final Material bar = tester.widget<Material>(
+      find.byKey(const ValueKey<String>('call-notice-bar')),
+    );
+    expect(bar.color?.a, 1.0, reason: '通话通知条必须是不透明实色');
     expect(find.textContaining('张三'), findsOneWidget);
     expect(find.textContaining('视频通话'), findsOneWidget);
     expect(find.textContaining('来电'), findsOneWidget);

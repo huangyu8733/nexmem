@@ -2,6 +2,7 @@ package io.nexmem.nexmem_app
 
 import android.app.Activity
 import android.content.ContentResolver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -42,6 +43,8 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
         private const val REQUEST_PICK_DIRECTORY = 4202
         private const val REQUEST_PICK_IMAGE = 4203
         private const val REQUEST_PICK_MEDIA = 4204
+        private const val REQUEST_PICK_VIDEO = 4205
+        private const val REQUEST_PICK_AUDIO = 4206
     }
 
     private var channel: MethodChannel? = null
@@ -169,6 +172,8 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
             "pickFile" -> pickFile(result)
             "pickImage" -> pickImage(result)
             "pickMedia" -> pickMedia(result)
+            "pickVideo" -> pickVideo(result)
+            "pickAudio" -> pickAudio(result)
             "pickDirectory" -> pickDirectory(result)
             "openPath" -> openPath(call.argument<String>("path"), result)
             "openUrl" -> openUrl(call.argument<String>("url"), result)
@@ -322,8 +327,14 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
             result.error("PICK_BUSY", "已有一个文件选择正在进行", null)
             return
         }
-        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
-            type = "image/*"
+        // Android 13+ 用系统照片选择器（ACTION_PICK_IMAGES）：MIUI 等 ROM 会把
+        // ACTION_PICK + MediaStore 解析成「选择目录」文件管理器，看起来像没有相册。
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Intent(MediaStore.ACTION_PICK_IMAGES).apply { type = "image/*" }
+        } else {
+            Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
+                type = "image/*"
+            }
         }
         pendingPick = result
         try {
@@ -331,6 +342,81 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
         } catch (t: Throwable) {
             pendingPick = null
             result.error("PICK_FAILED", t.message ?: "无法打开系统相册", null)
+        }
+    }
+
+    /** 打开系统视频库：Android 13+ 用照片选择器，低版本用 MediaStore Videos。 */
+    private fun pickVideo(result: MethodChannel.Result) {
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Intent(MediaStore.ACTION_PICK_IMAGES).apply { type = "video/*" }
+        } else {
+            Intent(Intent.ACTION_PICK, MediaStore.Video.Media.EXTERNAL_CONTENT_URI).apply {
+                type = "video/*"
+            }
+        }
+        startMediaPick(intent, REQUEST_PICK_VIDEO, result, "无法打开系统视频库")
+    }
+
+    /** 打开系统音频库：优先 MediaStore Audio，缺失时退回 GET_CONTENT。 */
+    private fun pickAudio(result: MethodChannel.Result) {
+        val act = activity
+        if (act == null) {
+            result.error("NO_ACTIVITY", "当前没有可用的界面", null)
+            return
+        }
+        val mediaStoreIntent = Intent(
+            Intent.ACTION_PICK,
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+        ).apply { type = "audio/*" }
+        val pm = act.packageManager
+        val candidates = pm.queryIntentActivities(mediaStoreIntent, 0)
+        val musicApp = candidates.firstOrNull { info ->
+            val label = info.loadLabel(pm)?.toString().orEmpty()
+            info.activityInfo.packageName.contains("music", true) ||
+                label.contains("音乐")
+        }
+        val intent = if (musicApp != null) {
+            // MIUI 等 ROM 对 ACTION_PICK 音频会同时匹配「本地音乐」和
+            // 「文件管理」；直接绑定音乐 App，避免先弹一个应用选择框。
+            mediaStoreIntent.apply {
+                component = ComponentName(
+                    musicApp.activityInfo.packageName,
+                    musicApp.activityInfo.name,
+                )
+            }
+        } else if (candidates.isNotEmpty()) {
+            mediaStoreIntent
+        } else {
+            Intent(Intent.ACTION_GET_CONTENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "audio/*"
+            }
+        }
+        startMediaPick(intent, REQUEST_PICK_AUDIO, result, "无法打开系统音频库")
+    }
+
+    private fun startMediaPick(
+        intent: Intent,
+        requestCode: Int,
+        result: MethodChannel.Result,
+        failureMessage: String,
+    ) {
+        pendingDirPick = false
+        val act = activity
+        if (act == null) {
+            result.error("NO_ACTIVITY", "当前没有可用的界面", null)
+            return
+        }
+        if (pendingPick != null) {
+            result.error("PICK_BUSY", "已有一个文件选择正在进行", null)
+            return
+        }
+        pendingPick = result
+        try {
+            act.startActivityForResult(intent, requestCode)
+        } catch (t: Throwable) {
+            pendingPick = null
+            result.error("PICK_FAILED", t.message ?: failureMessage, null)
         }
     }
 
@@ -364,7 +450,9 @@ class NexmemPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
         if (requestCode != REQUEST_PICK_FILE &&
             requestCode != REQUEST_PICK_DIRECTORY &&
             requestCode != REQUEST_PICK_IMAGE &&
-            requestCode != REQUEST_PICK_MEDIA
+            requestCode != REQUEST_PICK_MEDIA &&
+            requestCode != REQUEST_PICK_VIDEO &&
+            requestCode != REQUEST_PICK_AUDIO
         ) {
             return false
         }

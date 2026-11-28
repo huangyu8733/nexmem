@@ -2,12 +2,15 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../l10n/l10n.dart';
 import 'remote_control_service.dart';
+import 'remote_device_directory.dart';
 import 'remote_group_controller.dart';
 import 'remote_input_codec.dart';
 import 'remote_session.dart';
@@ -74,8 +77,27 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
   Offset? _lastTouch;
   bool _showKeyboard = false;
   bool _showTouchpad = false;
+
+  /// 触屏模式：中控端把手势按多点触摸下发，手机控手机/电脑控手机时
+  /// 由被控手机的无障碍服务合成真实触摸；桌面被控端仍可用虚拟触控板走鼠标语义。
+  /// 手机控制端默认开启，桌面控制端默认鼠标语义，可随时在工具栏切换。
+  bool _touchMode = !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
   double _padX = 32768;
   double _padY = 32768;
+
+  /// 虚拟键盘上的锁存修饰位（Ctrl/Alt/Shift/Win），点击后持续生效，
+  /// 直到再次点击取消或发送一个组合键后自动清除。
+  int _latchedModifiers = 0;
+
+  /// 捏合缩放的基准比例；_pinching 为 true 时暂停单指/双指滚动处理。
+  double? _pinchStartScale;
+  bool _pinching = false;
+
+  /// 双指点击检测：第二指落下时记录时间，短时内两指都抬起且未移动则右键。
+  DateTime? _secondFingerDownAt;
+  bool _twoFingerTapCandidate = true;
 
   RemoteControlService? get _service => widget.service;
 
@@ -99,6 +121,13 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
   }
 
   void _show(String message) => widget.onShowMessage?.call(message);
+
+  /// 点击画面、顶栏或其它工具时收起虚拟键盘；键盘按钮自身除外。
+  void _dismissKeyboard() {
+    if (_showKeyboard && mounted) {
+      setState(() => _showKeyboard = false);
+    }
+  }
 
   /// 打开远控设备列表，在面板里勾选设备、开关群控、批量断开。
   void _openDeviceSheet() {
@@ -177,21 +206,31 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
                   ),
                   Positioned.fromRect(
                     rect: rect,
-                    child: Listener(
+                    child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onPointerDown: _onPointerDown,
-                      onPointerMove: _onPointerMove,
-                      onPointerUp: _onPointerUp,
-                      onPointerCancel: _onPointerUp,
-                      onPointerHover: _onPointerHover,
-                      onPointerSignal: _onPointerSignal,
+                      onScaleStart: _onScaleStart,
+                      onScaleUpdate: _onScaleUpdate,
+                      onScaleEnd: _onScaleEnd,
+                      child: Listener(
+                        behavior: HitTestBehavior.opaque,
+                        onPointerDown: _onPointerDown,
+                        onPointerMove: _onPointerMove,
+                        onPointerUp: _onPointerUp,
+                        onPointerCancel: _onPointerUp,
+                        onPointerHover: _onPointerHover,
+                        onPointerSignal: _onPointerSignal,
+                      ),
                     ),
                   ),
                   Positioned(
                     left: 0,
                     right: 0,
                     top: 0,
-                    child: _buildTopBar(context),
+                    child: Listener(
+                      behavior: HitTestBehavior.translucent,
+                      onPointerDown: (_) => _dismissKeyboard(),
+                      child: _buildTopBar(context),
+                    ),
                   ),
                   if (info.state == RemoteState.outgoing ||
                       info.state == RemoteState.connecting ||
@@ -262,6 +301,17 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
 
   Rect _contentRect(Size size) {
     final RemoteInfo info = widget.info;
+
+    // 画面只占顶栏与底栏之间的可操作区域，避免边缘被工具栏遮挡点不到。
+    // 虚拟键盘展开时进一步上收，保证视频与键盘不重叠。
+    const double topInset = 56;
+    final double bottomInset = 64 + (_showKeyboard ? 196 : 0);
+    final double areaBottom = math.max(topInset + 1, size.height - bottomInset);
+    final Rect area = Rect.fromLTRB(0, topInset, size.width, areaBottom);
+    if (area.width <= 0 || area.height <= 0) {
+      return area;
+    }
+
     final double vw = (info.stats.width > 0
             ? info.stats.width
             : info.display?.pixelWidth ?? 1920)
@@ -271,14 +321,14 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
             : info.display?.pixelHeight ?? 1080)
         .toDouble();
     if (vw <= 0 || vh <= 0) {
-      return Offset.zero & size;
+      return area;
     }
-    final double scale = math.min(size.width / vw, size.height / vh);
+    final double scale = math.min(area.width / vw, area.height / vh);
     final double width = vw * scale;
     final double height = vh * scale;
     return Rect.fromLTWH(
-      (size.width - width) / 2,
-      (size.height - height) / 2,
+      area.left + (area.width - width) / 2,
+      area.top + (area.height - height) / 2,
       width,
       height,
     );
@@ -466,6 +516,16 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
           ),
           Flexible(
             child: _toolButton(
+              key: 'remote-touch-mode',
+              icon: _touchMode ? Icons.smartphone : Icons.mouse,
+              label: _touchMode
+                  ? context.t('触屏模式')
+                  : context.t('鼠标模式'),
+              onTap: () => setState(() => _touchMode = !_touchMode),
+            ),
+          ),
+          Flexible(
+            child: _toolButton(
               key: 'remote-end',
               icon: Icons.power_settings_new,
               label: context.t('断开'),
@@ -487,7 +547,15 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
   }) {
     return InkWell(
       key: ValueKey<String>(key),
-      onTap: onTap,
+      onTap: onTap == null
+          ? null
+          : () {
+              // 键盘按钮负责自己的开关，其它工具点击时顺手收起键盘。
+              if (key != 'remote-keyboard') {
+                _dismissKeyboard();
+              }
+              onTap();
+            },
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
@@ -521,16 +589,32 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
   }
 
   Widget _buildKeyboardBar(BuildContext context) {
-    const List<(String, String)> keys = <(String, String)>[
+    const List<(String, String)> functionKeys = <(String, String)>[
       ('Esc', 'escape'),
       ('Tab', 'tab'),
       ('Enter', 'enter'),
-      ('⌫', 'backspace'),
-      ('←', 'arrowLeft'),
-      ('↑', 'arrowUp'),
-      ('↓', 'arrowDown'),
-      ('→', 'arrowRight'),
+      // 用 ASCII 标签，避免 iOS 某些字体把 ⌫/←/↑/↓/→/⌘ 渲染成黑方框。
+      ('Back', 'backspace'),
+      ('Del', 'delete'),
+      ('Ins', 'insert'),
+      ('Home', 'home'),
+      ('End', 'end'),
+      ('PgUp', 'pageUp'),
+      ('PgDn', 'pageDown'),
+      ('Left', 'arrowLeft'),
+      ('Up', 'arrowUp'),
+      ('Down', 'arrowDown'),
+      ('Right', 'arrowRight'),
+      ('PrtSc', 'printScreen'),
+      ('Menu', 'contextMenu'),
     ];
+    const List<(String, int)> modifiers = <(String, int)>[
+      ('Ctrl', RemoteModifiers.control),
+      ('Alt', RemoteModifiers.alt),
+      ('Shift', RemoteModifiers.shift),
+      ('Win', RemoteModifiers.meta),
+    ];
+    final bool apple = _hostIsApple;
     return Container(
       color: const Color(0xFF1A1D21),
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -568,11 +652,66 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
             ],
           ),
           const SizedBox(height: 8),
+          // 修饰键锁存：点击后持续生效，组合键发送后自动清除。
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
               children: <Widget>[
-                for (final (String label, String key) in keys)
+                for (final (String label, int bit) in modifiers)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: _chipButton(
+                      key: 'remote-mod-$label',
+                      label: apple && label == 'Ctrl' ? 'Cmd' : label,
+                      active: _latchedModifiers & bit != 0,
+                      onTap: () => setState(
+                        () => _latchedModifiers ^= bit,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          // 常见组合键快捷栏。
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: <Widget>[
+                for (final RemoteComboSpec combo in RemoteCombos.common)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: OutlinedButton(
+                      key: ValueKey<String>('remote-combo-${combo.key}-${combo.modifiers}'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 34),
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        foregroundColor: Colors.white70,
+                        // 仅查看时也要保持文字可读，避免整排按钮变成黑方框。
+                        disabledForegroundColor: Colors.white54,
+                        side: const BorderSide(color: Colors.white24),
+                        backgroundColor: Colors.white10,
+                        disabledBackgroundColor: Colors.white10,
+                      ),
+                      onPressed: _canInput
+                          ? () => _sendComboTap(
+                              combo.key,
+                              modifiers: combo.modifiers,
+                            )
+                          : null,
+                      child: Text(combo.displayLabel(apple)),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          // 功能键 / 导航键 / 扩展键。
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: <Widget>[
+                for (final (String label, String key) in functionKeys)
                   Padding(
                     padding: const EdgeInsets.only(right: 6),
                     child: OutlinedButton(
@@ -581,7 +720,11 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
                         minimumSize: const Size(0, 34),
                         padding: const EdgeInsets.symmetric(horizontal: 10),
                         foregroundColor: Colors.white70,
+                        // 仅查看时也要保持文字可读，避免整排按钮变成黑方框。
+                        disabledForegroundColor: Colors.white54,
                         side: const BorderSide(color: Colors.white24),
+                        backgroundColor: Colors.white10,
+                        disabledBackgroundColor: Colors.white10,
                       ),
                       onPressed: _canInput
                           ? () => _sendKeyTap(key)
@@ -593,6 +736,48 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 是否被控端为 Apple 平台（决定组合键文案 Cmd/Ctrl）。
+  bool get _hostIsApple {
+    final RemoteGroupController? group = widget.groupController;
+    if (group != null && group.deviceTypeOf != null) {
+      final RemoteDeviceType type = group.typeOf(widget.info.peer);
+      if (type == RemoteDeviceType.macos) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Widget _chipButton({
+    required String key,
+    required String label,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      key: ValueKey<String>(key),
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? Colors.tealAccent.withValues(alpha: 0.25) : Colors.white10,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: active ? Colors.tealAccent : Colors.white24,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: active ? Colors.tealAccent : Colors.white70,
+            fontSize: 12,
+          ),
+        ),
       ),
     );
   }
@@ -695,10 +880,22 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
   // ---------------------------------------------------------------------------
 
   void _onPointerDown(PointerDownEvent event) {
+    // 点击远程画面时收起虚拟键盘，但仍照常下发指针/触摸输入。
+    _dismissKeyboard();
     if (!_canInput) {
       return;
     }
     _focus.requestFocus();
+    if (_touchMode) {
+      _pointers[event.pointer] = event.localPosition;
+      _longPress?.cancel();
+      _longPressFired = false;
+      _secondFingerDownAt = null;
+      _twoFingerTapCandidate = true;
+      _lastCentroid = null;
+      _sendTouchPhase('down');
+      return;
+    }
     if (event.kind == PointerDeviceKind.mouse) {
       _buttons = _maskOf(event.buttons);
       _sendPointer(
@@ -744,12 +941,22 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
           buttons: 0,
         );
       }
+      _secondFingerDownAt = DateTime.now();
+      _twoFingerTapCandidate = true;
       _lastCentroid = _centroid();
     }
   }
 
   void _onPointerMove(PointerMoveEvent event) {
     if (!_canInput) {
+      return;
+    }
+    if (_touchMode) {
+      if (!_pointers.containsKey(event.pointer)) {
+        return;
+      }
+      _pointers[event.pointer] = event.localPosition;
+      _sendTouchPhase('move');
       return;
     }
     if (event.kind == PointerDeviceKind.mouse) {
@@ -780,11 +987,15 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
       if (last != null) {
         final int delta = (-(now.dy - last.dy) / 8).round();
         if (delta != 0) {
-          _sendPointer(
-            RemotePointerType.wheel,
-            now,
-            wheelY: delta.clamp(-10, 10),
-          );
+          // 双指发生位移：不是点击，取消右键候选，且缩放中不重复滚动。
+          _twoFingerTapCandidate = false;
+          if (!_pinching) {
+            _sendPointer(
+              RemotePointerType.wheel,
+              now,
+              wheelY: delta.clamp(-10, 10),
+            );
+          }
         }
       }
       return;
@@ -800,6 +1011,15 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
     if (!_canInput) {
       return;
     }
+    if (_touchMode) {
+      if (!_pointers.containsKey(event.pointer)) {
+        return;
+      }
+      _pointers[event.pointer] = event.localPosition;
+      _sendTouchPhase('up');
+      _pointers.remove(event.pointer);
+      return;
+    }
     if (event.kind == PointerDeviceKind.mouse) {
       _buttons = _maskOf(event.buttons);
       _sendPointer(
@@ -809,10 +1029,26 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
       );
       return;
     }
+    final bool wasTwo = _pointers.length == 2;
     _pointers.remove(event.pointer);
     if (_pointers.isEmpty) {
       _longPress?.cancel();
-      if (!_longPressFired) {
+      // 双指点击（两指同时快速落下抬起且未移动）= 右键。
+      final bool twoFingerTap = wasTwo &&
+          _twoFingerTapCandidate &&
+          !_longPressFired &&
+          !_pinching &&
+          _secondFingerDownAt != null &&
+          DateTime.now().difference(_secondFingerDownAt!) <
+              const Duration(milliseconds: 400);
+      if (twoFingerTap) {
+        _sendPointer(
+          RemotePointerType.button,
+          event.localPosition,
+          buttons: RemoteButtons.right,
+        );
+        _sendPointer(RemotePointerType.button, event.localPosition, buttons: 0);
+      } else if (!_longPressFired) {
         _sendPointer(
           RemotePointerType.button,
           event.localPosition,
@@ -822,13 +1058,15 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
       _longPressFired = false;
       _buttons = 0;
       _lastCentroid = null;
+      _secondFingerDownAt = null;
+      _twoFingerTapCandidate = true;
     } else {
       _lastCentroid = _centroid();
     }
   }
 
   void _onPointerHover(PointerHoverEvent event) {
-    if (!_canInput || _buttons != 0) {
+    if (!_canInput || _buttons != 0 || _touchMode) {
       return;
     }
     _sendPointer(RemotePointerType.move, event.localPosition);
@@ -838,15 +1076,43 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
     if (!_canInput || event is! PointerScrollEvent) {
       return;
     }
-    final int delta = (-event.scrollDelta.dy / 40).round();
-    if (delta == 0) {
+    final int deltaY = (-event.scrollDelta.dy / 40).round().clamp(-10, 10);
+    final int deltaX = (-event.scrollDelta.dx / 40).round().clamp(-10, 10);
+    if (deltaY == 0 && deltaX == 0) {
       return;
     }
-    _sendPointer(
-      RemotePointerType.wheel,
-      event.localPosition,
-      wheelY: delta.clamp(-10, 10),
-    );
+    // 水平滚动经 wheel 事件的 wheelX 字段下发（触控板双指横滑）。
+    final RemoteControlService? service = _service;
+    final Rect? rect = _videoRect;
+    if (deltaX != 0 && service != null && rect != null) {
+      final int x = ((event.localPosition.dx - rect.left) / rect.width * 65535)
+          .clamp(0, 65535)
+          .round();
+      final int y = ((event.localPosition.dy - rect.top) / rect.height * 65535)
+          .clamp(0, 65535)
+          .round();
+      final RemotePointerEvent wheelEvent = RemotePointerEvent(
+        type: RemotePointerType.wheel,
+        xNorm: x,
+        yNorm: y,
+        wheelX: deltaX,
+        modifiers: RemoteKeyMap.currentModifiers() | _latchedModifiers,
+        displayIndex: widget.info.display?.index ?? 0,
+      );
+      final RemoteGroupController? group = widget.groupController;
+      if (_groupActive) {
+        unawaited(group!.broadcastPointer(wheelEvent));
+      } else {
+        unawaited(service.sendPointer(wheelEvent));
+      }
+    }
+    if (deltaY != 0) {
+      _sendPointer(
+        RemotePointerType.wheel,
+        event.localPosition,
+        wheelY: deltaY,
+      );
+    }
   }
 
   Offset _centroid() {
@@ -860,12 +1126,96 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
     return Offset(x / n, y / n);
   }
 
+  // ---------------------------------------------------------------------------
+  // 捏合缩放 / 双指手势
+  // ---------------------------------------------------------------------------
+
+  void _onScaleStart(ScaleStartDetails details) {
+    if (!_canInput || details.pointerCount < 2) {
+      return;
+    }
+    // ScaleStartDetails 无 scale 字段，以 1.0 作为捏合基准。
+    _pinchStartScale = 1.0;
+    _pinching = true;
+    // 缩放期间退出单指左键态，避免误拖拽。
+    if (_buttons != 0) {
+      _buttons = 0;
+      _sendPointer(RemotePointerType.button, _centroid(), buttons: 0);
+    }
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails details) {
+    if (!_canInput || !_pinching || _pinchStartScale == null) {
+      return;
+    }
+    if (details.pointerCount < 2) {
+      return;
+    }
+    final double scale = details.scale / _pinchStartScale!;
+    // 把连续比例换算为离散滚轮步数：放大(scale>1) 发送正向 wheel。
+    final int steps = ((scale - 1) * 6).round().clamp(-8, 8);
+    if (steps == 0 || steps == _lastPinchSteps) {
+      return;
+    }
+    _lastPinchSteps = steps;
+    _pinchStartScale = details.scale;
+    _sendPointer(
+      RemotePointerType.pinch,
+      details.focalPoint,
+      wheelY: steps,
+    );
+    // 缩放手势等价于 Ctrl 修饰；通过 modifiers 位下发，注入器按平台解释。
+  }
+
+  void _onScaleEnd(ScaleEndDetails details) {
+    _pinchStartScale = null;
+    _pinching = false;
+    _lastPinchSteps = 0;
+  }
+
+  int _lastPinchSteps = 0;
+
   int _maskOf(int buttons) {
     int mask = 0;
     if (buttons & kPrimaryButton != 0) mask |= RemoteButtons.left;
     if (buttons & kSecondaryButton != 0) mask |= RemoteButtons.right;
     if (buttons & kMiddleMouseButton != 0) mask |= RemoteButtons.middle;
+    if (buttons & kBackMouseButton != 0) mask |= RemoteButtons.back;
+    if (buttons & kForwardMouseButton != 0) mask |= RemoteButtons.forward;
     return mask;
+  }
+
+  /// 把当前触点集合按归一化坐标下发到被控端；群控时广播到所有勾选设备。
+  void _sendTouchPhase(String phase) {
+    final RemoteControlService? service = _service;
+    final Rect? rect = _videoRect;
+    if (service == null ||
+        rect == null ||
+        rect.width <= 0 ||
+        rect.height <= 0 ||
+        _pointers.isEmpty) {
+      return;
+    }
+    final List<Map<String, int>> points = _pointers.entries
+        .map(
+          (MapEntry<int, Offset> entry) => <String, int>{
+            'id': entry.key,
+            'x': ((entry.value.dx - rect.left) / rect.width * 65535)
+                .clamp(0, 65535)
+                .round(),
+            'y': ((entry.value.dy - rect.top) / rect.height * 65535)
+                .clamp(0, 65535)
+                .round(),
+          },
+        )
+        .toList(growable: false);
+    final int modifiers = RemoteKeyMap.currentModifiers() | _latchedModifiers;
+    final RemoteGroupController? group = widget.groupController;
+    if (_groupActive) {
+      unawaited(group!.broadcastTouch(phase, points, modifiers: modifiers));
+      return;
+    }
+    unawaited(service.sendTouch(phase, points, modifiers: modifiers));
   }
 
   void _sendPointer(
@@ -885,13 +1235,18 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
     final int y = ((position.dy - rect.top) / rect.height * 65535)
         .clamp(0, 65535)
         .round();
+    int modifiers = RemoteKeyMap.currentModifiers() | _latchedModifiers;
+    if (type == RemotePointerType.pinch) {
+      // 捏合缩放 = Ctrl + 滚轮，补上 control 修饰位。
+      modifiers |= RemoteModifiers.control;
+    }
     final RemotePointerEvent event = RemotePointerEvent(
       type: type,
       xNorm: x,
       yNorm: y,
       buttons: buttons,
       wheelY: wheelY,
-      modifiers: RemoteKeyMap.currentModifiers(),
+      modifiers: modifiers,
       displayIndex: widget.info.display?.index ?? 0,
     );
     final RemoteGroupController? group = widget.groupController;
@@ -917,7 +1272,8 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
     final bool down =
         event is KeyDownEvent || event is KeyRepeatEvent;
     if (event is KeyUpEvent || down) {
-      final int modifiers = RemoteKeyMap.currentModifiers();
+      final int modifiers =
+          RemoteKeyMap.currentModifiers() | _latchedModifiers;
       final RemoteGroupController? group = widget.groupController;
       if (_groupActive) {
         unawaited(group!.broadcastKey(name, down: down, modifiers: modifiers));
@@ -947,7 +1303,14 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
   }
 
   /// 一次完整的按键（按下 + 松开），用于手机端补发功能键。
+  /// 若已锁存修饰键，则升级为原子组合键下发，保证修饰键时序正确。
   Future<void> _sendKeyTap(String key) async {
+    if (_latchedModifiers != 0) {
+      final int mods = _latchedModifiers;
+      setState(() => _latchedModifiers = 0);
+      await _sendComboTap(key, modifiers: mods);
+      return;
+    }
     final RemoteGroupController? group = widget.groupController;
     if (_groupActive) {
       await group!.broadcastKey(key, down: true);
@@ -960,6 +1323,20 @@ class _RemoteControlPageState extends State<RemoteControlPage> {
     }
     await service.sendKey(key, down: true);
     await service.sendKey(key, down: false);
+  }
+
+  /// 发送一个原子组合键（含常见组合键快捷栏与锁存修饰键）。
+  Future<void> _sendComboTap(String key, {int modifiers = 0}) async {
+    if (modifiers == 0) {
+      await _sendKeyTap(key);
+      return;
+    }
+    final RemoteGroupController? group = widget.groupController;
+    if (_groupActive) {
+      await group!.broadcastCombo(key, modifiers: modifiers);
+      return;
+    }
+    await _service?.sendCombo(key, modifiers: modifiers);
   }
 
   Future<void> _sendClipboard() async {

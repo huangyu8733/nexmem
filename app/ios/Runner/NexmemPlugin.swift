@@ -1,4 +1,5 @@
 import Flutter
+import MediaPlayer
 import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
@@ -12,12 +13,14 @@ import UniformTypeIdentifiers
 /// `pickFile` 是平台文件选择器（P2-08）：选中后复制到缓存目录，回传
 /// `name/size/mime/path`，内核按绝对路径直接读取。
 final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
-    PHPickerViewControllerDelegate {
+    PHPickerViewControllerDelegate, MPMediaPickerControllerDelegate {
     private static let channelName = "io.nexmem/core"
 
     private let channel: FlutterMethodChannel
     private let worker = DispatchQueue(label: "io.nexmem.core.call", qos: .userInitiated)
     private var pendingPick: FlutterResult?
+    private var pendingPHIsVideo = false
+    private var pendingPickIsDirectory = false
 
     private init(messenger: FlutterBinaryMessenger) {
         channel = FlutterMethodChannel(name: NexmemPlugin.channelName, binaryMessenger: messenger)
@@ -62,6 +65,12 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
             pickImage(result)
         case "pickMedia":
             pickMedia(result)
+        case "pickVideo":
+            pickVideo(result)
+        case "pickAudio":
+            pickAudio(result)
+        case "pickDirectory":
+            pickDirectory(result)
         case "startService", "stopService":
             // iOS 没有前台服务，常驻依赖静默推送（P6-02），保持空实现。
             result("")
@@ -150,6 +159,30 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
         picker.delegate = self
         picker.allowsMultipleSelection = false
+        pendingPickIsDirectory = false
+        pendingPick = result
+        presenter.present(picker, animated: true)
+    }
+
+    /// 选择本地文件夹（聊天发送文件夹 / P2P 发布共用）。
+    /// UIDocumentPicker 的 asCopy 会把目录树复制到应用沙盒，仍需再复制到
+    /// Caches 固定路径，因为系统临时副本在回调结束后可能失效。
+    private func pickDirectory(_ result: @escaping FlutterResult) {
+        if pendingPick != nil {
+            result(FlutterError(code: "PICK_BUSY", message: "已有一个文件选择正在进行", details: nil))
+            return
+        }
+        guard let presenter = NexmemPlugin.topViewController() else {
+            result(FlutterError(code: "NO_ACTIVITY", message: "当前没有可用的界面", details: nil))
+            return
+        }
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: [.folder],
+            asCopy: true
+        )
+        picker.delegate = self
+        picker.allowsMultipleSelection = false
+        pendingPickIsDirectory = true
         pendingPick = result
         presenter.present(picker, animated: true)
     }
@@ -167,8 +200,53 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
         var config = PHPickerConfiguration()
         config.filter = .images
         config.selectionLimit = 1
+        pendingPHIsVideo = false
         let picker = PHPickerViewController(configuration: config)
         picker.delegate = self
+        pendingPick = result
+        presenter.present(picker, animated: true)
+    }
+
+    /// 打开系统视频库（PHPicker 视频），直接进入相册的视频列表。
+    private func pickVideo(_ result: @escaping FlutterResult) {
+        if pendingPick != nil {
+            result(FlutterError(code: "PICK_BUSY", message: "已有一个文件选择正在进行", details: nil))
+            return
+        }
+        guard let presenter = NexmemPlugin.topViewController() else {
+            result(FlutterError(code: "NO_ACTIVITY", message: "当前没有可用的界面", details: nil))
+            return
+        }
+        var config = PHPickerConfiguration()
+        config.filter = .videos
+        config.selectionLimit = 1
+        pendingPHIsVideo = true
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = self
+        pendingPick = result
+        presenter.present(picker, animated: true)
+    }
+
+    /// 打开系统音频库（音乐库）；受保护项目无法导出时退回文件选择器。
+    private func pickAudio(_ result: @escaping FlutterResult) {
+        if pendingPick != nil {
+            result(FlutterError(code: "PICK_BUSY", message: "已有一个文件选择正在进行", details: nil))
+            return
+        }
+        guard let presenter = NexmemPlugin.topViewController() else {
+            result(FlutterError(code: "NO_ACTIVITY", message: "当前没有可用的界面", details: nil))
+            return
+        }
+        // 音乐库权限被拒绝/受限时直接走文件选择器，避免 present 音乐库时被系统终止。
+        let status = MPMediaLibrary.authorizationStatus()
+        if status == .denied || status == .restricted {
+            pickMedia(result)
+            return
+        }
+        let picker = MPMediaPickerController(mediaTypes: .anyAudio)
+        picker.delegate = self
+        picker.allowsPickingMultipleItems = false
+        picker.prompt = "选择音频"
         pendingPick = result
         presenter.present(picker, animated: true)
     }
@@ -191,6 +269,7 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
         )
         picker.delegate = self
         picker.allowsMultipleSelection = false
+        pendingPickIsDirectory = false
         pendingPick = result
         presenter.present(picker, animated: true)
     }
@@ -204,7 +283,9 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
             return
         }
         // 临时文件在 completion 返回后即失效，必须先复制到 Caches 再回调。
-        provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) {
+        let isVideo = pendingPHIsVideo
+        let typeIdentifier = isVideo ? UTType.movie.identifier : UTType.image.identifier
+        provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) {
             [weak self] url, error in
             guard self != nil else { return }
             if let error = error {
@@ -226,7 +307,8 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
             do {
                 let picked = try NexmemPlugin.copyPickedImage(
                     url,
-                    suggestedName: provider.suggestedName
+                    suggestedName: provider.suggestedName,
+                    defaultName: isVideo ? "video.mov" : "image.jpg"
                 )
                 DispatchQueue.main.async { result(picked) }
             } catch {
@@ -243,10 +325,14 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
         }
     }
 
-    private static func copyPickedImage(_ url: URL, suggestedName: String?) throws -> [String: Any] {
+    private static func copyPickedImage(
+        _ url: URL,
+        suggestedName: String?,
+        defaultName: String = "image.jpg"
+    ) throws -> [String: Any] {
         let fm = FileManager.default
         let rawName = suggestedName ?? url.lastPathComponent
-        let name = rawName.isEmpty ? "image.jpg" : rawName
+        let name = rawName.isEmpty ? defaultName : rawName
         let safe = name.replacingOccurrences(
             of: "[^A-Za-z0-9._-]",
             with: "_",
@@ -259,7 +345,7 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
         try fm.copyItem(at: url, to: target)
         let size = (try fm.attributesOfItem(atPath: target.path)[.size] as? NSNumber)?.int64Value ?? 0
         let ext = (name as NSString).pathExtension
-        let mime = UTType(filenameExtension: ext)?.preferredMIMEType ?? "image/jpeg"
+        let mime = UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
         return [
             "name": name,
             "size": size,
@@ -268,17 +354,81 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
         ]
     }
 
+    func mediaPicker(
+        _ mediaPicker: MPMediaPickerController,
+        didPickMediaItems mediaItemCollection: MPMediaItemCollection
+    ) {
+        mediaPicker.dismiss(animated: true)
+        guard let result = pendingPick else { return }
+        guard let item = mediaItemCollection.items.first else {
+            pendingPick = nil
+            result(nil)
+            return
+        }
+        guard let assetURL = item.assetURL else {
+            // DRM / 云同步项目没有可导出的本地 URL，退回音频文件选择器。
+            guard let presenter = NexmemPlugin.topViewController() else {
+                pendingPick = nil
+                result(FlutterError(
+                    code: "PICK_FAILED",
+                    message: "该音频无法导出，请从文件中选择",
+                    details: nil
+                ))
+                return
+            }
+            let fallback = UIDocumentPickerViewController(
+                forOpeningContentTypes: [.audio],
+                asCopy: true
+            )
+            fallback.delegate = self
+            fallback.allowsMultipleSelection = false
+            presenter.present(fallback, animated: true)
+            return
+        }
+        pendingPick = nil
+        worker.async {
+            do {
+                var picked = try NexmemPlugin.copyPickedFile(assetURL)
+                if let title = item.title, !title.isEmpty {
+                    picked["name"] = title
+                }
+                DispatchQueue.main.async { result(picked) }
+            } catch {
+                DispatchQueue.main.async {
+                    result(FlutterError(
+                        code: "PICK_FAILED",
+                        message: error.localizedDescription,
+                        details: nil
+                    ))
+                }
+            }
+        }
+    }
+
+    func mediaPickerDidCancel(_ mediaPicker: MPMediaPickerController) {
+        mediaPicker.dismiss(animated: true)
+        pendingPick?(nil)
+        pendingPick = nil
+    }
+
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let result = pendingPick else { return }
         pendingPick = nil
+        let wantsDirectory = pendingPickIsDirectory
+        pendingPickIsDirectory = false
         guard let url = urls.first else {
             result(nil)
             return
         }
         worker.async {
             do {
-                let picked = try NexmemPlugin.copyPickedFile(url)
-                DispatchQueue.main.async { result(picked) }
+                if wantsDirectory {
+                    let path = try NexmemPlugin.copyPickedDirectory(url)
+                    DispatchQueue.main.async { result(path) }
+                } else {
+                    let picked = try NexmemPlugin.copyPickedFile(url)
+                    DispatchQueue.main.async { result(picked) }
+                }
             } catch {
                 DispatchQueue.main.async {
                     result(
@@ -296,6 +446,55 @@ final class NexmemPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate,
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
         pendingPick?(nil)
         pendingPick = nil
+    }
+
+    /// 把选中的目录树复制到 `Caches/nexmem-picked`，返回内核可读的绝对路径。
+    private static func copyPickedDirectory(_ url: URL) throws -> String {
+        let fm = FileManager.default
+        let name = url.lastPathComponent.isEmpty ? "folder" : url.lastPathComponent
+        let safe = name.replacingOccurrences(
+            of: "[^A-Za-z0-9._-]",
+            with: "_",
+            options: .regularExpression
+        )
+        let cache = fm.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let root = cache.appendingPathComponent("nexmem-picked", isDirectory: true)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        let stamp = Int(Date().timeIntervalSince1970 * 1000)
+        let target = root.appendingPathComponent("\(stamp)-\(safe.isEmpty ? "folder" : safe)", isDirectory: true)
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+
+        let sourcePath = url.path.hasSuffix("/") ? String(url.path.dropLast()) : url.path
+        guard let enumerator = fm.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            throw NSError(domain: "NexmemPick", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "无法读取所选文件夹"
+            ])
+        }
+        for case let child as URL in enumerator {
+            let relative = child.path.hasPrefix(sourcePath + "/")
+                ? String(child.path.dropFirst(sourcePath.count + 1))
+                : child.lastPathComponent
+            let destination = target.appendingPathComponent(relative)
+            var isDirectory: ObjCBool = false
+            fm.fileExists(atPath: child.path, isDirectory: &isDirectory)
+            if isDirectory.boolValue {
+                try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+            } else {
+                try fm.createDirectory(
+                    at: destination.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                if fm.fileExists(atPath: destination.path) {
+                    try fm.removeItem(at: destination)
+                }
+                try fm.copyItem(at: child, to: destination)
+            }
+        }
+        return target.path
     }
 
     /// 把选择结果复制到 `Caches/nexmem-picked` 并返回 Dart 侧字段。

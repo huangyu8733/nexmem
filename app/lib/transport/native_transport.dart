@@ -9,7 +9,9 @@ import 'package:flutter/foundation.dart';
 
 import '../app/core_session.dart';
 import '../features/chat/voice_recorder.dart';
+import '../features/files/chat_file_actions.dart';
 import '../features/files/directory_picker.dart';
+import '../features/files/folder_attachment.dart';
 import '../features/files/system_file_picker.dart';
 import 'event_buffer.dart';
 import 'event_sequencer.dart';
@@ -518,8 +520,15 @@ CoreSession? openNativeSession() {
     pickFile: pickLocalFile,
     pickImage: pickLocalImage,
     pickMedia: pickLocalMedia,
+    pickVideo: pickLocalVideo,
+    pickAudio: pickLocalAudio,
     voiceRecorder: makeVoiceRecorder(),
     pickDirectory: pickShareDirectory,
+    pickFolder: () => pickFolderAttachment(directoryPicker: pickShareDirectory),
+    readChatFileBytes: (String path) =>
+        readChatFileBytes(path: path),
+    saveChatFile: (String path, String fileName) =>
+        saveChatFileToDevice(sourcePath: path, fileName: fileName),
   );
 }
 

@@ -43,9 +43,16 @@ class _FakeService implements RemoteGroupService {
         ),
       );
 
+  final List<(String, int)> combos = <(String, int)>[];
+
   @override
   Future<void> sendKey(String key, {required bool down, int modifiers = 0}) async {
     keys.add('$key:${down ? 'down' : 'up'}');
+  }
+
+  @override
+  Future<void> sendCombo(String key, {int modifiers = 0}) async {
+    combos.add((key, modifiers));
   }
 
   @override
@@ -54,6 +61,18 @@ class _FakeService implements RemoteGroupService {
   @override
   Future<void> sendPointer(RemotePointerEvent event) async =>
       pointers.add(event);
+
+  final List<(String, List<Map<String, int>>, int)> touches =
+      <(String, List<Map<String, int>>, int)>[];
+
+  @override
+  Future<void> sendTouch(
+    String phase,
+    List<Map<String, int>> points, {
+    int modifiers = 0,
+  }) async {
+    touches.add((phase, points, modifiers));
+  }
 
   @override
   Future<void> sendClipboardText(String text) async =>
@@ -99,6 +118,7 @@ void main() {
       group.setEnabled(true);
 
       await group.broadcastKey('enter', down: true);
+      await group.broadcastCombo('c', modifiers: RemoteModifiers.control);
       await group.broadcastText('hello');
       await group.broadcastPointer(const RemotePointerEvent(
         type: RemotePointerType.move,
@@ -109,6 +129,8 @@ void main() {
 
       expect(a.keys, <String>['enter:down']);
       expect(b.keys, <String>['enter:down']);
+      expect(a.combos, <(String, int)>[('c', RemoteModifiers.control)]);
+      expect(b.combos, <(String, int)>[('c', RemoteModifiers.control)]);
       expect(a.texts, <String>['hello']);
       expect(b.texts, <String>['hello']);
       expect(a.pointers.single.xNorm, 100);
@@ -344,6 +366,28 @@ void main() {
 
       expect(a.texts, <String>['群控文字']);
       expect(b.texts, <String>['群控文字']);
+    });
+
+    test('群控可广播多点触摸到所有设备', () async {
+      final _FakeService a = _FakeService('p1', name: '设备 A');
+      final _FakeService b = _FakeService('p2', name: '设备 B');
+      final RemoteGroupController group = RemoteGroupController(
+        services: <String, RemoteGroupService>{'p1': a, 'p2': b},
+      );
+      group.enabled = true;
+
+      await group.broadcastTouch(
+        'down',
+        <Map<String, int>>[
+          <String, int>{'id': 1, 'x': 100, 'y': 200},
+        ],
+        modifiers: 0,
+      );
+
+      expect(a.touches.length, 1);
+      expect(b.touches.length, 1);
+      expect(a.touches.first.$1, 'down');
+      expect(a.touches.first.$2.first['x'], 100);
     });
   });
 }

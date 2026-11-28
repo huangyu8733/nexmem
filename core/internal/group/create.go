@@ -52,8 +52,12 @@ type GroupInfo struct {
 	// LevelsEnabled 是群等级总开关（默认关闭）。
 	LevelsEnabled bool
 	// Levels 是群等级配置，受 LevelsEnabled 控制是否生效。
-	Levels  []GroupLevel
-	Members []MemberInfo
+	Levels []GroupLevel
+	// AvatarB64 是 512x512 JPEG 群头像的 base64；空串表示未设置。
+	AvatarB64 string
+	// Description 是群介绍正文；空串表示未设置。
+	Description string
+	Members     []MemberInfo
 }
 
 // CreateGroup 创建群聊并分发 v1 群密钥。
@@ -140,6 +144,8 @@ func (s *Service) GroupInfo(ctx context.Context, groupID []byte) (GroupInfo, err
 		AllowFriendAdd:    g.AllowFriendAdd,
 		LevelsEnabled:     g.LevelsEnabled,
 		Levels:            levels,
+		AvatarB64:         g.AvatarB64,
+		Description:       g.Description,
 		Members:           make([]MemberInfo, 0, len(members)),
 	}
 	for _, m := range members {

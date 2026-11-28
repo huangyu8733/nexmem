@@ -6,6 +6,7 @@
 /// 确认后直接把图片坐标反算为原图像素，交给 `prepareProfileImage` 压缩。
 library;
 
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -158,6 +159,44 @@ Uint8List prepareSquarePng(Uint8List bytes, {int size = kLevelIconSize}) {
     interpolation: img.Interpolation.average,
   );
   return img.encodePng(resized);
+}
+
+/// 群头像边长：固定 512x512 正方形。
+const int kGroupAvatarSize = 512;
+
+/// 群头像 base64 上限，与内核 `MaxGroupAvatarBase64Chars` 保持一致。
+const int kGroupAvatarMaxBase64Chars = 320 << 10;
+
+/// 把裁剪后的图片居中裁成正方形并缩放为 512x512 JPEG。
+///
+/// 交互裁剪页已经让用户选定区域；这里再做一次中心正方形归一化，保证任何
+/// 来源都严格输出 512x512。按质量从高到低编码，确保 base64 不超过群控制帧上限。
+Uint8List prepareGroupAvatarJpeg(Uint8List bytes) {
+  final img.Image? source = img.decodeImage(bytes);
+  if (source == null || source.width < 1 || source.height < 1) {
+    throw const FormatException('无法解码图片');
+  }
+  final int side = math.min(source.width, source.height);
+  final img.Image cropped = img.copyCrop(
+    source,
+    x: (source.width - side) >> 1,
+    y: (source.height - side) >> 1,
+    width: side,
+    height: side,
+  );
+  final img.Image resized = img.copyResize(
+    cropped,
+    width: kGroupAvatarSize,
+    height: kGroupAvatarSize,
+    interpolation: img.Interpolation.average,
+  );
+  for (final int quality in <int>[88, 80, 72, 64, 56]) {
+    final Uint8List encoded = img.encodeJpg(resized, quality: quality);
+    if (base64Encode(encoded).length <= kGroupAvatarMaxBase64Chars) {
+      return encoded;
+    }
+  }
+  throw const FormatException('图片压缩后仍过大，请换一张更小的图片');
 }
 
 enum _Handle {

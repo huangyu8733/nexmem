@@ -53,7 +53,29 @@ class RemoteHostService : Service() {
             return START_NOT_STICKY
         }
         val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            try {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+                )
+            } catch (_: SecurityException) {
+                // 部分 ROM（如 MIUI）在 mediaProjection 令牌尚未授予时拒绝该类型，
+                // 直接抛错会让整个 App 崩溃。退回 dataSync 类型只影响后台保活分类，
+                // 屏幕采集仍由 flutter_webrtc 在系统授权回调里完成。
+                try {
+                    startForeground(
+                        NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                    )
+                } catch (_: Throwable) {
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
                 notification,

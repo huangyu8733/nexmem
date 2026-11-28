@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -266,6 +267,87 @@ func waitKeyVersion(t *testing.T, svc *Service, groupID []byte, want uint32) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("群 %x 的 v%d 密钥未在超时内到达", groupID, want)
+}
+
+// TestGroupGatewayInvitePendingNotice 验收管理员主动拉人的“待同步”语义：
+// 目标账号档案/XPub 暂不可用时不再直接返回拉人失败，成员仍写入本机成员表，
+// 并通过 OnInvite 给对方投递显式邀请通知。
+func TestGroupGatewayInvitePendingNotice(t *testing.T) {
+	ctx := context.Background()
+	mn := mocknet.New()
+	defer mn.Close()
+
+	cluster := &keyCluster{xpubs: make(map[string][]byte)}
+	admin := newKeyTestNode(t, mn, cluster)
+	m2 := newKeyTestNode(t, mn, cluster)
+	if err := mn.LinkAll(); err != nil {
+		t.Fatalf("建立链路: %v", err)
+	}
+
+	var noticeAccount []byte
+	var noticeTitle string
+	g := gateway.New()
+	if err := Bind(g, &Gateway{
+		Service: func() *Service { return admin.svc },
+		Resolve: func(_ context.Context, accountPub []byte) (KeyTarget, error) {
+			if bytes.Equal(accountPub, m2.account.Pub()) {
+				return KeyTarget{}, errors.New("档案缺少账号 X25519 公钥")
+			}
+			if bytes.Equal(accountPub, admin.account.Pub()) {
+				return KeyTarget{
+					PeerID: admin.host.ID(),
+					Addrs:  admin.host.Addrs(),
+					XPub:   admin.account.XPub(),
+				}, nil
+			}
+			return KeyTarget{}, errors.New("未知成员")
+		},
+		OnInvite: func(_ context.Context, _ []byte, accountPub []byte, title string) (bool, error) {
+			noticeAccount = append([]byte(nil), accountPub...)
+			noticeTitle = title
+			return true, nil
+		},
+	}); err != nil {
+		t.Fatalf("注册群聊网关: %v", err)
+	}
+
+	created, gerr := g.Handle(ctx, "group.create",
+		json.RawMessage(`{"title":"待同步群","members":[]}`))
+	if gerr != nil {
+		t.Fatalf("group.create: %v", gerr)
+	}
+	groupIDText := created.(map[string]any)["group_id"].(string)
+	invited, gerr := g.Handle(ctx, "group.invite",
+		json.RawMessage(fmt.Sprintf(`{"group_id":"%s","account":"%s"}`,
+			groupIDText, base64.RawURLEncoding.EncodeToString(m2.account.Pub()))))
+	if gerr != nil {
+		t.Fatalf("目标待同步时 group.invite 不应直接失败: %v", gerr)
+	}
+	view := invited.(map[string]any)
+	if view["pending"] != true {
+		t.Fatalf("pending=%v，期望 true", view["pending"])
+	}
+	if view["invite_sent"] != true {
+		t.Fatalf("invite_sent=%v，期望 true", view["invite_sent"])
+	}
+	if failed := view["failed"].(int); failed == 0 {
+		t.Fatalf("failed=%d，期望密钥投递记为待补发", failed)
+	}
+	if reason, ok := view["delivery_error"].(string); !ok || !strings.Contains(reason, "X25519") {
+		t.Fatalf("delivery_error=%v，期望包含 X25519 原因", view["delivery_error"])
+	}
+	if !bytes.Equal(noticeAccount, m2.account.Pub()) || noticeTitle != "待同步群" {
+		t.Fatalf("邀请通知目标=%x 标题=%q，期望 %x / 待同步群",
+			noticeAccount, noticeTitle, m2.account.Pub())
+	}
+	gid, err := parseGroupID(groupIDText)
+	if err != nil {
+		t.Fatalf("解析群 ID: %v", err)
+	}
+	list, err := admin.dao.ListMembers(ctx, gid)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("待同步时成员表 %d 条（err=%v），期望 2", len(list), err)
+	}
 }
 
 // TestGroupGatewayCreateMembersAndSend 验收 P1-20 群聊网关装配：

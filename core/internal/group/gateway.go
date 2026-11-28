@@ -12,6 +12,8 @@ package group
 //   - group.dissolve  管理员解散群聊，通知成员并清理本地群（P4-12）
 //   - group.setStorage 由管理员配置群盘
 //   - group.setAnnouncement 由管理员设置群公告（P6-26）
+//   - group.setAvatar 由管理员设置 512x512 群头像
+//   - group.setDescription 由管理员设置群介绍
 //   - group.setAllowFriendAdd 由管理员开关「允许成员互加好友」（默认关闭）
 //   - group.setAlias  任意成员设置本机群备注（P6-27）
 //   - dm.sendGroupText 加密广播群文本并尽力写群盘（P4-05/P4-06）
@@ -56,12 +58,15 @@ func (f TargetResolverFunc) ResolveTarget(ctx context.Context, accountPub []byte
 type Gateway struct {
 	Service func() *Service
 	Resolve func(ctx context.Context, accountPub []byte) (KeyTarget, error)
+	// OnInvite 在管理员主动拉人后给目标账号投递一条邀请通知。
+	// 由 coreapp 接到社交服务上；返回 sent 表示通知已进入单聊投递通道。
+	OnInvite func(ctx context.Context, groupID, accountPub []byte, title string) (sent bool, err error)
 }
 
 // Bind 注册 group.create / group.list / group.members / group.invite /
 // group.remove / group.leave / group.dissolve / group.setStorage /
-// group.setAnnouncement / group.setAllowFriendAdd / group.setAlias /
-// dm.sendGroupText。
+// group.setAnnouncement / group.setAvatar / group.setDescription /
+// group.setAllowFriendAdd / group.setAlias / dm.sendGroupText。
 func Bind(g *gateway.Gateway, gw *Gateway) error {
 	if g == nil {
 		return errors.New("缺少网关")
@@ -82,6 +87,8 @@ func Bind(g *gateway.Gateway, gw *Gateway) error {
 		"group.setStorage":        gw.setStorageHandler(),
 		"group.removeStorage":     gw.removeStorageHandler(),
 		"group.setAnnouncement":   gw.setAnnouncementHandler(),
+		"group.setAvatar":         gw.setAvatarHandler(),
+		"group.setDescription":    gw.setDescriptionHandler(),
 		"group.setAllowFriendAdd": gw.setAllowFriendAddHandler(),
 		"group.setAlias":          gw.setAliasHandler(),
 		"dm.sendGroupText":        gw.sendTextHandler(),
@@ -193,6 +200,8 @@ func (gw *Gateway) membersHandler() gateway.HandlerFunc {
 			"key_version":        info.KeyVersion,
 			"storage_configured": info.StorageConfigured,
 			"announcement":       info.Announcement,
+			"avatar_b64":         info.AvatarB64,
+			"description":        info.Description,
 			"allow_friend_add":   info.AllowFriendAdd,
 			"level_enabled":      info.LevelsEnabled,
 			"levels":             levels,
@@ -238,6 +247,8 @@ func (gw *Gateway) listHandler() gateway.HandlerFunc {
 				"key_version":        int(info.KeyVersion),
 				"storage_configured": info.StorageConfigured,
 				"announcement":       info.Announcement,
+				"avatar_b64":         info.AvatarB64,
+				"description":        info.Description,
 				"allow_friend_add":   info.AllowFriendAdd,
 				"level_enabled":      info.LevelsEnabled,
 			})
@@ -273,14 +284,16 @@ func (gw *Gateway) inviteHandler() gateway.HandlerFunc {
 		if err != nil {
 			return nil, mapGroupError("读取群成员失败", err)
 		}
-		// 新成员必须有可用投递地址，否则密钥信封无法送达；
+		// 目标解析失败不再直接把整次拉人判为失败：先记下原因，成员仍写入本机
+		// 成员表并投递邀请通知，密钥信封等待档案/XPub 可用后补发。
 		// 其他成员解析失败只影响各自的成员表同步，不阻断邀请。
-		target, err := gw.resolve(ctx, accountPub)
-		if err != nil {
-			return nil, gateway.NewError(gateway.CodePeerUnreachable, "解析成员地址失败: %v", err)
-		}
+		var resolveErr error
 		targets := make([]KeyTarget, 0, len(info.Members)+1)
-		targets = append(targets, target)
+		if target, rerr := gw.resolve(ctx, accountPub); rerr != nil {
+			resolveErr = rerr
+		} else {
+			targets = append(targets, target)
+		}
 		for _, m := range info.Members {
 			if bytes.Equal(m.AccountPub, accountPub) {
 				continue
@@ -289,15 +302,57 @@ func (gw *Gateway) inviteHandler() gateway.HandlerFunc {
 				targets = append(targets, mt)
 			}
 		}
-		key, reports, err := svc.InviteMember(ctx, groupID, accountPub, targets)
+		var key GroupKey
+		var reports []KeyDelivery
+		if resolveErr != nil {
+			key, reports, err = svc.InviteMemberAllowPending(ctx, groupID, accountPub, targets)
+		} else {
+			key, reports, err = svc.InviteMember(ctx, groupID, accountPub, targets)
+		}
 		if err != nil {
 			return nil, mapGroupError("邀请成员失败", err)
 		}
-		return map[string]any{
+
+		// 明确给被拉人发一条邀请通知，避免对方只知道“被加进群”却看不到任何提示。
+		inviteSent := false
+		var inviteErr error
+		if gw.OnInvite != nil {
+			inviteSent, inviteErr = gw.OnInvite(ctx, groupID, accountPub, info.Title)
+		} else {
+			inviteErr = errors.New("未配置群邀请通知")
+		}
+
+		failed := countFailedDeliveries(reports)
+		// 只有新成员自己的密钥信封未送达才算待同步；其他成员同步失败
+		// 不影响新成员入群结果，但仍计入 failed 供管理员排查。
+		newMemberFailed := resolveErr != nil
+		deliveryReason := ""
+		if resolveErr != nil {
+			deliveryReason = resolveErr.Error()
+		}
+		for _, r := range reports {
+			if !bytes.Equal(r.AccountPub, accountPub) || r.Err == nil {
+				continue
+			}
+			newMemberFailed = true
+			if deliveryReason == "" {
+				deliveryReason = r.Err.Error()
+			}
+		}
+		out := map[string]any{
 			"group_id":    encodeGroupID(groupID),
 			"key_version": int(key.Version),
-			"failed":      countFailedDeliveries(reports),
-		}, nil
+			"failed":      failed,
+			"invite_sent": inviteSent,
+			"pending":     newMemberFailed || !inviteSent,
+		}
+		if deliveryReason != "" {
+			out["delivery_error"] = deliveryReason
+		}
+		if inviteErr != nil {
+			out["invite_error"] = inviteErr.Error()
+		}
+		return out, nil
 	}
 }
 
@@ -519,6 +574,70 @@ func (gw *Gateway) setAnnouncementHandler() gateway.HandlerFunc {
 			return nil, mapGroupError("设置群公告失败", err)
 		}
 		return map[string]any{"announcement": saved}, nil
+	}
+}
+
+// setAvatarHandler 处理 group.setAvatar：管理员设置或清除 512x512 JPEG 群头像。
+func (gw *Gateway) setAvatarHandler() gateway.HandlerFunc {
+	return func(ctx context.Context, params json.RawMessage) (any, *gateway.Error) {
+		var req struct {
+			GroupID   string  `json:"group_id"`
+			AvatarB64 *string `json:"avatar_b64"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "group.setAvatar 参数不是合法 JSON: %v", err)
+		}
+		groupID, err := parseGroupID(req.GroupID)
+		if err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "群 ID 非法: %v", err)
+		}
+		if req.AvatarB64 == nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "缺少必填参数 avatar_b64")
+		}
+		if err := ValidateGroupAvatarB64(*req.AvatarB64); err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "%s", err.Error())
+		}
+		svc, gerr := gw.service()
+		if gerr != nil {
+			return nil, gerr
+		}
+		saved, err := svc.SetAvatar(ctx, groupID, *req.AvatarB64)
+		if err != nil {
+			return nil, mapGroupError("设置群头像失败", err)
+		}
+		return map[string]any{"avatar_b64": saved}, nil
+	}
+}
+
+// setDescriptionHandler 处理 group.setDescription：管理员设置或清除群介绍。
+func (gw *Gateway) setDescriptionHandler() gateway.HandlerFunc {
+	return func(ctx context.Context, params json.RawMessage) (any, *gateway.Error) {
+		var req struct {
+			GroupID     string  `json:"group_id"`
+			Description *string `json:"description"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "group.setDescription 参数不是合法 JSON: %v", err)
+		}
+		groupID, err := parseGroupID(req.GroupID)
+		if err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "群 ID 非法: %v", err)
+		}
+		if req.Description == nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "缺少必填参数 description")
+		}
+		if err := ValidateGroupDescription(*req.Description); err != nil {
+			return nil, gateway.NewError(gateway.CodeInvalidArg, "%s", err.Error())
+		}
+		svc, gerr := gw.service()
+		if gerr != nil {
+			return nil, gerr
+		}
+		saved, err := svc.SetDescription(ctx, groupID, *req.Description)
+		if err != nil {
+			return nil, mapGroupError("设置群介绍失败", err)
+		}
+		return map[string]any{"description": saved}, nil
 	}
 }
 
@@ -830,6 +949,9 @@ func mapGroupError(prefix string, err error) *gateway.Error {
 		errors.Is(err, ErrLevelIconTooLarge),
 		errors.Is(err, ErrLevelNotFound),
 		errors.Is(err, ErrNicknameTooLong),
+		errors.Is(err, ErrGroupAvatarInvalid),
+		errors.Is(err, ErrGroupAvatarTooLarge),
+		errors.Is(err, ErrGroupDescriptionTooLong),
 		errors.Is(err, ErrMemberTargetMissing):
 		return gateway.NewError(gateway.CodeInvalidArg, "%s: %v", prefix, err)
 	case errors.Is(err, ErrStorageWrite):

@@ -20,6 +20,10 @@ class RemotePrefs {
   String passwordCredential = '';
   bool loaded = false;
 
+  /// 关闭静默远控开关时由设置页触发，宿主据此立即终止进行中的静默会话。
+  /// 纯运行时回调，不持久化、不随设置备份同步。
+  void Function()? onSilentRemoteDisabled;
+
   RemotePermissions get allowed => RemotePermissions(
         input: allowInput,
         clipboard: allowClipboard,

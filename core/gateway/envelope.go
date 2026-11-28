@@ -6,7 +6,7 @@ import "encoding/json"
 const APIVersion = "1.0.0"
 
 // CoreVersion 是内核实现版本，随发布产物更新。
-const CoreVersion = "0.1.0-dev"
+const CoreVersion = "0.2.0-dev"
 
 // Request 是各端发往内核的请求信封。
 type Request struct {

@@ -3,6 +3,7 @@ package dm
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -22,6 +23,17 @@ var (
 	ErrEmptySignal    = errors.New("RTC 信令不能为空")
 	ErrSignalTooLarge = errors.New("RTC 信令超过 64 KiB")
 )
+
+// isRemoteControlSignal 判断 RTC 信令是否属于远控（客户端 payload 中 app=rc）。
+//
+// 远控不受好友/黑名单限制：聊天框发起由对方确认，台账静默远控由设备密码授权；
+// 语音/视频通话等其它 RTC 信令仍沿用黑名单拦截。
+func isRemoteControlSignal(payload []byte) bool {
+	var probe struct {
+		App string `json:"app"`
+	}
+	return json.Unmarshal(payload, &probe) == nil && probe.App == "rc"
+}
 
 // RTCSignalEvent 描述一条收到的 RTC 信令，Payload 为客户端不透明字节。
 type RTCSignalEvent struct {
@@ -45,10 +57,12 @@ func (s *Service) SendSignal(ctx context.Context, t Target, payload []byte) erro
 	if bytes.Equal(t.AccountPub, s.account.Pub()) {
 		return ErrSelfSend
 	}
-	if blocked, err := s.isBlocked(ctx, t.AccountPub); err != nil {
-		return err
-	} else if blocked {
-		return ErrPeerBlocked
+	if !isRemoteControlSignal(payload) {
+		if blocked, err := s.isBlocked(ctx, t.AccountPub); err != nil {
+			return err
+		} else if blocked {
+			return ErrPeerBlocked
+		}
 	}
 	if t.PeerID == "" {
 		return fmt.Errorf("%w: 缺少 PeerID", ErrPeerUnreached)

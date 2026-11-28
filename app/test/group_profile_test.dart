@@ -393,6 +393,62 @@ void main() {
       expect(find.byType(AlertDialog), findsNothing);
     });
 
+    testWidgets('成员资料保存失败时弹窗保留并显示错误原因', (
+      WidgetTester tester,
+    ) async {
+      final _FakeTransport transport = _FakeTransport((
+        String method,
+        Map<String, dynamic>? params,
+      ) async {
+        throw const NexmemException('NOT_ONLINE', '');
+      });
+      final TransportGroupService service = TransportGroupService(transport);
+      const GroupMember member = GroupMember(
+        account: 'member-account',
+        role: 'member',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: NexmemTheme.light(),
+          home: Scaffold(
+            body: Builder(
+              builder: (BuildContext context) => ElevatedButton(
+                key: const ValueKey<String>('open'),
+                onPressed: () => showMemberProfileDialog(
+                  context,
+                  service: service,
+                  groupId: 'Z3JvdXA',
+                  member: member,
+                  isSelf: true,
+                  isAdmin: false,
+                  levels: const GroupLevels(),
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey<String>('open')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey<String>('group-member-nickname-field')),
+        '保存失败测试',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey<String>('group-member-profile-save')),
+      );
+      await tester.pumpAndSettle();
+
+      // 失败必须保留弹窗，且空 message 要回退到错误码，不能“看起来没反应”。
+      expect(
+        find.byKey(const ValueKey<String>('group-member-profile-save')),
+        findsOneWidget,
+      );
+      expect(find.text('NOT_ONLINE'), findsOneWidget);
+    });
+
     testWidgets('非本人非管理员：等级下拉隐藏且保存按钮禁用', (
       WidgetTester tester,
     ) async {

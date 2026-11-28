@@ -2,11 +2,13 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/app_dialog.dart';
 import '../../app/core_session.dart';
 import '../../app/pane_header.dart';
 import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
+import '../group/group_share_link.dart';
 import '../settings/settings_pane.dart' show showPaneDialog;
 import 'social_service.dart';
 
@@ -16,12 +18,16 @@ class SocialHubPage extends StatefulWidget {
     super.key,
     required this.session,
     this.showHeader = true,
+    this.onFriendAccepted,
   });
 
   final CoreSession session;
 
   /// 作为设置项内嵌面板时由外层提供标题，避免重复标题栏。
   final bool showHeader;
+
+  /// 同意好友申请后通知外层刷新联系人列表与会话列表。
+  final VoidCallback? onFriendAccepted;
 
   @override
   State<SocialHubPage> createState() => _SocialHubPageState();
@@ -49,8 +55,11 @@ class _SocialHubPageState extends State<SocialHubPage>
       if (const <String>{
         'friend.request.new',
         'friend.request.resolved',
+        'group.invited',
         'group.joinRequested',
         'group.joinResolved',
+        'moment.new',
+        'poll.updated',
       }.contains(event.type)) {
         unawaited(_reload());
       }
@@ -93,6 +102,9 @@ class _SocialHubPageState extends State<SocialHubPage>
   Future<void> _respondFriend(FriendRequest r, bool accept) async {
     await _runAction(() async {
       await _social.respondFriendRequest(r.id, accept);
+      if (accept) {
+        widget.onFriendAccepted?.call();
+      }
       await _reload();
     }, context.t('操作成功'));
   }
@@ -102,6 +114,57 @@ class _SocialHubPageState extends State<SocialHubPage>
       await _social.respondGroupJoin(r.id, accept);
       await _reload();
     }, context.t('操作成功'));
+  }
+
+  /// 粘贴好友分享的群信息并申请入群。
+  Future<void> _requestJoinByText() async {
+    final TextEditingController controller = TextEditingController();
+    final String? pasted = await showAppDialog<String>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: Text(context.t('加入群聊')),
+        content: responsiveDialogContent(
+          context: context,
+          maxWidth: 420,
+          child: TextField(
+            key: const ValueKey<String>('social-join-input'),
+            controller: controller,
+            maxLines: 4,
+            decoration: InputDecoration(
+              hintText: context.t('粘贴好友分享的群信息或入群链接'),
+            ),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(context.t('取消')),
+          ),
+          FilledButton(
+            key: const ValueKey<String>('social-join-submit'),
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: Text(context.t('申请入群')),
+          ),
+        ],
+      ),
+    );
+    if (pasted == null || pasted.trim().isEmpty || !mounted) {
+      return;
+    }
+    final GroupShareInfo? info = parseGroupShareText(pasted);
+    if (info == null) {
+      _showError(context.t('未识别到群信息，请粘贴完整分享内容'));
+      return;
+    }
+    await _runAction(() async {
+      await _social.requestGroupJoin(
+        info.groupId,
+        info.owner,
+        groupTitle: info.title,
+        message: context.t('申请加入群聊'),
+      );
+      await _reload();
+    }, context.t('入群申请已发送，等待群主处理'));
   }
 
   /// 所有删除入口共用的二次确认与统一反馈；[action] 返回实际删除条数。
@@ -319,6 +382,15 @@ class _SocialHubPageState extends State<SocialHubPage>
     return ListView(
       padding: const EdgeInsets.all(12),
       children: <Widget>[
+        Align(
+          alignment: AlignmentDirectional.centerEnd,
+          child: TextButton.icon(
+            key: const ValueKey<String>('social-join-by-text'),
+            onPressed: _requestJoinByText,
+            icon: const Icon(Icons.group_add_outlined, size: 18),
+            label: Text(context.t('加入群聊')),
+          ),
+        ),
         _sectionTitle(
           context.t('待审批'),
           action: _joinReqs.isEmpty

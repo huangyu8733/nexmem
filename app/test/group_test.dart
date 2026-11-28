@@ -10,6 +10,7 @@ import 'package:nexmem_app/features/contacts/contact_service.dart';
 import 'package:nexmem_app/features/contacts/contacts_page.dart';
 import 'package:nexmem_app/features/group/group_info_page.dart';
 import 'package:nexmem_app/features/group/group_list_page.dart';
+import 'package:nexmem_app/features/group/group_share_link.dart';
 import 'package:nexmem_app/features/group/group_service.dart';
 import 'package:nexmem_app/features/group/group_storage.dart';
 import 'package:nexmem_app/transport/transport.dart';
@@ -93,6 +94,8 @@ class _FakeGroups implements GroupService {
       <(String, GroupStorageConfig)>[];
   final List<String> storageRemoved = <String>[];
   final List<(String, String)> announcements = <(String, String)>[];
+  final List<(String, String)> avatarUpdates = <(String, String)>[];
+  final List<(String, String)> descriptionUpdates = <(String, String)>[];
   final List<(String, bool)> allowFriendAddUpdates = <(String, bool)>[];
   final List<(String, String)> aliases = <(String, String)>[];
   final List<(String, bool, List<GroupLevel>)> levelConfigs =
@@ -151,6 +154,11 @@ class _FakeGroups implements GroupService {
       );
     }
     return current?.keyVersion ?? 1;
+  }
+
+  @override
+  Future<GroupInviteResult> inviteDetailed(String groupId, String account) async {
+    return GroupInviteResult(keyVersion: await invite(groupId, account));
   }
 
   @override
@@ -241,6 +249,26 @@ class _FakeGroups implements GroupService {
       );
     }
     return announcement;
+  }
+
+  @override
+  Future<String> setAvatar(String groupId, String avatarB64) async {
+    avatarUpdates.add((groupId, avatarB64));
+    final GroupInfo? current = info;
+    if (current != null) {
+      info = current.copyWith(avatarB64: avatarB64);
+    }
+    return avatarB64;
+  }
+
+  @override
+  Future<String> setDescription(String groupId, String description) async {
+    descriptionUpdates.add((groupId, description));
+    final GroupInfo? current = info;
+    if (current != null) {
+      info = current.copyWith(description: description);
+    }
+    return description;
   }
 
   @override
@@ -597,10 +625,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('周末爬山'), findsOneWidget);
+    // 群资料头部新增群头像卡片，标题同时出现在应用栏与头像卡片。
+    expect(find.text('周末爬山'), findsNWidgets(2));
+    expect(find.text('未配置群盘，离线消息不可补'), findsOneWidget);
+    await _scrollGroupInfoToBottom(tester);
     expect(find.text('群成员（2）'), findsOneWidget);
     expect(find.text('密钥版本 v2'), findsOneWidget);
-    expect(find.text('未配置群盘，离线消息不可补'), findsOneWidget);
     expect(find.text('群主'), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('group-member-member-account')),
@@ -608,7 +638,7 @@ void main() {
     );
   });
 
-  testWidgets('群资料页分享群信息：复制含群号与群主的文本', (
+  testWidgets('群资料页分享群信息：复制可直接解析的入群链接', (
     WidgetTester tester,
   ) async {
     final _FakeGroups groups = _FakeGroups(
@@ -658,6 +688,12 @@ void main() {
     expect(clipboard, contains('Z3JvdXA'));
     expect(clipboard, contains('周末爬山'));
     expect(clipboard, contains('admin-account'));
+
+    final GroupShareInfo? shared = parseGroupShareText(clipboard!);
+    expect(shared, isNotNull);
+    expect(shared!.groupId, 'Z3JvdXA');
+    expect(shared.owner, 'admin-account');
+    expect(shared.title, '周末爬山');
   });
 
   testWidgets('A-03 群公告事件推送后群资料页重新拉取并刷新公告', (
@@ -1105,6 +1141,7 @@ void main() {
     // 好友备注名作为本群称呼写入。
     expect(groups.memberProfiles.single.$2, 'carol-id');
     expect(groups.memberProfiles.single.$3, 'Carol');
+    await _scrollGroupInfoToBottom(tester);
     expect(find.text('群成员（3）'), findsOneWidget);
 
     // 移除：确认后成员数回到 2，管理员自己没有移除入口。

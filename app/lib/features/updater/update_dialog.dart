@@ -122,6 +122,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
     return AlertDialog(
       title: Text(context.t('在线升级')),
       content: responsiveDialogContent(
+        context: context,
         maxWidth: 380,
         child: SingleChildScrollView(
           child: Column(

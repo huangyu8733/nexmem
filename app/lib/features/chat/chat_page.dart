@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show kIsWeb, ValueListenable;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -10,17 +11,24 @@ import '../../l10n/l10n.dart';
 import '../../app/avatar.dart';
 import '../../app/empty_state.dart';
 import '../../app/theme.dart';
+import '../browser/browser_page.dart';
+import '../browser/browser_url.dart';
 import '../chats/conversation.dart';
 import '../contacts/contact_service.dart';
 import '../files/chat_file_viewer.dart';
 import '../files/media_viewer.dart';
+import '../group/group_share_link.dart';
 import '../group/group_storage.dart';
+import '../qr/image_qr_decoder.dart';
+import '../qr/qr_result_handler.dart';
 import '../settings/diagnostics.dart';
 import '../settings/report.dart';
 import 'chat_message.dart';
 import 'chat_store.dart';
 import 'local_image.dart';
+import 'video_thumbnail.dart';
 import 'voice_recorder.dart';
+import 'voice_message_bubble.dart';
 import '../../app/app_dialog.dart';
 
 /// 文本正文上限：与内核契约 dm.sendText / dm.sendGroupText / msg.edit 的
@@ -206,6 +214,9 @@ class ChatPage extends StatelessWidget {
     this.onPickFile,
     this.onPickImage,
     this.onPickMedia,
+    this.onPickVideo,
+    this.onPickAudio,
+    this.onPickFolder,
     this.voiceRecorder,
     this.onDownloadGroupFile,
     this.onSaveFile,
@@ -213,6 +224,8 @@ class ChatPage extends StatelessWidget {
     this.mediaSourceUri,
     this.onDeleteMessage,
     this.onForwardMessage,
+    this.onForwardMessages,
+    this.onRequestGroupJoin,
     this.onRecallMessage,
     this.onClearHistory,
     this.onLoadOlder,
@@ -227,6 +240,8 @@ class ChatPage extends StatelessWidget {
     this.displayName,
     this.remark = '',
     this.onSetRemark,
+    this.initialDraft = '',
+    this.onDraftChanged,
   });
 
   final ConversationItem conversation;
@@ -243,6 +258,10 @@ class ChatPage extends StatelessWidget {
 
   /// 点击聊天标题设置备注；仅单聊传入。回调参数为新的备注文本。
   final ValueChanged<String>? onSetRemark;
+
+  /// 会话级草稿：由壳层按 conversation.id 保存，避免切换会话串台或丢失。
+  final String initialDraft;
+  final ValueChanged<String>? onDraftChanged;
 
   /// 群聊可 @ 的成员候选（七-1）；为空时不展示 @ 入口。
   final List<MentionCandidate> mentionCandidates;
@@ -292,6 +311,17 @@ class ChatPage extends StatelessWidget {
   /// 为空时退回 [onPickFile]，保持旧部署可用。
   final Future<ChatAttachment?> Function()? onPickMedia;
 
+  /// 选择视频：移动端拉起系统视频库（Android MediaStore / iOS PHPicker），
+  /// 桌面/Web 用视频扩展名过滤。为空时退回 [onPickMedia] 或 [onPickFile]。
+  final Future<ChatAttachment?> Function()? onPickVideo;
+
+  /// 选择音频：移动端拉起系统音频库（Android MediaStore / iOS 音乐库），
+  /// 桌面/Web 用音频扩展名过滤。为空时退回 [onPickMedia] 或 [onPickFile]。
+  final Future<ChatAttachment?> Function()? onPickAudio;
+
+  /// 选择文件夹并打包为 ZIP 附件；为空时工具条不展示文件夹入口。
+  final Future<ChatAttachment?> Function()? onPickFolder;
+
   /// 按住说话录音器：由平台注入，为空时工具条不展示录音入口。
   final VoiceRecorder? voiceRecorder;
 
@@ -319,6 +349,12 @@ class ChatPage extends StatelessWidget {
 
   /// 转发一文本消息到其他会话（P6-12）；返回 false 表示用户取消或没有目标。
   final Future<bool> Function(ChatMessage message)? onForwardMessage;
+
+  /// 批量转发多条选中消息到目标会话；由壳层一次选择目标后逐条发送。
+  final Future<bool> Function(List<ChatMessage> messages)? onForwardMessages;
+
+  /// 从分享群信息的消息发起入群申请；为空时长按菜单不展示该入口。
+  final Future<void> Function(GroupShareInfo info)? onRequestGroupJoin;
 
   /// 撤回自己 2 分钟内的消息（P6-12），由壳层调用 `msg.recall`；为空时仅本机移除。
   final Future<void> Function(ChatMessage message)? onRecallMessage;
@@ -356,11 +392,41 @@ class ChatPage extends StatelessWidget {
     }
   }
 
+  /// 发送文件夹：平台选择器返回目录后打包为 ZIP，再走普通文件通道。
+  Future<void> _pickAndSendFolder(BuildContext context) async {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final String selfName = context.t('我');
+    final Future<ChatAttachment?> Function()? picker = onPickFolder;
+    if (picker == null) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(context.t('当前平台不支持发送文件夹'))),
+      );
+      return;
+    }
+    try {
+      final ChatAttachment? folder = await picker();
+      if (folder == null || folder.path.trim().isEmpty) {
+        return;
+      }
+      await store.sendFile(folder, senderName: selfName);
+      onSent?.call(folder.name);
+    } on Object catch (error) {
+      if (!context.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(context.t('文件夹发送失败：{0}', [error])),
+        ),
+      );
+    }
+  }
+
   /// 发送图片（P6-16）：复用文件通道，按扩展名补齐 MIME 以便内联预览。
   Future<void> _pickAndSendImage(BuildContext context) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final String selfName = context.t('我');
-    final String notImage = context.t('请选择图片文件（png / jpg / gif / webp）');
+    final String notImage = context.t('请选择图片文件（png / jpg / gif / webp / bmp / heic / heif / tif / avif）');
     final ChatAttachment? picked = await _pickAttachment(
       context,
       title: context.t('发送图片'),
@@ -388,21 +454,30 @@ class ChatPage extends StatelessWidget {
 
   /// 发送视频或音频文件：移动端拉起系统媒体选择器，桌面/Web 用媒体过滤器。
   /// 发送前补齐 MIME，保证接收端能识别为媒体气泡并直接预览/播放。
-  Future<void> _pickAndSendMedia(BuildContext context) async {
+  Future<void> _pickAndSendMedia(
+    BuildContext context, {
+    required bool video,
+  }) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final String selfName = context.t('我');
-    final String notMedia = context.t('请选择视频或音频文件');
+    final String notMedia = video
+        ? context.t('请选择视频文件')
+        : context.t('请选择音频文件');
     final ChatAttachment? picked = await _pickAttachment(
       context,
       title: context.t('发送文件'),
-      picker: onPickMedia ?? onPickFile,
+      picker: video
+          ? (onPickVideo ?? onPickMedia ?? onPickFile)
+          : (onPickAudio ?? onPickMedia ?? onPickFile),
     );
     if (picked == null || picked.path.trim().isEmpty) {
       return;
     }
     final String mime = mediaMimeFor(name: picked.name, mime: picked.mime);
-    if (!isVideoAttachment(name: picked.name, mime: mime) &&
-        !isAudioAttachment(name: picked.name, mime: mime)) {
+    final bool valid = video
+        ? isVideoAttachment(name: picked.name, mime: mime)
+        : isAudioAttachment(name: picked.name, mime: mime);
+    if (!valid) {
       messenger.showSnackBar(SnackBar(content: Text(notMedia)));
       return;
     }
@@ -508,28 +583,38 @@ class ChatPage extends StatelessWidget {
             diagnostics: diagnostics,
           ),
           const Divider(height: 1),
+          // 点击消息区任意位置收起键盘、输入框失焦（与微信/QQ 一致）。
+          // Listener 的 onPointerDown 不参与手势竞技，气泡点击/长按/滚动照常工作。
           Expanded(
-            child: ListenableBuilder(
-              listenable: store,
-              builder: (BuildContext context, Widget? _) {
-                return _MessageList(
-                  store: store,
-                  isGroup: conversation.isGroup,
-                  onDownloadGroupFile: onDownloadGroupFile == null
-                      ? null
-                      : (ChatMessage message) =>
-                            onDownloadGroupFile!(conversation, message),
-                  onSaveFile: onSaveFile,
-                  onReadFileBytes: onReadFileBytes,
-                  mediaSourceUri: mediaSourceUri,
-                  onDeleteMessage: onDeleteMessage,
-                  onForwardMessage: onForwardMessage,
-                  onRecallMessage: onRecallMessage,
-                  onEditMessage: onEditMessage,
-                  onLoadOlder: onLoadOlder,
-                  highlightMsgUuid: highlightMsgUuid,
-                );
-              },
+            child: Listener(
+              key: const ValueKey<String>('chat-message-area'),
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: (_) =>
+                  FocusManager.instance.primaryFocus?.unfocus(),
+              child: ListenableBuilder(
+                listenable: store,
+                builder: (BuildContext context, Widget? _) {
+                  return _MessageList(
+                    store: store,
+                    isGroup: conversation.isGroup,
+                    onDownloadGroupFile: onDownloadGroupFile == null
+                        ? null
+                        : (ChatMessage message) =>
+                              onDownloadGroupFile!(conversation, message),
+                    onSaveFile: onSaveFile,
+                    onReadFileBytes: onReadFileBytes,
+                    mediaSourceUri: mediaSourceUri,
+                    onDeleteMessage: onDeleteMessage,
+                    onForwardMessage: onForwardMessage,
+                    onRequestGroupJoin: onRequestGroupJoin,
+                    onRecallMessage: onRecallMessage,
+                    onEditMessage: onEditMessage,
+                    onLoadOlder: onLoadOlder,
+                    highlightMsgUuid: highlightMsgUuid,
+                    onForwardMessages: onForwardMessages,
+                  );
+                },
+              ),
             ),
           ),
           ChatInputArea(
@@ -558,9 +643,13 @@ class ChatPage extends StatelessWidget {
             onTypingChanged: onTypingChanged,
             mentionCandidates: mentionCandidates,
             mentionController: mentionController,
+            initialDraft: initialDraft,
+            onDraftChanged: onDraftChanged,
             onAttachFile: () => _pickAndSendFile(context),
+            onAttachFolder: () => _pickAndSendFolder(context),
             onAttachImage: () => _pickAndSendImage(context),
-            onAttachMedia: () => _pickAndSendMedia(context),
+            onAttachVideo: () => _pickAndSendMedia(context, video: true),
+            onAttachAudio: () => _pickAndSendMedia(context, video: false),
             onAttachVoice: () => _pickAndSendVoice(context),
           ),
         ],
@@ -639,14 +728,19 @@ class ChatInputArea extends StatelessWidget {
     required this.store,
     this.onSend,
     this.onAttachFile,
+    this.onAttachFolder,
     this.onAttachImage,
     this.onAttachMedia,
+    this.onAttachVideo,
+    this.onAttachAudio,
     this.onAttachVoice,
     this.voiceRecorder,
     this.onVoiceSent,
     this.onTypingChanged,
     this.mentionCandidates = const <MentionCandidate>[],
     this.mentionController,
+    this.initialDraft = '',
+    this.onDraftChanged,
   });
 
   final ConversationItem conversation;
@@ -665,14 +759,27 @@ class ChatInputArea extends StatelessWidget {
   /// 右侧成员面板触发的 @ 插入通道。
   final MentionInsertController? mentionController;
 
+  /// 会话级草稿初值与变化回调。
+  final String initialDraft;
+  final ValueChanged<String>? onDraftChanged;
+
   /// 「文件」工具入口；为空时提示功能未开放。
   final VoidCallback? onAttachFile;
+
+  /// 「文件夹」工具入口；为空时工具条不展示。
+  final VoidCallback? onAttachFolder;
 
   /// 「图片」工具入口（P6-16）；为空时提示功能未开放。
   final VoidCallback? onAttachImage;
 
-  /// 「音视频」工具入口；为空时提示功能未开放。
+  /// 「音视频」兼容入口；新 UI 使用下面两个独立入口。
   final VoidCallback? onAttachMedia;
+
+  /// 「视频」工具入口：直接拉起系统视频库。
+  final VoidCallback? onAttachVideo;
+
+  /// 「音频」工具入口：直接拉起系统音频库。
+  final VoidCallback? onAttachAudio;
 
   /// 「语音」工具入口（A-01）；为空时提示功能未开放。
   final VoidCallback? onAttachVoice;
@@ -729,8 +836,11 @@ class ChatInputArea extends StatelessWidget {
                 store.setQuoting(null);
               },
               onAttachFile: onAttachFile,
+              onAttachFolder: onAttachFolder,
               onAttachImage: onAttachImage,
               onAttachMedia: onAttachMedia,
+              onAttachVideo: onAttachVideo ?? onAttachMedia,
+              onAttachAudio: onAttachAudio ?? onAttachMedia,
               onAttachVoice: onAttachVoice,
               voiceRecorder: voiceRecorder,
               onVoiceSend: (VoiceRecording recording) async {
@@ -757,6 +867,8 @@ class ChatInputArea extends StatelessWidget {
               onTypingChanged: onTypingChanged,
               mentionCandidates: mentionCandidates,
               mentionController: mentionController,
+              initialDraft: initialDraft,
+              onDraftChanged: onDraftChanged,
             ),
           ],
         );
@@ -1139,11 +1251,16 @@ class _MessageList extends StatefulWidget {
     this.mediaSourceUri,
     this.onDeleteMessage,
     this.onForwardMessage,
+    this.onRequestGroupJoin,
     this.onRecallMessage,
     this.onEditMessage,
     this.onLoadOlder,
     this.highlightMsgUuid,
+    this.onForwardMessages,
   });
+
+  /// 批量转发选中消息到目标会话；返回是否成功。
+  final Future<bool> Function(List<ChatMessage> messages)? onForwardMessages;
 
   final ChatStore store;
   final bool isGroup;
@@ -1153,6 +1270,7 @@ class _MessageList extends StatefulWidget {
   final Uri? Function(String path)? mediaSourceUri;
   final Future<void> Function(String msgUuid)? onDeleteMessage;
   final Future<bool> Function(ChatMessage message)? onForwardMessage;
+  final Future<void> Function(GroupShareInfo info)? onRequestGroupJoin;
   final Future<void> Function(ChatMessage message)? onRecallMessage;
   final Future<void> Function(String msgUuid, String newText)? onEditMessage;
   final Future<bool> Function()? onLoadOlder;
@@ -1186,6 +1304,166 @@ class _MessageListState extends State<_MessageList> {
   bool _loadingOlder = false;
   bool _noMoreOlder = false;
   bool _focusedHighlight = false;
+
+  /// 多选模式：选中消息 ID 集合。退出时清空。
+  bool _selectionMode = false;
+  final Set<String> _selectedIds = <String>{};
+
+  /// 进入多选并勾选首条（长按「多选」入口触发）。
+  void _enterSelection(String id) {
+    setState(() {
+      _selectionMode = true;
+      _selectedIds
+        ..clear()
+        ..add(id);
+    });
+  }
+
+  void _toggleSelection(String id) {
+    setState(() {
+      if (!_selectedIds.remove(id)) {
+        _selectedIds.add(id);
+      }
+      if (_selectedIds.isEmpty) {
+        _selectionMode = false;
+      }
+    });
+  }
+
+  void _selectAll() {
+    setState(() {
+      _selectedIds
+        ..clear()
+        ..addAll(widget.store.messages.map((ChatMessage m) => m.id));
+    });
+  }
+
+  void _exitSelection() {
+    setState(() {
+      _selectionMode = false;
+      _selectedIds.clear();
+    });
+  }
+
+  /// 批量复制：按消息原始顺序拼接选中消息的可复制文本。
+  Future<void> _copySelected(BuildContext context) async {
+    final List<ChatMessage> selected = widget.store.messages
+        .where((ChatMessage m) => _selectedIds.contains(m.id))
+        .toList();
+    if (selected.isEmpty) {
+      return;
+    }
+    final String text = selected
+        .map((ChatMessage m) {
+          if (!m.isFile) {
+            return m.text;
+          }
+          final String name = m.attachment?.name.trim() ?? '';
+          return name.isNotEmpty ? name : m.text;
+        })
+        .join('\n');
+    final String copied = context.t('已复制 {0} 条', <String>['${selected.length}']);
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+      _exitSelection();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(copied)));
+      }
+    } on Object {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.t('复制失败'))),
+        );
+      }
+    }
+  }
+
+  /// 批量转发：一次性把选中消息交给壳层选择目标会话。
+  Future<void> _forwardSelected(BuildContext context) async {
+    final List<ChatMessage> selected = widget.store.messages
+        .where((ChatMessage m) => _selectedIds.contains(m.id))
+        .toList();
+    final Future<bool> Function(List<ChatMessage>)? forward =
+        widget.onForwardMessages;
+    if (selected.isEmpty || forward == null) {
+      return;
+    }
+    try {
+      final bool ok = await forward(selected);
+      if (ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.t('已转发 {0} 条', <String>['${selected.length}'])),
+          ),
+        );
+      }
+      _exitSelection();
+    } on Object catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.t('转发失败：{0}', <String>['$error']))),
+        );
+      }
+    }
+  }
+
+  /// 多选操作栏：全选 / 复制 / 转发 / 取消。
+  Widget _selectionBar(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final int count = _selectedIds.length;
+    final bool hasForward = widget.onForwardMessages != null;
+    return Container(
+      color: scheme.primaryContainer,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: Row(
+        children: <Widget>[
+          IconButton(
+            key: const ValueKey<String>('chat-selection-cancel'),
+            icon: const Icon(Icons.close),
+            color: scheme.onPrimaryContainer,
+            onPressed: _exitSelection,
+          ),
+          Expanded(
+            child: Text(
+              '${context.t('多选')} · $count',
+              style: TextStyle(
+                color: scheme.onPrimaryContainer,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          TextButton(
+            key: const ValueKey<String>('chat-selection-select-all'),
+            onPressed: _selectAll,
+            child: Text(
+              context.t('全选'),
+              style: TextStyle(color: scheme.onPrimaryContainer),
+            ),
+          ),
+          IconButton(
+            key: const ValueKey<String>('chat-selection-copy'),
+            tooltip: context.t('复制'),
+            icon: const Icon(Icons.copy),
+            color: scheme.onPrimaryContainer,
+            onPressed: count == 0
+                ? null
+                : () => unawaited(_copySelected(context)),
+          ),
+          if (hasForward)
+            IconButton(
+              key: const ValueKey<String>('chat-selection-forward'),
+              tooltip: context.t('转发'),
+              icon: const Icon(Icons.forward),
+              color: scheme.onPrimaryContainer,
+              onPressed: count == 0
+                  ? null
+                  : () => unawaited(_forwardSelected(context)),
+            ),
+        ],
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -1442,6 +1720,7 @@ class _MessageListState extends State<_MessageList> {
               onForward: widget.onForwardMessage == null
                   ? null
                   : () => widget.onForwardMessage!(message),
+              onRequestGroupJoin: widget.onRequestGroupJoin,
               onRecall: widget.onRecallMessage == null
                   ? null
                   : () => _recallMessage(message),
@@ -1455,6 +1734,10 @@ class _MessageListState extends State<_MessageList> {
               quoted: message.replyTo.isEmpty
                   ? null
                   : widget.store.byId(message.replyTo),
+              selectionMode: _selectionMode,
+              selected: _selectedIds.contains(message.id),
+              onToggleSelection: _toggleSelection,
+              onEnterSelection: _enterSelection,
             );
             return Column(
               children: <Widget>[
@@ -1467,6 +1750,14 @@ class _MessageListState extends State<_MessageList> {
             );
           },
         ),
+        if (_selectionMode)
+          Positioned(
+            key: const ValueKey<String>('chat-selection-bar'),
+            left: 0,
+            right: 0,
+            top: 0,
+            child: _selectionBar(context),
+          ),
         if (_unseen > 0)
           Positioned(
             left: 0,
@@ -1596,27 +1887,75 @@ class MessageTimeSeparator extends StatelessWidget {
 }
 
 /// 单条消息：自己靠右主色气泡，对方靠左浅色气泡，群聊显示发送者昵称。
-/// 把文本里的 `@xxx`（直到空白）渲染为高亮片段（七-1）。
-/// 仅做视觉提示，@ 的真实身份存于 [ChatMessage.mentions]。
-TextSpan _mentionTextSpan(
+/// 把文本里的 `@xxx`（直到空白）渲染为高亮片段（七-1），
+/// 并把 http(s) 网址渲染为可点击链接，点击后在内置浏览器打开。
+/// @ 的真实身份仍存于 [ChatMessage.mentions]，这里只做视觉提示。
+
+class _MessageTextMark {
+  const _MessageTextMark({
+    required this.start,
+    required this.end,
+    this.link,
+  });
+
+  final int start;
+  final int end;
+  final WebUrlMatch? link;
+}
+
+TextSpan _buildMessageTextSpan(
   String text, {
   required Color baseColor,
   required Color highlightColor,
+  required ValueChanged<String>? onOpenLink,
+  required List<TapGestureRecognizer> recognizers,
 }) {
-  final List<InlineSpan> spans = <InlineSpan>[];
-  final RegExp re = RegExp(r'@[^\s]+');
-  int cursor = 0;
-  for (final Match match in re.allMatches(text)) {
-    if (match.start > cursor) {
-      spans.add(TextSpan(text: text.substring(cursor, match.start)));
+  final List<_MessageTextMark> marks = <_MessageTextMark>[
+    for (final WebUrlMatch link in extractWebUrls(text))
+      _MessageTextMark(start: link.start, end: link.end, link: link),
+    for (final Match match in RegExp(r'@[^\s]+').allMatches(text))
+      _MessageTextMark(start: match.start, end: match.end),
+  ]..sort((_MessageTextMark a, _MessageTextMark b) {
+    if (a.start != b.start) {
+      return a.start.compareTo(b.start);
     }
-    spans.add(
-      TextSpan(
-        text: match.group(0),
-        style: TextStyle(color: highlightColor, fontWeight: FontWeight.w600),
-      ),
-    );
-    cursor = match.end;
+    return b.end.compareTo(a.end);
+  });
+
+  final List<InlineSpan> spans = <InlineSpan>[];
+  int cursor = 0;
+  for (final _MessageTextMark mark in marks) {
+    if (mark.start < cursor) {
+      continue;
+    }
+    if (mark.start > cursor) {
+      spans.add(TextSpan(text: text.substring(cursor, mark.start)));
+    }
+    final String piece = text.substring(mark.start, mark.end);
+    final WebUrlMatch? link = mark.link;
+    if (link == null) {
+      spans.add(
+        TextSpan(
+          text: piece,
+          style: TextStyle(color: highlightColor, fontWeight: FontWeight.w600),
+        ),
+      );
+    } else {
+      final TapGestureRecognizer recognizer = TapGestureRecognizer()
+        ..onTap = () => onOpenLink?.call(link.url);
+      recognizers.add(recognizer);
+      spans.add(
+        TextSpan(
+          text: piece,
+          style: TextStyle(
+            color: highlightColor,
+            decoration: TextDecoration.underline,
+          ),
+          recognizer: recognizer,
+        ),
+      );
+    }
+    cursor = mark.end;
   }
   if (cursor < text.length) {
     spans.add(TextSpan(text: text.substring(cursor)));
@@ -1627,25 +1966,91 @@ TextSpan _mentionTextSpan(
   );
 }
 
+/// 持有链接 recognizer，避免每次 build 都创建新的手势对象而无法释放。
+class _LinkifiedMessageText extends StatefulWidget {
+  const _LinkifiedMessageText({
+    required this.text,
+    required this.baseColor,
+    required this.highlightColor,
+    this.onOpenLink,
+  });
+
+  final String text;
+  final Color baseColor;
+  final Color highlightColor;
+  final ValueChanged<String>? onOpenLink;
+
+  @override
+  State<_LinkifiedMessageText> createState() => _LinkifiedMessageTextState();
+}
+
+class _LinkifiedMessageTextState extends State<_LinkifiedMessageText> {
+  final List<TapGestureRecognizer> _recognizers = <TapGestureRecognizer>[];
+  late final TextSpan _span;
+
+  @override
+  void initState() {
+    super.initState();
+    _span = _makeSpan();
+  }
+
+  @override
+  void didUpdateWidget(covariant _LinkifiedMessageText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text ||
+        oldWidget.onOpenLink != widget.onOpenLink) {
+      _disposeRecognizers();
+      _span = _makeSpan();
+    }
+  }
+
+  TextSpan _makeSpan() => _buildMessageTextSpan(
+    widget.text,
+    baseColor: widget.baseColor,
+    highlightColor: widget.highlightColor,
+    onOpenLink: widget.onOpenLink,
+    recognizers: _recognizers,
+  );
+
+  void _disposeRecognizers() {
+    for (final TapGestureRecognizer recognizer in _recognizers) {
+      recognizer.dispose();
+    }
+    _recognizers.clear();
+  }
+
+  @override
+  void dispose() {
+    _disposeRecognizers();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => RichText(
+    key: const ValueKey<String>('message-link-text'),
+    text: _span,
+  );
+}
+
 Widget _highlightMentions(
   String text, {
   required bool mine,
   required Color baseColor,
   required Color highlightColor,
+  ValueChanged<String>? onOpenLink,
 }) {
-  // 无 @ 时保持普通 Text（find.text 可命中，且渲染更轻）；含 @ 才用 RichText 高亮。
-  if (!text.contains('@')) {
+  // 无 @、无网址时保持普通 Text（find.text 可命中，且渲染更轻）。
+  if (!text.contains('@') && extractWebUrls(text).isEmpty) {
     return Text(
       text,
       style: TextStyle(fontSize: 15, height: 1.35, color: baseColor),
     );
   }
-  return RichText(
-    text: _mentionTextSpan(
-      text,
-      baseColor: baseColor,
-      highlightColor: highlightColor,
-    ),
+  return _LinkifiedMessageText(
+    text: text,
+    baseColor: baseColor,
+    highlightColor: highlightColor,
+    onOpenLink: onOpenLink,
   );
 }
 
@@ -1663,14 +2068,28 @@ class MessageBubble extends StatelessWidget {
     this.onRetry,
     this.onDelete,
     this.onForward,
+    this.onRequestGroupJoin,
     this.onRecall,
     this.onEdit,
     this.onQuote,
     this.quoted,
+    this.voicePlayerFactory,
+    this.selectionMode = false,
+    this.selected = false,
+    this.onToggleSelection,
+    this.onEnterSelection,
   });
 
   final ChatMessage message;
   final bool showSenderName;
+
+  /// 多选模式：点击气泡切换勾选，长按/右键不再弹单条菜单。
+  final bool selectionMode;
+  final bool selected;
+  final ValueChanged<String>? onToggleSelection;
+
+  /// 长按菜单「多选」入口：进入多选并勾选本条。
+  final ValueChanged<String>? onEnterSelection;
 
   /// 搜索命中定位时的高亮底色（P6-07）。
   final bool highlighted;
@@ -1697,6 +2116,9 @@ class MessageBubble extends StatelessWidget {
   /// 转发本条文本消息（P6-12）；为空时不展示入口。
   final Future<bool> Function()? onForward;
 
+  /// 本条消息是群分享信息时，可直接申请入群；为空时不展示入口。
+  final Future<void> Function(GroupShareInfo info)? onRequestGroupJoin;
+
   /// 撤回本条消息（P6-12，仅自己 2 分钟内，单聊与群聊均可用）；为空时不展示入口。
   final Future<void> Function()? onRecall;
 
@@ -1708,6 +2130,9 @@ class MessageBubble extends StatelessWidget {
 
   /// 本条消息引用的原消息（用于气泡内引用条展示）；找不到原消息时为 null。
   final ChatMessage? quoted;
+
+  /// 语音气泡播放器工厂；为空时使用 audioplayers 生产实现。
+  final VoiceMessagePlayerFactory? voicePlayerFactory;
 
   /// 撤回有效期：ui-spec.md §3「仅自己，2 分钟内」。
   static const Duration _recallWindow = Duration(minutes: 2);
@@ -1726,6 +2151,47 @@ class MessageBubble extends StatelessWidget {
       message.isMine &&
       DateTime.now().difference(message.sentAt) <= _editWindow;
 
+  bool get _isImageMessage =>
+      message.isFile &&
+      (message.attachment?.mime.toLowerCase().startsWith('image/') ?? false);
+
+  String? get _linkUrl =>
+      message.isFile ? null : extractFirstWebUrl(message.text);
+
+  /// 图片消息长按 / 右键识别二维码。
+  Future<void> _recognizeQr(BuildContext context) async {
+    final ChatAttachment? attachment = message.attachment;
+    if (attachment == null) {
+      return;
+    }
+    final ScaffoldMessengerState? messenger = ScaffoldMessenger.maybeOf(context);
+    if (!qrImageDecodeSupported) {
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(context.t('当前平台不支持图片二维码识别，请用摄像头扫码')),
+        ),
+      );
+      return;
+    }
+    messenger?.showSnackBar(
+      SnackBar(content: Text(context.t('正在识别二维码…'))),
+    );
+    final String? raw = await decodeQrFromImage(
+      path: attachment.path,
+      sourceUri: mediaSourceUri?.call(attachment.path)?.toString(),
+    );
+    if (!context.mounted) {
+      return;
+    }
+    if (raw == null || raw.isEmpty) {
+      messenger?.showSnackBar(
+        SnackBar(content: Text(context.t('未识别到二维码'))),
+      );
+      return;
+    }
+    await handleQrResult(context, raw);
+  }
+
   /// 长按（移动端）与右键（桌面端）弹出消息操作菜单。
   Future<void> _showActions(BuildContext context, Offset globalPosition) async {
     final String copyLabel = context.t('复制');
@@ -1734,6 +2200,12 @@ class MessageBubble extends StatelessWidget {
     final String editLabel = context.t('编辑');
     final String recallLabel = context.t('撤回');
     final String deleteLabel = context.t('删除');
+    final String selectLabel = context.t('多选');
+    final String recognizeLabel = context.t('识别图中二维码');
+    final String openLinkLabel = context.t('打开链接');
+    final String joinGroupLabel = context.t('申请入群');
+    final GroupShareInfo? groupShare =
+        parseGroupShareText(message.text);
     final String copied = context.t('已复制');
     final RenderBox overlay =
         Overlay.of(context).context.findRenderObject()! as RenderBox;
@@ -1744,6 +2216,23 @@ class MessageBubble extends StatelessWidget {
         Offset.zero & overlay.size,
       ),
       items: <PopupMenuEntry<String>>[
+        if (onEnterSelection != null)
+          PopupMenuItem<String>(value: 'select', child: Text(selectLabel)),
+        if (_linkUrl != null)
+          PopupMenuItem<String>(
+            value: 'open-link',
+            child: Text(openLinkLabel),
+          ),
+        if (groupShare != null && onRequestGroupJoin != null)
+          PopupMenuItem<String>(
+            value: 'request-group-join',
+            child: Text(joinGroupLabel),
+          ),
+        if (_isImageMessage)
+          PopupMenuItem<String>(
+            value: 'recognize-qr',
+            child: Text(recognizeLabel),
+          ),
         if (!message.isFile)
           PopupMenuItem<String>(value: 'copy', child: Text(copyLabel)),
         if (!message.isFile && onForward != null)
@@ -1758,6 +2247,28 @@ class MessageBubble extends StatelessWidget {
       ],
     );
     if (action == null || !context.mounted) {
+      return;
+    }
+    if (action == 'select') {
+      onEnterSelection?.call(message.id);
+      return;
+    }
+    if (action == 'open-link') {
+      final String? url = _linkUrl;
+      if (url != null) {
+        await openInAppBrowser(context, url);
+      }
+      return;
+    }
+    if (action == 'request-group-join') {
+      final GroupShareInfo? info = groupShare;
+      if (info != null) {
+        await onRequestGroupJoin?.call(info);
+      }
+      return;
+    }
+    if (action == 'recognize-qr') {
+      await _recognizeQr(context);
       return;
     }
     if (action == 'copy') {
@@ -1939,6 +2450,10 @@ class MessageBubble extends StatelessWidget {
             : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
+          if (selectionMode) ...<Widget>[
+            _SelectionCheck(selected: selected),
+            const SizedBox(width: NexmemMetrics.space8),
+          ],
           if (!mine) ...<Widget>[
             _BubbleAvatar(message: message),
             const SizedBox(width: NexmemMetrics.space8),
@@ -1964,10 +2479,17 @@ class MessageBubble extends StatelessWidget {
                   ),
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onLongPressStart: (LongPressStartDetails details) =>
-                      _showActions(context, details.globalPosition),
-                  onSecondaryTapDown: (TapDownDetails details) =>
-                      _showActions(context, details.globalPosition),
+                  onLongPressStart: selectionMode
+                      ? null
+                      : (LongPressStartDetails details) =>
+                          _showActions(context, details.globalPosition),
+                  onSecondaryTapDown: selectionMode
+                      ? null
+                      : (TapDownDetails details) =>
+                          _showActions(context, details.globalPosition),
+                  onTap: selectionMode && onToggleSelection != null
+                      ? () => onToggleSelection!(message.id)
+                      : null,
                   child: Container(
                     constraints: BoxConstraints(maxWidth: maxWidth),
                     padding: const EdgeInsets.symmetric(
@@ -1975,12 +2497,18 @@ class MessageBubble extends StatelessWidget {
                       vertical: 8,
                     ),
                     decoration: ShapeDecoration(
-                      color: mine ? NexmemColors.primary : scheme.surface,
+                      color: selectionMode && selected
+                          ? NexmemColors.primary.withValues(alpha: 0.22)
+                          : mine
+                              ? NexmemColors.bubbleSelf
+                              : scheme.surface,
                       shape: _BubbleShape(
                         mine: mine,
-                        borderColor: mine
-                            ? null
-                            : scheme.onSurface.withValues(alpha: 0.1),
+                        borderColor: selectionMode && selected
+                            ? NexmemColors.primary
+                            : mine
+                                ? null
+                                : scheme.onSurface.withValues(alpha: 0.1),
                       ),
                     ),
                     child: Column(
@@ -2007,6 +2535,7 @@ class MessageBubble extends StatelessWidget {
                             onSave: onSaveFile,
                             onReadBytes: onReadFileBytes,
                             mediaSourceUri: mediaSourceUri,
+                            voicePlayerFactory: voicePlayerFactory,
                           )
                         else
                           _highlightMentions(
@@ -2016,6 +2545,11 @@ class MessageBubble extends StatelessWidget {
                             highlightColor: mine
                                 ? Colors.white
                                 : NexmemColors.primary,
+                            // 多选态下让点击继续走气泡勾选，不打开链接。
+                            onOpenLink: selectionMode
+                                ? null
+                                : (String url) =>
+                                    unawaited(openInAppBrowser(context, url)),
                           ),
                         if (message.edited)
                           Padding(
@@ -2083,6 +2617,41 @@ class MessageBubble extends StatelessWidget {
   }
 }
 
+/// 多选模式下的勾选圈：选中时填充主题色并显示对勾。
+class _SelectionCheck extends StatelessWidget {
+  const _SelectionCheck({required this.selected});
+
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: Container(
+        key: ValueKey<String>(
+          selected ? 'chat-selection-checked' : 'chat-selection-unchecked',
+        ),
+        width: 22,
+        height: 22,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: selected ? NexmemColors.primary : Colors.transparent,
+          border: Border.all(
+            color: selected
+                ? NexmemColors.primary
+                : scheme.onSurface.withValues(alpha: 0.4),
+            width: 2,
+          ),
+        ),
+        child: selected
+            ? const Icon(Icons.check, size: 15, color: Colors.white)
+            : null,
+      ),
+    );
+  }
+}
+
 /// 文件气泡内容（P2-04）：图标 + 文件名 + 大小 / 传输进度。
 ///
 /// 图片可点开缩放预览；语音/视频点开用 MediaViewerDialog 播放；
@@ -2097,6 +2666,7 @@ class _FileBubbleContent extends StatelessWidget {
     this.onSave,
     this.onReadBytes,
     this.mediaSourceUri,
+    this.voicePlayerFactory,
   });
 
   final ChatMessage message;
@@ -2107,6 +2677,7 @@ class _FileBubbleContent extends StatelessWidget {
   final Future<String?> Function(ChatMessage)? onSave;
   final Future<Uint8List> Function(ChatMessage)? onReadBytes;
   final Uri? Function(String path)? mediaSourceUri;
+  final VoiceMessagePlayerFactory? voicePlayerFactory;
 
   /// 两端都可能有真实传输进度（接收端消息状态是 sent，不能只看 sending）。
   /// 发送完成（status 不再是 sending）后即使进度未刷新也不再显示进度条。
@@ -2203,7 +2774,8 @@ class _FileBubbleContent extends StatelessWidget {
   IconData _icon(String name, String mime) {
     final String lowerName = name.toLowerCase();
     if (mime.startsWith('image/') ||
-        RegExp(r'\.(png|jpe?g|gif|webp|bmp|heic)$').hasMatch(lowerName)) {
+        RegExp(r'\.(png|jpe?g|jfif|gif|webp|bmp|heic|heif|tiff?|avif|ico)$')
+            .hasMatch(lowerName)) {
       return Icons.image_outlined;
     }
     if (mime.startsWith('video/')) {
@@ -2218,12 +2790,47 @@ class _FileBubbleContent extends StatelessWidget {
     return Icons.insert_drive_file_outlined;
   }
 
-  /// 语音/视频气泡：播放图标 + 文件名 + 大小，点击打开媒体播放器。
+  /// 语音/视频气泡：语音内联播放（微信/QQ 风格），视频仍打开播放器弹窗。
   Widget _mediaContent(
     BuildContext context,
     ChatAttachment file,
     MediaKind kind,
   ) {
+    if (kind == MediaKind.audio) {
+      final Color fg = mine
+          ? Colors.white
+          : Theme.of(context).colorScheme.onSurface;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          VoiceMessageBubble(
+            id: message.id,
+            name: file.name,
+            path: file.path,
+            mine: mine,
+            sourceUri: mediaSourceUri == null || file.path.isEmpty
+                ? null
+                : mediaSourceUri!(file.path),
+            playerFactory: voicePlayerFactory,
+            onSave: onSave == null
+                ? null
+                : () => unawaited(_save(context)),
+          ),
+          if (_showProgress)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: LinearProgressIndicator(
+                key: ValueKey<String>('chat-file-progress-${message.id}'),
+                value: _progressRatio,
+                minHeight: 3,
+                backgroundColor: fg.withValues(alpha: 0.12),
+                valueColor: AlwaysStoppedAnimation<Color>(fg),
+              ),
+            ),
+        ],
+      );
+    }
     final Color fg = mine
         ? Colors.white
         : Theme.of(context).colorScheme.onSurface;
@@ -2235,23 +2842,32 @@ class _FileBubbleContent extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Container(
-          width: side,
-          height: side,
-          decoration: BoxDecoration(
-            color: fg.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Center(
-            child: Icon(
-              kind == MediaKind.video
-                  ? Icons.play_circle_outlined
-                  : Icons.audiotrack_outlined,
-              size: 48,
-              color: fg,
+        if (kind == MediaKind.video)
+          VideoThumbnail(
+            path: file.path,
+            sourceUri: mediaSourceUri == null || file.path.isEmpty
+                ? null
+                : mediaSourceUri!(file.path),
+            width: side,
+            height: side,
+            color: fg,
+          )
+        else
+          Container(
+            width: side,
+            height: side,
+            decoration: BoxDecoration(
+              color: fg.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: Icon(
+                Icons.audiotrack_outlined,
+                size: 48,
+                color: fg,
+              ),
             ),
           ),
-        ),
         const SizedBox(height: 4),
         SizedBox(
           width: side,
@@ -2530,14 +3146,30 @@ class _FileBubbleContent extends StatelessWidget {
     // 注入了通用查看 / 保存通道时，普通文件点击打开查看页；离线模式仍
     // 保留原来的复制路径行为，避免没有内核时误报「读取失败」。
     if (onSave != null || onReadBytes != null) {
-      return Tooltip(
-        message: file.path,
-        child: InkWell(
-          key: ValueKey<String>('chat-file-viewer-${message.id}'),
-          borderRadius: BorderRadius.circular(6),
-          onTap: () => unawaited(_openViewer(context, file)),
-          child: content,
-        ),
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Tooltip(
+            message: file.path,
+            child: InkWell(
+              key: ValueKey<String>('chat-file-viewer-${message.id}'),
+              borderRadius: BorderRadius.circular(6),
+              onTap: () => unawaited(_openViewer(context, file)),
+              child: content,
+            ),
+          ),
+          if (onSave != null)
+            Align(
+              alignment: Alignment.centerRight,
+              child: IconButton(
+                key: ValueKey<String>('chat-file-save-${message.id}'),
+                icon: Icon(Icons.save_alt_outlined, size: 18, color: fg),
+                tooltip: context.t('保存到本机'),
+                onPressed: () => unawaited(_save(context)),
+              ),
+            ),
+        ],
       );
     }
     return Tooltip(
@@ -2662,14 +3294,19 @@ class ChatInputBar extends StatefulWidget {
     super.key,
     required this.onSend,
     this.onAttachFile,
+    this.onAttachFolder,
     this.onAttachImage,
     this.onAttachMedia,
+    this.onAttachVideo,
+    this.onAttachAudio,
     this.onAttachVoice,
     this.voiceRecorder,
     this.onVoiceSend,
     this.onTypingChanged,
     this.mentionCandidates = const <MentionCandidate>[],
     this.mentionController,
+    this.initialDraft = '',
+    this.onDraftChanged,
   });
 
   /// 发送回调：[mentions] 为本次文本中 @ 到的成员账号 ID（七-1），
@@ -2688,11 +3325,20 @@ class ChatInputBar extends StatefulWidget {
   /// 「文件」工具入口（P2-04）；为空时提示功能未开放。
   final VoidCallback? onAttachFile;
 
+  /// 「文件夹」工具入口；为空时工具条不展示。
+  final VoidCallback? onAttachFolder;
+
   /// 「图片」工具入口（P6-16）；为空时提示功能未开放。
   final VoidCallback? onAttachImage;
 
-  /// 「音视频」工具入口；为空时提示功能未开放。
+  /// 「音视频」兼容入口；为空时提示功能未开放。
   final VoidCallback? onAttachMedia;
+
+  /// 「视频」入口：拉起系统视频库。
+  final VoidCallback? onAttachVideo;
+
+  /// 「音频」入口：拉起系统音频库。
+  final VoidCallback? onAttachAudio;
 
   /// 「语音」工具入口（A-01）；为空时提示功能未开放。
   final VoidCallback? onAttachVoice;
@@ -2700,6 +3346,10 @@ class ChatInputBar extends StatefulWidget {
   /// 按住说话录音器与发送回调。
   final VoiceRecorder? voiceRecorder;
   final Future<void> Function(VoiceRecording recording)? onVoiceSend;
+
+  /// 会话级草稿初值与变化回调。
+  final String initialDraft;
+  final ValueChanged<String>? onDraftChanged;
 
   @override
   State<ChatInputBar> createState() => _ChatInputBarState();
@@ -2764,15 +3414,24 @@ class _ChatInputBarState extends State<ChatInputBar> {
   Timer? _typingTimer;
   bool _typingActive = false;
 
+  /// 输入模式：语音态时长按输入框录音、松开发送；文字态正常输入。
+  bool _voiceMode = false;
+
   /// 按住说话：录音中状态、上滑取消与最长 60 秒自动发送。
   bool _recording = false;
   bool _recordCancelled = false;
   int _recordSeconds = 0;
   Timer? _recordTimer;
 
+  /// 录音启动可能等待权限弹窗；松手时必须等待同一次启动完成再判定，
+  /// 否则「按下即松」会在权限通过后留下无人停止的录音。
+  Future<bool>? _recordStartFuture;
+  int _recordStartSerial = 0;
+
   @override
   void initState() {
     super.initState();
+    _controller.text = widget.initialDraft;
     _controller.addListener(_onChanged);
     widget.mentionController?.addListener(_onMentionRequested);
   }
@@ -2803,6 +3462,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   void _onChanged() {
+    widget.onDraftChanged?.call(_controller.text);
     setState(() {});
     _reportTyping();
   }
@@ -2968,19 +3628,41 @@ class _ChatInputBarState extends State<ChatInputBar> {
     }
     if (!recorder.supported) {
       _showVoiceNotice(
-        context.t('当前平台不支持按住说话，请用音视频按钮选择音频文件'),
+        context.t('当前平台不支持按住说话，请用音频按钮选择音频文件'),
       );
       return;
     }
-    final bool started = await recorder.start();
-    if (!mounted) return;
+    if (_recording || _recordStartFuture != null) {
+      return;
+    }
+    final int serial = ++_recordStartSerial;
+    if (mounted) {
+      setState(() => _recordCancelled = false);
+    }
+    final Future<bool> startFuture = recorder.start();
+    _recordStartFuture = startFuture;
+    bool started = false;
+    try {
+      started = await startFuture;
+    } on Object {
+      started = false;
+    } finally {
+      if (_recordStartSerial == serial) {
+        _recordStartFuture = null;
+      }
+    }
+    if (!mounted || serial != _recordStartSerial) {
+      if (started) {
+        unawaited(recorder.cancel());
+      }
+      return;
+    }
     if (!started) {
       _showVoiceNotice(context.t('无法开始录音，请检查麦克风权限'));
       return;
     }
     setState(() {
       _recording = true;
-      _recordCancelled = false;
       _recordSeconds = 0;
     });
     _recordTimer?.cancel();
@@ -2999,7 +3681,13 @@ class _ChatInputBarState extends State<ChatInputBar> {
   /// 松手结束录音：上滑取消则丢弃，否则发送。
   Future<void> _finishRecording() async {
     final VoiceRecorder? recorder = widget.voiceRecorder;
-    if (recorder == null || !_recording) return;
+    if (recorder == null) return;
+    // 权限弹窗期间松手：等当前 start 完成后统一收尾，避免录音失控。
+    final Future<bool>? pending = _recordStartFuture;
+    if (pending != null) {
+      await pending.catchError((Object _) => false);
+    }
+    if (!_recording) return;
     _recordTimer?.cancel();
     _recordTimer = null;
     final bool cancelled = _recordCancelled;
@@ -3014,7 +3702,11 @@ class _ChatInputBarState extends State<ChatInputBar> {
       return;
     }
     final VoiceRecording? recording = await recorder.stop();
-    if (recording == null || !mounted) return;
+    if (!mounted) return;
+    if (recording == null) {
+      _showVoiceNotice(context.t('录音时间太短，未发送'));
+      return;
+    }
     await widget.onVoiceSend?.call(recording);
   }
 
@@ -3022,11 +3714,20 @@ class _ChatInputBarState extends State<ChatInputBar> {
     final VoiceRecorder? recorder = widget.voiceRecorder;
     _recordTimer?.cancel();
     _recordTimer = null;
+    final Future<bool>? pending = _recordStartFuture;
     if (mounted) {
-      setState(() {
-        _recording = false;
-        _recordCancelled = false;
-      });
+      setState(() => _recording = false);
+    }
+    if (pending != null) {
+      // 权限弹窗期间取消：等 start 落地后再 cancel，避免录音稍后自行启动。
+      _recordCancelled = true;
+      unawaited(
+        pending.then((_) => recorder?.cancel()).catchError((Object _) {}),
+      );
+      return;
+    }
+    if (mounted) {
+      setState(() => _recordCancelled = false);
     }
     if (recorder != null) unawaited(recorder.cancel());
   }
@@ -3035,6 +3736,20 @@ class _ChatInputBarState extends State<ChatInputBar> {
     final bool cancelled = details.localOffsetFromOrigin.dy < -60;
     if (cancelled != _recordCancelled && mounted) {
       setState(() => _recordCancelled = cancelled);
+    }
+  }
+
+  /// 输入模式切换：语音态收起键盘，文字态正常输入。
+  void _toggleInputMode() {
+    if (_recording) {
+      _cancelRecording();
+    }
+    setState(() {
+      _voiceMode = !_voiceMode;
+      _emojiOpen = false;
+    });
+    if (_voiceMode) {
+      _focus.unfocus();
     }
   }
 
@@ -3077,43 +3792,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          if (_recording)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Icon(
-                    _recordCancelled ? Icons.close : Icons.mic,
-                    size: 14,
-                    color: _recordCancelled
-                        ? Theme.of(context).colorScheme.error
-                        : scheme.primary,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _recordCancelled
-                        ? context.t('松开取消录音')
-                        : context.t('录音中 {0} 秒 · 松开发送，上滑取消', [
-                            _recordSeconds,
-                          ]),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                  ),
-                ],
-              ),
-            ),
           Row(
             children: <Widget>[
-              _HoldToTalkButton(
-                tooltip: context.t('按住说话'),
-                onHoldStart: _startRecording,
-                onHoldEnd: (_) => unawaited(_finishRecording()),
-                onHoldMove: _onRecordMove,
-                onHoldCancel: _cancelRecording,
-              ),
               _ToolButton(
                 icon: _emojiOpen
                     ? Icons.keyboard_alt_outlined
@@ -3145,10 +3825,17 @@ class _ChatInputBarState extends State<ChatInputBar> {
               ),
               _ToolButton(
                 icon: Icons.movie_outlined,
-                tooltip: context.t('音视频'),
+                tooltip: context.t('视频'),
                 onTap:
-                    widget.onAttachMedia ??
-                    () => _notImplemented(context.t('音视频')),
+                    widget.onAttachVideo ??
+                    () => _notImplemented(context.t('视频')),
+              ),
+              _ToolButton(
+                icon: Icons.audiotrack_outlined,
+                tooltip: context.t('音频'),
+                onTap:
+                    widget.onAttachAudio ??
+                    () => _notImplemented(context.t('音频')),
               ),
               _ToolButton(
                 icon: Icons.attach_file,
@@ -3157,6 +3844,12 @@ class _ChatInputBarState extends State<ChatInputBar> {
                     widget.onAttachFile ??
                     () => _notImplemented(context.t('文件')),
               ),
+              if (widget.onAttachFolder != null)
+                _ToolButton(
+                  icon: Icons.folder_outlined,
+                  tooltip: context.t('发送文件夹'),
+                  onTap: widget.onAttachFolder!,
+                ),
             ],
           ),
           if (_ttlHours > 0)
@@ -3185,56 +3878,118 @@ class _ChatInputBarState extends State<ChatInputBar> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: <Widget>[
+              IconButton(
+                key: const ValueKey<String>('chat-input-mode-toggle'),
+                tooltip: context.t(_voiceMode ? '文字输入' : '语音输入'),
+                icon: Icon(
+                  _voiceMode ? Icons.keyboard_outlined : Icons.mic_none,
+                ),
+                onPressed: _toggleInputMode,
+              ),
+              const SizedBox(width: 2),
               Expanded(
-                child: CallbackShortcuts(
-                  // 桌面/Web：Enter 发送，Shift+Enter 交给输入框换行。
-                  bindings: <ShortcutActivator, VoidCallback>{
-                    const SingleActivator(LogicalKeyboardKey.enter): _submit,
-                    const SingleActivator(LogicalKeyboardKey.numpadEnter):
-                        _submit,
-                  },
-                  child: TextField(
-                    controller: _controller,
-                    focusNode: _focus,
-                    minLines: 1,
-                    maxLines: 5,
-                    maxLength: kMaxMessageChars,
-                    buildCounter: _messageCounter,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => _submit(),
-                    style: const TextStyle(fontSize: 15),
-                    decoration: InputDecoration(
-                      hintText: context.t('输入消息'),
-                      isDense: true,
-                      filled: true,
-                      fillColor: scheme.onSurface.withValues(alpha: 0.05),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: NexmemMetrics.space12,
-                        vertical: 10,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(
-                          NexmemMetrics.radiusListItem,
+                child: _voiceMode
+                    ? GestureDetector(
+                        key: const ValueKey<String>('chat-voice-input'),
+                        behavior: HitTestBehavior.opaque,
+                        onLongPressStart: (_) => unawaited(_startRecording()),
+                        onLongPressEnd: (_) => unawaited(_finishRecording()),
+                        onLongPressMoveUpdate: _onRecordMove,
+                        onLongPressCancel: _cancelRecording,
+                        child: Container(
+                          height: 40,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: _recordCancelled
+                                ? scheme.error.withValues(alpha: 0.10)
+                                : scheme.onSurface.withValues(alpha: 0.05),
+                            borderRadius: BorderRadius.circular(
+                              NexmemMetrics.radiusListItem,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: <Widget>[
+                              Icon(
+                                _recordCancelled ? Icons.close : Icons.mic_none,
+                                size: 18,
+                                color: _recordCancelled
+                                    ? scheme.error
+                                    : scheme.primary,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                _recordCancelled
+                                    ? context.t('松开取消录音')
+                                    : _recording
+                                        ? context.t(
+                                            '录音中 {0} 秒 · 松开发送，上滑取消',
+                                            [_recordSeconds],
+                                          )
+                                        : context.t('按住说话'),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: _recordCancelled
+                                      ? scheme.error
+                                      : scheme.onSurface,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                        borderSide: BorderSide.none,
+                      )
+                    : CallbackShortcuts(
+                        // 桌面/Web：Enter 发送，Shift+Enter 交给输入框换行。
+                        bindings: <ShortcutActivator, VoidCallback>{
+                          const SingleActivator(LogicalKeyboardKey.enter):
+                              _submit,
+                          const SingleActivator(LogicalKeyboardKey.numpadEnter):
+                              _submit,
+                        },
+                        child: TextField(
+                          controller: _controller,
+                          focusNode: _focus,
+                          minLines: 1,
+                          maxLines: 5,
+                          maxLength: kMaxMessageChars,
+                          buildCounter: _messageCounter,
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) => _submit(),
+                          style: const TextStyle(fontSize: 15),
+                          decoration: InputDecoration(
+                            hintText: context.t('输入消息'),
+                            isDense: true,
+                            filled: true,
+                            fillColor: scheme.onSurface.withValues(alpha: 0.05),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: NexmemMetrics.space12,
+                              vertical: 10,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(
+                                NexmemMetrics.radiusListItem,
+                              ),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                        ),
+                      ),
+              ),
+              if (!_voiceMode) ...<Widget>[
+                const SizedBox(width: NexmemMetrics.space8),
+                FilledButton(
+                  onPressed: _canSend ? _submit : null,
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(64, 40),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(
+                        NexmemMetrics.radiusListItem,
                       ),
                     ),
                   ),
+                  child: Text(context.t('发送')),
                 ),
-              ),
-              const SizedBox(width: NexmemMetrics.space8),
-              FilledButton(
-                onPressed: _canSend ? _submit : null,
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size(64, 40),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(
-                      NexmemMetrics.radiusListItem,
-                    ),
-                  ),
-                ),
-                child: Text(context.t('发送')),
-              ),
+              ],
             ],
           ),
           if (_emojiOpen) ...<Widget>[
@@ -3283,42 +4038,6 @@ class _EmojiButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
         onTap: onTap,
         child: Center(child: Text(emoji, style: const TextStyle(fontSize: 20))),
-      ),
-    );
-  }
-}
-
-/// 按住说话按钮：长按开始录音，松手结束，上滑取消。
-class _HoldToTalkButton extends StatelessWidget {
-  const _HoldToTalkButton({
-    required this.tooltip,
-    required this.onHoldStart,
-    required this.onHoldEnd,
-    required this.onHoldMove,
-    required this.onHoldCancel,
-  });
-
-  final String tooltip;
-  final Future<void> Function() onHoldStart;
-  final void Function(LongPressEndDetails details) onHoldEnd;
-  final void Function(LongPressMoveUpdateDetails details) onHoldMove;
-  final VoidCallback onHoldCancel;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onLongPressStart: (_) => unawaited(onHoldStart()),
-        onLongPressEnd: onHoldEnd,
-        onLongPressMoveUpdate: onHoldMove,
-        onLongPressCancel: onHoldCancel,
-        child: const SizedBox(
-          width: 34,
-          height: 34,
-          child: Center(child: Icon(Icons.mic_none, size: 20)),
-        ),
       ),
     );
   }

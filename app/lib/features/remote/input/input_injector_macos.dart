@@ -7,6 +7,7 @@ import 'dart:ffi' as ffi;
 import 'dart:io';
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/services.dart';
 
 import '../remote_input_codec.dart';
 import '../remote_session.dart';
@@ -106,6 +107,9 @@ class MacInputInjector implements DesktopInputInjector {
   bool get supportsInput => _available;
 
   @override
+  TargetPlatform get hostPlatform => TargetPlatform.macOS;
+
+  @override
   String get permissionHint => '需要在「系统设置 → 隐私与安全性 → 辅助功能」中允许本应用控制电脑';
 
   @override
@@ -148,7 +152,8 @@ class MacInputInjector implements DesktopInputInjector {
       return;
     }
     final _CGPoint point = _pointFor(display, event);
-    if (event.type == RemotePointerType.wheel) {
+    if (event.type == RemotePointerType.wheel ||
+        event.type == RemotePointerType.pinch) {
       _postScroll(event, point);
       return;
     }
@@ -184,6 +189,21 @@ class MacInputInjector implements DesktopInputInjector {
         2,
       );
     }
+    // 侧键 back/forward 复用 CGEvent 的 otherButton（buttonNumber 3/4）。
+    if (changed & RemoteButtons.back != 0) {
+      _postMouse(
+        event.buttons & RemoteButtons.back != 0 ? _otherDown : _otherUp,
+        point,
+        3,
+      );
+    }
+    if (changed & RemoteButtons.forward != 0) {
+      _postMouse(
+        event.buttons & RemoteButtons.forward != 0 ? _otherDown : _otherUp,
+        point,
+        4,
+      );
+    }
     _buttons = event.buttons;
   }
 
@@ -209,6 +229,31 @@ class MacInputInjector implements DesktopInputInjector {
     } finally {
       _release(event);
     }
+  }
+
+  @override
+  Future<void> combo(String comboKey, {int modifiers = 0}) async {
+    final List<String> mods = RemoteKeyMap.modifierKeysFor(
+      modifiers,
+      platform: TargetPlatform.macOS,
+    );
+    for (final String mod in mods) {
+      await key(mod, down: true, modifiers: modifiers);
+    }
+    await key(comboKey, down: true, modifiers: modifiers);
+    await key(comboKey, down: false, modifiers: modifiers);
+    for (final String mod in mods.reversed) {
+      await key(mod, down: false);
+    }
+  }
+
+  @override
+  Future<void> touch(
+    String phase,
+    List<Map<String, int>> points, {
+    int modifiers = 0,
+  }) async {
+    // macOS 触控板缩放已由 pinch → Ctrl+滚轮路径处理，无需额外多点注入。
   }
 
   @override
@@ -274,6 +319,11 @@ class MacInputInjector implements DesktopInputInjector {
       return;
     }
     try {
+      // 带上修饰位，使 pinch（带 control）被应用识别为缩放手势。
+      final int flags = _flags(event.modifiers);
+      if (flags != 0) {
+        _eventSetFlags(scroll, flags);
+      }
       _eventPost(_kCGHIDEventTap, scroll);
     } finally {
       _release(scroll);

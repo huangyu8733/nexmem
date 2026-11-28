@@ -5,6 +5,8 @@ import 'package:video_player/video_player.dart';
 ImageProvider mediaImageProvider(String path) =>
     throw UnsupportedError('Web 不支持本机文件预览');
 
+bool mediaFileExists(String path) => false;
+
 VideoPlayerController mediaVideoController(String path) =>
     throw UnsupportedError('Web 不支持本机视频预览');
 

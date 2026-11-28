@@ -27,7 +27,7 @@
         <service
             android:name=".RemoteHostService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
+            android:foregroundServiceType="mediaProjection|dataSync" />
         <!-- 远程控制输入注入：用户需在系统无障碍设置中手动启用 -->
         <service
             android:name=".RemoteControlAccessibilityService"

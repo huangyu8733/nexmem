@@ -1457,7 +1457,7 @@
     },
     {
       "name": "group.invite",
-      "summary": "邀请账号入群（仅管理员）：分发当前版本群密钥并同步成员表",
+      "summary": "邀请账号入群（仅管理员）：分发当前版本群密钥、同步成员表，并给被拉人投递显式邀请通知；目标档案/XPub 暂不可用时返回 pending，密钥等待补发",
       "params": {
         "type": "object",
         "properties": {
@@ -1485,6 +1485,18 @@
           },
           "failed": {
             "type": "integer"
+          },
+          "invite_sent": {
+            "type": "boolean"
+          },
+          "pending": {
+            "type": "boolean"
+          },
+          "delivery_error": {
+            "type": "string"
+          },
+          "invite_error": {
+            "type": "string"
           }
         },
         "required": [
@@ -1720,7 +1732,7 @@
     },
     {
       "name": "group.members",
-      "summary": "列出群成员与密钥版本；`storage_configured` 供客户端展示群盘未配置提示，`announcement` 为本机群公告，`allow_friend_add` 表示是否允许成员互加好友，`level_enabled`/`levels` 为群等级配置，members[] 含本群称呼 `nickname` 与 `level_id`",
+      "summary": "列出群成员与密钥版本；`storage_configured` 供客户端展示群盘未配置提示，`announcement` 为本机群公告，`avatar_b64` 为 512x512 JPEG 群头像，`description` 为群介绍，`allow_friend_add` 表示是否允许成员互加好友，`level_enabled`/`levels` 为群等级配置，members[] 含本群称呼 `nickname` 与 `level_id`",
       "params": {
         "type": "object",
         "properties": {
@@ -1762,6 +1774,12 @@
             "type": "boolean"
           },
           "announcement": {
+            "type": "string"
+          },
+          "avatar_b64": {
+            "type": "string"
+          },
+          "description": {
             "type": "string"
           },
           "allow_friend_add": {
@@ -1941,6 +1959,70 @@
         },
         "required": [
           "announcement"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.setAvatar",
+      "summary": "设置群头像（仅管理员）：avatar_b64 必须是 512x512 JPEG 的 base64，空串表示清除；成员通过加密群控制帧同步",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "avatar_b64": {
+            "type": "string",
+            "description": "512x512 JPEG 的 base64；传空串表示清除"
+          }
+        },
+        "required": [
+          "group_id",
+          "avatar_b64"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "avatar_b64": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "avatar_b64"
+        ]
+      },
+      "implemented": false
+    },
+    {
+      "name": "group.setDescription",
+      "summary": "设置群介绍（仅管理员）：最多 512 字，空串表示清除；成员通过加密群控制帧同步",
+      "params": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "description": "群介绍正文，最长 512 字；传空串表示清除"
+          }
+        },
+        "required": [
+          "group_id",
+          "description"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description"
         ]
       },
       "implemented": false
@@ -3719,6 +3801,40 @@
       }
     },
     {
+      "type": "group.avatarChanged",
+      "description": "管理员更新群头像，成员按 group_id 刷新本机头像（不产生气泡）",
+      "data": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ]
+      }
+    },
+    {
+      "type": "group.descriptionChanged",
+      "description": "管理员更新群介绍，成员按 group_id 刷新本机介绍（不产生气泡）",
+      "data": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "description"
+        ]
+      }
+    },
+    {
       "type": "group.storageRemoved",
       "description": "管理员移除群盘，成员按 group_id 清本机群盘配置（不产生气泡）",
       "data": {
@@ -3832,6 +3948,44 @@
         "required": [
           "id",
           "accepted"
+        ]
+      }
+    },
+    {
+      "type": "contact.new",
+      "description": "好友申请通过后通讯录已写入新联系人，UI 立即刷新好友列表",
+      "data": {
+        "type": "object",
+        "properties": {
+          "peer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "peer"
+        ]
+      }
+    },
+    {
+      "type": "group.invited",
+      "description": "管理员主动拉人入群，被邀请人收到系统通知与社交中心刷新事件",
+      "data": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "group_id": {
+            "type": "string"
+          },
+          "peer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "group_id",
+          "peer"
         ]
       }
     },

@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import '../app/core_session.dart';
 import '../features/chat/chat_message.dart';
 import '../features/chat/voice_recorder.dart';
+import '../features/files/chat_file_actions.dart';
+import '../features/files/folder_attachment.dart';
 import 'event_buffer.dart';
 import 'event_sequencer.dart';
 import 'transport.dart';
@@ -192,9 +194,17 @@ class AndroidTransport implements CoreTransport {
   Future<ChatAttachment?> pickImage() =>
       _pickViaPlatform('pickImage', '选择图片失败');
 
-  /// 拉起系统媒体选择器，可发送视频或音频文件。
+  /// 拉起系统媒体选择器，可发送视频或音频文件（兼容旧部署）。
   Future<ChatAttachment?> pickMedia() =>
       _pickViaPlatform('pickMedia', '选择音视频失败');
+
+  /// 拉起系统视频库：Android MediaStore Videos / iOS PHPicker 视频。
+  Future<ChatAttachment?> pickVideo() =>
+      _pickViaPlatform('pickVideo', '选择视频失败');
+
+  /// 拉起系统音频库：Android MediaStore Audio / iOS 音乐库。
+  Future<ChatAttachment?> pickAudio() =>
+      _pickViaPlatform('pickAudio', '选择音频失败');
 
   Future<ChatAttachment?> _pickViaPlatform(
     String method,
@@ -424,8 +434,16 @@ Future<CoreSession?> openAndroidSession({
     pickFile: transport.pickFile,
     pickImage: transport.pickImage,
     pickMedia: transport.pickMedia,
+    pickVideo: transport.pickVideo,
+    pickAudio: transport.pickAudio,
     voiceRecorder: makeVoiceRecorder(),
     pickDirectory: transport.pickDirectory,
+    pickFolder: () =>
+        pickFolderAttachment(directoryPicker: transport.pickDirectory),
+    readChatFileBytes: (String path) =>
+        readChatFileBytes(path: path),
+    saveChatFile: (String path, String fileName) =>
+        saveChatFileToDevice(sourcePath: path, fileName: fileName),
   );
 }
 

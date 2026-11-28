@@ -18,6 +18,27 @@ enum LinkStatus {
   final double opacity;
 }
 
+/// 把内核 `state.changed` 的 state 映射为顶部状态条。
+///
+/// 内核 `degraded` 表示当前没有直连对端、但仍可经中继通信；对普通用户来说
+/// 这就是「在线」，因此顶部统一显示在线，避免 iOS 在蜂窝/WiFi 切换后
+/// 频繁把「在线」误读成「经中继」。中继细节保留在网络诊断中。
+LinkStatus? linkStatusForCoreState(Object? state) {
+  switch (state) {
+    case 'init':
+    case 'starting':
+      return LinkStatus.connecting;
+    case 'online':
+    case 'degraded':
+      return LinkStatus.online;
+    case 'offline':
+    case 'stopped':
+      return LinkStatus.offline;
+    default:
+      return null;
+  }
+}
+
 /// 顶部细状态条：连接中 / 在线 / 经中继 / 离线。
 /// `connecting` 对应内核状态机的 init/starting（A-05），避免启动过程静默无展示。
 class ConnectionStatusBar extends StatelessWidget {

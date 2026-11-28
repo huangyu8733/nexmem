@@ -13,6 +13,7 @@ import (
 	"github.com/nexmem/core/internal/directory"
 	"github.com/nexmem/core/internal/dm"
 	"github.com/nexmem/core/internal/group"
+	"github.com/nexmem/core/internal/store"
 )
 
 // directoryResolver 通过索引服务档案中的设备公钥 + DHT 定位对端。
@@ -28,38 +29,59 @@ func newDirectoryResolver(client *directory.Client, kad *dht.IpfsDHT) dm.PeerRes
 	return &directoryResolver{client: client, dht: kad}
 }
 
-// ResolvePeer 实现 dm.PeerResolver。
-func (r *directoryResolver) ResolvePeer(ctx context.Context, accountPub []byte) (dm.Target, error) {
+// ResolvePeerIDs 只做信令服务器的「账号 → 设备 PeerID」身份映射，不查询地址。
+//
+// 拆出这一步是为了让 CascadingResolver 先拿到 PeerID，再按
+// 「公网 DHT → 私有 DHT → 信令服务器兜底」的顺序发现地址：
+// DHT 只能按 PeerID 检索，若把 directory 的整体解析放在最前，
+// 中心服务器就会抢在分布式的 DHT 之前决定对端地址。
+func (r *directoryResolver) ResolvePeerIDs(ctx context.Context, accountPub []byte) ([]peer.ID, error) {
 	if len(accountPub) != 32 {
-		return dm.Target{}, dm.ErrInvalidTarget
+		return nil, dm.ErrInvalidTarget
 	}
-	if r.client == nil || r.dht == nil {
-		return dm.Target{}, fmt.Errorf("%w: 索引服务或 DHT 未就绪", dm.ErrPeerUnreached)
+	if r.client == nil {
+		return nil, fmt.Errorf("%w: 索引服务未就绪", dm.ErrPeerUnreached)
 	}
 	ctx, cancel := context.WithTimeout(ctx, defaultResolveTimeout)
 	defer cancel()
 
 	profile, err := r.client.GetProfile(ctx, accountPub)
 	if err != nil {
-		return dm.Target{}, fmt.Errorf("%w: 读取档案: %v", dm.ErrPeerUnreached, err)
+		return nil, fmt.Errorf("%w: 读取档案: %v", dm.ErrPeerUnreached, err)
 	}
-	var lastErr error
-	// 即使 DHT 查不到地址，也保留从档案推导出的设备 PeerID：
-	// 上层 CascadingResolver 会用 mDNS / 本地地址簿 / 公共 DHT 补齐地址，
-	// 否则同网段对端会因为 DHT 未收敛而直接判定不可达。
-	var candidate peer.ID
+	ids := make([]peer.ID, 0, len(profile.GetDevices()))
 	for _, dev := range profile.GetDevices() {
 		pub, err := lpcrypto.UnmarshalPublicKey(dev.GetDevicePub())
 		if err != nil {
-			lastErr = err
 			continue
 		}
 		id, err := peer.IDFromPublicKey(pub)
 		if err != nil {
-			lastErr = err
 			continue
 		}
-		candidate = id
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("%w: 档案中没有可用设备", dm.ErrPeerUnreached)
+	}
+	return ids, nil
+}
+
+// ResolvePeer 实现 dm.PeerResolver：走完整的信令服务器链路（身份映射 + DHT 地址查询）。
+// 作为级联解析的最后一级，DHT 阶段都未命中时才由它兜底。
+func (r *directoryResolver) ResolvePeer(ctx context.Context, accountPub []byte) (dm.Target, error) {
+	if r.dht == nil {
+		return dm.Target{}, fmt.Errorf("%w: DHT 未就绪", dm.ErrPeerUnreached)
+	}
+	ctx, cancel := context.WithTimeout(ctx, defaultResolveTimeout)
+	defer cancel()
+
+	ids, err := r.ResolvePeerIDs(ctx, accountPub)
+	if err != nil {
+		return dm.Target{}, err
+	}
+	var lastErr error
+	for _, id := range ids {
 		info, err := r.findPeer(ctx, id)
 		if err != nil {
 			lastErr = err
@@ -74,11 +96,9 @@ func (r *directoryResolver) ResolvePeer(ctx context.Context, accountPub []byte) 
 	if lastErr == nil {
 		lastErr = errors.New("档案中没有可用设备")
 	}
-	if candidate != "" {
-		return dm.Target{PeerID: candidate, AccountPub: accountPub},
-			fmt.Errorf("%w: %v", dm.ErrPeerUnreached, lastErr)
-	}
-	return dm.Target{}, fmt.Errorf("%w: %v", dm.ErrPeerUnreached, lastErr)
+	// 即使 DHT 查不到地址也保留 PeerID，让上层能用 relay / 离线投递兜底。
+	return dm.Target{PeerID: ids[0], AccountPub: accountPub},
+		fmt.Errorf("%w: %v", dm.ErrPeerUnreached, lastErr)
 }
 
 // findPeer 对单个 PeerID 执行带重试的 DHT 查询。
@@ -124,6 +144,54 @@ func (r directoryXPub) XPub(ctx context.Context, accountPub []byte) ([]byte, err
 		return nil, errors.New("档案缺少账号 X25519 公钥")
 	}
 	return profile.AccountXPub, nil
+}
+
+// contactXPub 从本地联系人缓存解析账号 X25519 公钥。
+//
+// 好友申请/同意控制帧在已验签的单聊通道里携带账号 XPub；这样即使没有配置
+// 信令服务器公开档案，同一局域网内添加的好友也能正常接收群密钥信封。
+type contactXPub struct {
+	dao  func() *store.DAO
+	wait func(context.Context, []byte) ([]byte, error)
+}
+
+func (r contactXPub) XPub(ctx context.Context, accountPub []byte) ([]byte, error) {
+	if r.dao == nil {
+		return nil, errors.New("联系人数据库未就绪")
+	}
+	dao := r.dao()
+	if dao == nil {
+		return nil, errors.New("联系人数据库未就绪")
+	}
+	c, err := dao.GetContact(ctx, accountPub)
+	if err != nil {
+		return nil, fmt.Errorf("读取联系人档案: %w", err)
+	}
+	if len(c.AccountXPub) != 32 {
+		if r.wait == nil {
+			return nil, errors.New("联系人档案缺少账号 X25519 公钥")
+		}
+		return r.wait(ctx, accountPub)
+	}
+	return append([]byte(nil), c.AccountXPub...), nil
+}
+
+// fallbackXPub 先走主解析器（索引服务/注入实现），失败时回退到本地联系人缓存。
+type fallbackXPub struct {
+	primary  group.XPubResolver
+	fallback group.XPubResolver
+}
+
+func (r fallbackXPub) XPub(ctx context.Context, accountPub []byte) ([]byte, error) {
+	if r.primary != nil {
+		if xpub, err := r.primary.XPub(ctx, accountPub); err == nil && len(xpub) == 32 {
+			return xpub, nil
+		}
+	}
+	if r.fallback != nil {
+		return r.fallback.XPub(ctx, accountPub)
+	}
+	return nil, errors.New("缺少成员 X25519 公钥解析器")
 }
 
 // defaultGroupTargets 把成员账号解析为群密钥信封投递目标。

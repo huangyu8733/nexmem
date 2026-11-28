@@ -17,9 +17,17 @@ abstract class RemoteGroupService {
 
   Future<void> sendKey(String key, {required bool down, int modifiers = 0});
 
+  Future<void> sendCombo(String key, {int modifiers = 0});
+
   Future<void> sendText(String text);
 
   Future<void> sendPointer(RemotePointerEvent event);
+
+  Future<void> sendTouch(
+    String phase,
+    List<Map<String, int>> points, {
+    int modifiers = 0,
+  });
 
   Future<void> sendClipboardText(String text);
 
@@ -217,6 +225,12 @@ class RemoteGroupController {
         ),
       );
 
+  Future<void> broadcastCombo(String key, {int modifiers = 0}) => _broadcast(
+        RemotePermission.input,
+        (RemoteGroupService service) =>
+            service.sendCombo(key, modifiers: modifiers),
+      );
+
   Future<void> broadcastText(String text) => _broadcast(
         RemotePermission.input,
         (RemoteGroupService service) => service.sendText(text),
@@ -225,6 +239,18 @@ class RemoteGroupController {
   Future<void> broadcastPointer(RemotePointerEvent event) => _broadcast(
         RemotePermission.input,
         (RemoteGroupService service) => service.sendPointer(event),
+      );
+
+  /// 广播多点触摸，手机控手机/电脑控手机时所有勾选设备同步执行手势。
+  Future<void> broadcastTouch(
+    String phase,
+    List<Map<String, int>> points, {
+    int modifiers = 0,
+  }) =>
+      _broadcast(
+        RemotePermission.input,
+        (RemoteGroupService service) =>
+            service.sendTouch(phase, points, modifiers: modifiers),
       );
 
   Future<void> broadcastClipboard(String text) => _broadcast(

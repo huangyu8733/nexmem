@@ -68,6 +68,11 @@ class _GroupChatService implements GroupService {
   Future<int> invite(String groupId, String account) => throw UnimplementedError();
 
   @override
+  Future<GroupInviteResult> inviteDetailed(String groupId, String account) async {
+    return GroupInviteResult(keyVersion: await invite(groupId, account));
+  }
+
+  @override
   Future<int> remove(String groupId, String account) => throw UnimplementedError();
 
   @override
@@ -85,6 +90,14 @@ class _GroupChatService implements GroupService {
 
   @override
   Future<String> setAnnouncement(String groupId, String announcement) =>
+      throw UnimplementedError();
+
+  @override
+  Future<String> setAvatar(String groupId, String avatarB64) =>
+      throw UnimplementedError();
+
+  @override
+  Future<String> setDescription(String groupId, String description) =>
       throw UnimplementedError();
 
   @override

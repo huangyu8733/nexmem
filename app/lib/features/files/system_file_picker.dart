@@ -30,9 +30,8 @@ String _mimeForName(String name) {
   return mediaMimeFor(name: name);
 }
 
-/// 音视频选择器扩展名：既有视频也有音频。
-const List<String> mediaFileExtensions = <String>[
-  ...videoFileExtensions,
+/// 音频选择器扩展名。
+const List<String> audioFileExtensions = <String>[
   'm4a',
   'mp3',
   'wav',
@@ -43,6 +42,12 @@ const List<String> mediaFileExtensions = <String>[
   'amr',
   '3gp',
   'wma',
+];
+
+/// 音视频选择器扩展名：既有视频也有音频。
+const List<String> mediaFileExtensions = <String>[
+  ...videoFileExtensions,
+  ...audioFileExtensions,
 ];
 
 /// 选择单个本地文件并返回可交给内核的附件。
@@ -103,8 +108,16 @@ Future<ChatAttachment?> pickLocalFile({
 }
 
 /// 选择图片：桌面打开系统图片选择器，Web 复用鉴权上传通道。
+///
+/// 使用统一扩展名白名单而不是 `FileType.image`，避免各平台图片过滤器
+/// 只放行 JPEG/PNG 而漏掉 HEIC、WebP、TIFF 等常见格式。
 Future<ChatAttachment?> pickLocalImage({Uri? endpoint, String token = ''}) =>
-    pickLocalFile(endpoint: endpoint, token: token, type: FileType.image);
+    pickLocalFile(
+      endpoint: endpoint,
+      token: token,
+      type: FileType.custom,
+      allowedExtensions: imageFileExtensions,
+    );
 
 /// 选择视频或音频：桌面/Web 用媒体扩展名过滤，Web 复用鉴权上传通道。
 Future<ChatAttachment?> pickLocalMedia({Uri? endpoint, String token = ''}) =>
@@ -113,6 +126,24 @@ Future<ChatAttachment?> pickLocalMedia({Uri? endpoint, String token = ''}) =>
       token: token,
       type: FileType.custom,
       allowedExtensions: mediaFileExtensions,
+    );
+
+/// 选择视频：桌面/Web 只列视频文件。
+Future<ChatAttachment?> pickLocalVideo({Uri? endpoint, String token = ''}) =>
+    pickLocalFile(
+      endpoint: endpoint,
+      token: token,
+      type: FileType.custom,
+      allowedExtensions: videoFileExtensions,
+    );
+
+/// 选择音频：桌面/Web 只列音频文件。
+Future<ChatAttachment?> pickLocalAudio({Uri? endpoint, String token = ''}) =>
+    pickLocalFile(
+      endpoint: endpoint,
+      token: token,
+      type: FileType.custom,
+      allowedExtensions: audioFileExtensions,
     );
 
 /// 选择本地目录并返回内核可读的目录路径。

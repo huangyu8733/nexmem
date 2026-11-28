@@ -67,7 +67,10 @@ class _ChatFileViewerState extends State<ChatFileViewer> {
         _textContent = utf8.decode(bytes, allowMalformed: true);
       }
       if (_archive) {
-        final Archive archive = ZipDecoder().decodeBytes(bytes);
+        final bool isTar = widget.name.toLowerCase().endsWith('.tar');
+        final Archive archive = isTar
+            ? TarDecoder().decodeBytes(bytes)
+            : ZipDecoder().decodeBytes(bytes);
         _entries = archive.files.map((ArchiveFile file) => file.name).toList();
       }
       _error = null;
@@ -80,11 +83,18 @@ class _ChatFileViewerState extends State<ChatFileViewer> {
   }
 
   Future<void> _save() async {
-    final String? saved = await widget.onSave();
-    if (!mounted || saved == null || saved.isEmpty) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.t('已保存到：{0}', [saved]))),
-    );
+    try {
+      final String? saved = await widget.onSave();
+      if (!mounted || saved == null || saved.isEmpty) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.t('已保存到：{0}', [saved]))),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(context.t('保存失败：{0}', [error]))),
+      );
+    }
   }
 
   @override

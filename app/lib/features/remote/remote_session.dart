@@ -259,6 +259,7 @@ class RemoteInfo {
     this.fileProgress = 0,
     this.fileTotal = 0,
     this.fileName = '',
+    this.silent = false,
   });
 
   final String sid;
@@ -285,6 +286,10 @@ class RemoteInfo {
   final int fileTotal;
   final String fileName;
 
+  /// 是否为台账密码的静默远控（区别于聊天框发起、需对方同意的远控）。
+  /// 关闭「允许被远程控制」只终止静默会话，不影响聊天框远控。
+  final bool silent;
+
   bool get isHost => role == RemoteRole.host;
   bool get isController => role == RemoteRole.controller;
   bool get isIncoming => state == RemoteState.incoming;
@@ -309,6 +314,7 @@ class RemoteInfo {
     int? fileProgress,
     int? fileTotal,
     String? fileName,
+    bool? silent,
   }) =>
       RemoteInfo(
         sid: sid,
@@ -327,9 +333,10 @@ class RemoteInfo {
         fileProgress: fileProgress ?? this.fileProgress,
         fileTotal: fileTotal ?? this.fileTotal,
         fileName: fileName ?? this.fileName,
+        silent: silent ?? this.silent,
       );
 
   @override
   String toString() =>
-      'RemoteInfo($sid, $role, $state, peer: $peer, caps: $permissions)';
+      'RemoteInfo($sid, $role, $state, peer: $peer, silent: $silent, caps: $permissions)';
 }

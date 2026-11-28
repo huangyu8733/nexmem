@@ -12,6 +12,7 @@ package discovery
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -208,6 +209,15 @@ func (b *LANBeacon) BroadcastError() string {
 	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
+	// 广播循环启动后会立即发一次包；若计数仍为 0 且没有错误，说明 goroutine
+	// 未进入发送或信标用了错误配置，直接把内部状态暴露出来，避免空态误判为
+	// "对端没开机"。
+	if b.broadcastErr == "" && b.broadcastSent == 0 {
+		return fmt.Sprintf(
+			"广播尚未发出: 源=%q 目标=%q 宣告地址=%v 接收socket=%t 发送socket=%t",
+			b.broadcastAddr, b.broadcastTarget, b.addrs, b.conn != nil, b.broadcastConn != nil,
+		)
+	}
 	return b.broadcastErr
 }
 

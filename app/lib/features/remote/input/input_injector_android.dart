@@ -6,6 +6,8 @@
 //   - 按键：Ctrl/Cmd 组合映射为节点的复制/剪切/粘贴/全选，返回键与 Home 走
 //     全局动作，其余按键（方向键、功能键等）不支持。
 
+import 'package:flutter/services.dart';
+
 import '../remote_host_platform.dart';
 import '../remote_input_codec.dart';
 import '../remote_session.dart';
@@ -14,6 +16,9 @@ import 'desktop_input_injector.dart';
 class AndroidInputInjector implements DesktopInputInjector {
   @override
   bool get supportsInput => true;
+
+  @override
+  TargetPlatform get hostPlatform => TargetPlatform.android;
 
   @override
   String get permissionHint =>
@@ -47,6 +52,22 @@ class AndroidInputInjector implements DesktopInputInjector {
       return;
     }
     await RemoteHostPlatform.injectKey(key, down: true, modifiers: modifiers);
+  }
+
+  @override
+  Future<void> combo(String key, {int modifiers = 0}) async {
+    // Android 无障碍服务根据修饰位一次性映射为复制/粘贴/全选等语义动作，
+    // 不能逐个键 down/up，因此直接下发主键 + 修饰位。
+    await RemoteHostPlatform.injectKey(key, down: true, modifiers: modifiers);
+  }
+
+  @override
+  Future<void> touch(
+    String phase,
+    List<Map<String, int>> points, {
+    int modifiers = 0,
+  }) async {
+    await RemoteHostPlatform.injectTouch(phase, points, modifiers: modifiers);
   }
 
   @override

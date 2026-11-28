@@ -219,25 +219,42 @@ func TestDiscoverDevicesDiagnostics(t *testing.T) {
 		t.Fatalf("序列化结果失败: %v", err)
 	}
 	var resp struct {
-		Diagnostics struct {
-			MDNSEnabled   bool     `json:"mdns_enabled"`
-			SelfID        string   `json:"self_id"`
-			SelfAddrs     []string `json:"self_addrs"`
-			FilteredInfra int      `json:"filtered_infra"`
-		} `json:"diagnostics"`
+		Diagnostics map[string]json.RawMessage `json:"diagnostics"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		t.Fatalf("解析结果失败: %v", err)
 	}
-	if resp.Diagnostics.MDNSEnabled {
+	decode := func(key string, out any) {
+		t.Helper()
+		rawValue, ok := resp.Diagnostics[key]
+		if !ok {
+			t.Fatalf("诊断缺少字段 %s", key)
+		}
+		if err := json.Unmarshal(rawValue, out); err != nil {
+			t.Fatalf("解析诊断字段 %s 失败: %v", key, err)
+		}
+	}
+	var mdnsEnabled bool
+	decode("mdns_enabled", &mdnsEnabled)
+	if mdnsEnabled {
 		t.Fatal("未启动 mDNS 时诊断应标记 mdns_enabled=false")
 	}
-	if resp.Diagnostics.SelfID != h.ID().String() {
-		t.Fatalf("诊断 self_id 应为宿主 PeerID，实际 %s", resp.Diagnostics.SelfID)
+	var selfID string
+	decode("self_id", &selfID)
+	if selfID != h.ID().String() {
+		t.Fatalf("诊断 self_id 应为宿主 PeerID，实际 %s", selfID)
 	}
-	if resp.Diagnostics.SelfAddrs == nil {
+	var selfAddrs []string
+	decode("self_addrs", &selfAddrs)
+	if selfAddrs == nil {
 		t.Fatal("诊断 self_addrs 应始终是可序列化数组")
 	}
+	// 这两个字段曾从 toJSON 中漏写，客户端只能看到空源地址与 0 发送次数，
+	// 会把正常广播误判为"未发出"。这里锁定契约字段必须存在。
+	var broadcastAddr string
+	decode("lan_broadcast_addr", &broadcastAddr)
+	var broadcastSent uint64
+	decode("lan_broadcast_sent", &broadcastSent)
 }
 
 func TestFirstIPFromAddrsPrefersDirectOverRelay(t *testing.T) {

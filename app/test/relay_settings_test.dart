@@ -115,7 +115,9 @@ void main() {
     expect(toggle.value, isFalse);
   });
 
-  testWidgets('保存中继写入开关与去重后的地址', (WidgetTester tester) async {
+  testWidgets('保存中继写入开关与去重后的地址并关闭弹窗', (
+    WidgetTester tester,
+  ) async {
     final _FakeSettings service = _FakeSettings();
     await tester.pumpWidget(_wrap(RelaySettingsDialog(service: service)));
     await tester.pumpAndSettle();
@@ -130,11 +132,44 @@ void main() {
 
     expect(service.values[relayEnabledSettingKey], 'true');
     expect(service.values[relayAddrsSettingKey], '$_relayA\n$_relayB');
-    expect(find.byKey(const ValueKey<String>('relay-saved')), findsOneWidget);
-    expect(find.textContaining('重启应用后生效'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('relay-save')), findsNothing);
+    expect(find.byType(RelaySettingsDialog), findsNothing);
   });
 
-  testWidgets('关闭中继仍保留地址并提示重启生效', (WidgetTester tester) async {
+  testWidgets('作为独立弹窗打开时，保存成功自动关闭', (WidgetTester tester) async {
+    final _FakeSettings service = _FakeSettings();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: NexmemTheme.light(),
+        home: Scaffold(
+          body: Builder(
+            builder: (BuildContext context) => FilledButton(
+              key: const ValueKey<String>('open-relay'),
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (BuildContext _) =>
+                    RelaySettingsDialog(service: service),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('open-relay')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('relay-save')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey<String>('relay-save')), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('open-relay')),
+      findsOneWidget,
+    );
+    expect(service.values[relayEnabledSettingKey], 'true');
+  });
+
+  testWidgets('关闭中继仍保留地址且保存后关闭弹窗', (WidgetTester tester) async {
     final _FakeSettings service = _FakeSettings(<String, String>{
       relayEnabledSettingKey: 'true',
       relayAddrsSettingKey: _relayA,
@@ -149,7 +184,7 @@ void main() {
 
     expect(service.values[relayEnabledSettingKey], 'false');
     expect(service.values[relayAddrsSettingKey], _relayA);
-    expect(find.textContaining('已关闭中继'), findsOneWidget);
+    expect(find.byType(RelaySettingsDialog), findsNothing);
   });
 
   testWidgets('开启中继但地址为空时拦截保存', (WidgetTester tester) async {

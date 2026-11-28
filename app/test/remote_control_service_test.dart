@@ -154,9 +154,15 @@ class _FakeMedia implements RemoteMediaEngine {
 }
 
 class _FakeInjector implements DesktopInputInjector {
+  _FakeInjector({this.permissionStatus = InputPermissionStatus.granted});
+
+  final InputPermissionStatus permissionStatus;
   final List<RemotePointerEvent> pointers = <RemotePointerEvent>[];
   final List<String> keys = <String>[];
   final List<String> texts = <String>[];
+  final List<(String, int)> combos = <(String, int)>[];
+  final List<(String, List<Map<String, int>>)> touches =
+      <(String, List<Map<String, int>>)>[];
 
   @override
   bool get supportsInput => true;
@@ -165,12 +171,10 @@ class _FakeInjector implements DesktopInputInjector {
   String get permissionHint => '测试';
 
   @override
-  Future<InputPermissionStatus> checkPermissions() async =>
-      InputPermissionStatus.granted;
+  Future<InputPermissionStatus> checkPermissions() async => permissionStatus;
 
   @override
-  Future<InputPermissionStatus> requestPermissions() async =>
-      InputPermissionStatus.granted;
+  Future<InputPermissionStatus> requestPermissions() async => permissionStatus;
 
   @override
   Future<void> pointer(
@@ -183,6 +187,23 @@ class _FakeInjector implements DesktopInputInjector {
   @override
   Future<void> key(String key, {required bool down, int modifiers = 0}) async {
     keys.add('$key:${down ? 'down' : 'up'}');
+  }
+
+  @override
+  TargetPlatform get hostPlatform => TargetPlatform.macOS;
+
+  @override
+  Future<void> combo(String comboKey, {int modifiers = 0}) async {
+    combos.add((comboKey, modifiers));
+  }
+
+  @override
+  Future<void> touch(
+    String phase,
+    List<Map<String, int>> points, {
+    int modifiers = 0,
+  }) async {
+    touches.add((phase, points));
   }
 
   @override
@@ -223,6 +244,7 @@ RemoteControlService _service(
   _FakeInjector injector, {
   bool enabled = true,
   String passwordCredential = '',
+  Future<void> Function()? onInputPermissionRequired,
 }) {
   RemotePrefs.instance
     ..enabled = enabled
@@ -238,6 +260,7 @@ RemoteControlService _service(
     injector: injector,
     geometry: _FakeGeometry(),
     storage: MemoryRemoteStorage(),
+    onInputPermissionRequired: onInputPermissionRequired,
     requestTimeout: const Duration(seconds: 30),
     connectTimeout: const Duration(seconds: 30),
   );
@@ -280,6 +303,33 @@ void main() {
 
   tearDown(() {
     debugDefaultTargetPlatformOverride = null;
+  });
+
+  test('键鼠能力未就绪时回传无输入权限并提示被控端去授权', () async {
+    final _FakeTransport transport = _FakeTransport();
+    final _FakeMedia media = _FakeMedia();
+    final _FakeInjector injector = _FakeInjector(
+      permissionStatus: InputPermissionStatus.denied,
+    );
+    int hintCount = 0;
+    final RemoteControlService service = _service(
+      transport,
+      media,
+      injector,
+      onInputPermissionRequired: () async => hintCount++,
+    );
+    await service.initialize();
+    addTearDown(service.dispose);
+
+    await service.handleSignal(_peer, _requestSignal().toPayloadB64());
+    await service.accept(permissions: RemotePermissions.all);
+    await Future<void>.delayed(Duration.zero);
+
+    final RemoteSignal accept =
+        _sent(transport).firstWhere((RemoteSignal s) => s.type == RemoteSignalType.accept);
+    expect(accept.permissions.input, isFalse);
+    expect(accept.permissions.clipboard, isTrue);
+    expect(hintCount, 1);
   });
 
   test('被控端授权后启动采集并建立会话，输入事件经注入器执行', () async {
@@ -344,6 +394,109 @@ void main() {
     expect(service.current?.state, RemoteState.ended);
   });
 
+  test('被控端收到 combo/touch 消息经注入器原子执行', () async {
+    final _FakeTransport transport = _FakeTransport();
+    final _FakeMedia media = _FakeMedia();
+    final _FakeInjector injector = _FakeInjector();
+    final RemoteControlService service =
+        _service(transport, media, injector);
+    await service.initialize();
+    addTearDown(service.dispose);
+
+    await service.handleSignal(_peer, _requestSignal().toPayloadB64());
+    await service.accept(permissions: RemotePermissions.all);
+    final RemoteSignal accept = _sent(transport)
+        .firstWhere((RemoteSignal s) => s.type == RemoteSignalType.accept);
+    await service.handleSignal(
+      _peer,
+      RemoteSignal(
+        type: RemoteSignalType.answer,
+        sid: accept.sid,
+        token: accept.token,
+        sdp: 'answer-sdp',
+      ).toPayloadB64(),
+    );
+    expect(service.current?.state, RemoteState.active);
+
+    media.emitControl(RemoteControlMessage.combo(
+      'c',
+      modifiers: RemoteModifiers.control,
+    ));
+    await pumpEventQueue();
+    expect(injector.combos, hasLength(1));
+    expect(injector.combos.single.$1, 'c');
+    expect(injector.combos.single.$2, RemoteModifiers.control);
+
+    media.emitControl(RemoteControlMessage.touch('down', <Map<String, int>>[
+      <String, int>{'x': 100, 'y': 200, 'id': 0},
+      <String, int>{'x': 300, 'y': 400, 'id': 1},
+    ]));
+    await pumpEventQueue();
+    expect(injector.touches, hasLength(1));
+    expect(injector.touches.single.$1, 'down');
+    expect(injector.touches.single.$2, hasLength(2));
+
+    await service.end();
+    expect(service.current?.state, RemoteState.ended);
+  });
+
+  test('控制端 active 后可发送组合键与触摸手势', () async {
+    final _FakeTransport transport = _FakeTransport();
+    final _FakeMedia media = _FakeMedia();
+    final RemoteControlService service =
+        _service(transport, media, _FakeInjector());
+    await service.initialize();
+    addTearDown(service.dispose);
+
+    await service.request(_peer, peerName: '对端');
+    final RemoteSignal request = _sent(transport).single;
+    await service.handleSignal(
+      _peer,
+      RemoteSignal(
+        type: RemoteSignalType.accept,
+        sid: request.sid,
+        token: 'token-1',
+        permissions: RemotePermissions.all,
+        displays: const <RemoteDisplay>[
+          RemoteDisplay(
+            id: '1',
+            name: '屏幕 1',
+            index: 0,
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+            primary: true,
+          ),
+        ],
+        displayId: '1',
+      ).toPayloadB64(),
+    );
+    await service.handleSignal(
+      _peer,
+      RemoteSignal(
+        type: RemoteSignalType.answer,
+        sid: request.sid,
+        token: 'token-1',
+        sdp: 'answer-sdp',
+      ).toPayloadB64(),
+    );
+    expect(service.current?.state, RemoteState.active);
+
+    await service.sendCombo('v', modifiers: RemoteModifiers.control);
+    await service.sendTouch('move', <Map<String, int>>[
+      <String, int>{'x': 100, 'y': 100, 'id': 0},
+    ]);
+    expect(media.sentControls, hasLength(2));
+    final Map<String, dynamic> comboMsg =
+        jsonDecode(media.sentControls[0]) as Map<String, dynamic>;
+    expect(comboMsg['t'], 'combo');
+    expect(comboMsg['key'], 'v');
+    final Map<String, dynamic> touchMsg =
+        jsonDecode(media.sentControls[1]) as Map<String, dynamic>;
+    expect(touchMsg['t'], 'touch');
+  });
+
   test('错误 token 的结束信令被忽略', () async {
     final _FakeTransport transport = _FakeTransport();
     final _FakeMedia media = _FakeMedia();
@@ -378,7 +531,54 @@ void main() {
     expect(service.current?.state, RemoteState.active);
   });
 
-  test('被控端关闭时直接拒绝请求', () async {
+  test('控制端未拿到 token 时被控端失败的 end 立即结束等待', () async {
+    final _FakeTransport transport = _FakeTransport();
+    final _FakeMedia media = _FakeMedia();
+    final RemoteControlService service =
+        _service(transport, media, _FakeInjector());
+    await service.initialize();
+    addTearDown(service.dispose);
+
+    await service.request(_peer, peerName: '对端');
+    expect(service.current?.state, RemoteState.outgoing);
+    // 控制端此时 _token 仍为空；被控端在发出 accept 前就失败，
+    // end 携带的是被控端自己的 token（对端无从校验）。
+    final RemoteSignal request = _sent(transport).single;
+    await service.handleSignal(
+      _peer,
+      RemoteSignal(
+        type: RemoteSignalType.end,
+        sid: request.sid,
+        token: 'host-generated-token',
+        reason: '没有可采集的屏幕',
+      ).toPayloadB64(),
+    );
+    // 关键：立即进入终态，而不是空等 requestTimeout 才失败。
+    expect(service.current?.isTerminal, isTrue);
+  });
+
+  test('重复拒绝只发一次 reject，终态后幂等', () async {
+    final _FakeTransport transport = _FakeTransport();
+    final _FakeMedia media = _FakeMedia();
+    final RemoteControlService service =
+        _service(transport, media, _FakeInjector());
+    await service.initialize();
+    addTearDown(service.dispose);
+
+    await service.handleSignal(_peer, _requestSignal().toPayloadB64());
+    expect(service.current?.state, RemoteState.incoming);
+    await service.reject();
+    expect(service.current?.state, RemoteState.ended);
+    final int firstCount =
+        _sent(transport).where((RemoteSignal s) => s.type == RemoteSignalType.reject).length;
+    await service.reject();
+    final int secondCount =
+        _sent(transport).where((RemoteSignal s) => s.type == RemoteSignalType.reject).length;
+    expect(firstCount, 1);
+    expect(secondCount, firstCount);
+  });
+
+  test('关闭静默远控时拒绝静默请求，但聊天框发起的远控仍进入待确认', () async {
     final _FakeTransport transport = _FakeTransport();
     final _FakeMedia media = _FakeMedia();
     final RemoteControlService service =
@@ -386,11 +586,60 @@ void main() {
     await service.initialize();
     addTearDown(service.dispose);
 
-    await service.handleSignal(_peer, _requestSignal().toPayloadB64());
+    // 静默请求（台账密码方式）被拒绝。
+    await service.handleSignal(
+      _peer,
+      _requestSignal(silent: true, credential: 'any').toPayloadB64(),
+    );
     expect(service.current, isNull);
-    final List<RemoteSignal> sent = _sent(transport);
-    expect(sent.single.type, RemoteSignalType.reject);
-    expect(sent.single.reason, '被控端未开启远程控制');
+    final List<RemoteSignal> afterSilent = _sent(transport);
+    expect(afterSilent.single.type, RemoteSignalType.reject);
+    expect(afterSilent.single.reason, '静默远程控制未开启');
+
+    // 聊天框发起的远控（非静默）不受开关影响，仍弹出待确认通知。
+    transport.calls.clear();
+    await service.handleSignal(_peer, _requestSignal().toPayloadB64());
+    expect(service.current?.state, RemoteState.incoming);
+    expect(_sent(transport), isEmpty);
+  });
+
+  test('关闭静默远控立即终止进行中的静默会话，不影响聊天框远控', () async {
+    final _FakeTransport transport = _FakeTransport();
+    final RemoteControlService service =
+        _service(transport, _FakeMedia(), _FakeInjector(),
+            passwordCredential: 'hash-abc');
+    await service.initialize();
+    addTearDown(service.dispose);
+
+    await service.handleSignal(
+      _peer,
+      _requestSignal(silent: true, credential: 'hash-abc').toPayloadB64(),
+    );
+    expect(service.current?.silent, isTrue);
+    expect(service.current?.isTerminal, isFalse);
+
+    transport.calls.clear();
+    await service.endSilentSession();
+    expect(service.current?.isTerminal, isTrue);
+    expect(
+      _sent(transport).any((RemoteSignal s) => s.type == RemoteSignalType.end),
+      isTrue,
+    );
+
+    // 聊天框远控（silent=false）不会被 endSilentSession 终止。
+    final _FakeTransport chatTransport = _FakeTransport();
+    final RemoteControlService chat = _service(
+      chatTransport,
+      _FakeMedia(),
+      _FakeInjector(),
+    );
+    await chat.initialize();
+    addTearDown(chat.dispose);
+    await chat.handleSignal(_peer, _requestSignal().toPayloadB64());
+    await chat.accept(permissions: RemotePermissions.all);
+    expect(chat.current?.silent, isFalse);
+    await chat.endSilentSession();
+    expect(chat.current?.isTerminal, isFalse);
   });
 
   test('被控端设置密码后拒绝无密码或错误密码的远控请求', () async {

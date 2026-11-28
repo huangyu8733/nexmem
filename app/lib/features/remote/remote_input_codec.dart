@@ -1,6 +1,6 @@
-// 远控输入编码：指针事件使用 16 字节二进制（低延迟），按键/文本/文件元数据
-// 使用 JSON 文本消息。键名采用跨平台稳定的逻辑名（a、digit0、minus、
-// controlLeft…），由各平台注入器映射为本机键码。
+// 远控输入编码：指针事件使用 16 字节二进制（低延迟），按键/文本/组合键/
+// 触摸手势使用 JSON 文本消息。键名采用跨平台稳定的逻辑名（a、digit0、
+// minus、controlLeft…），由各平台注入器映射为本机键码。
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -20,13 +20,19 @@ class RemoteButtons {
   static const int left = 1;
   static const int right = 2;
   static const int middle = 4;
+  /// 侧键：后退（鼠标 X1）。
+  static const int back = 8;
+  /// 侧键：前进（鼠标 X2）。
+  static const int forward = 16;
 }
 
 /// 指针事件类型。
 enum RemotePointerType {
   move(1),
   button(2),
-  wheel(3);
+  wheel(3),
+  /// 双指捏合缩放；按带 control 修饰的滚轮事件注入（Ctrl + 滚轮 = 缩放）。
+  pinch(4);
 
   const RemotePointerType(this.code);
   final int code;
@@ -149,6 +155,32 @@ class RemoteControlMessage {
         'mod': modifiers,
       });
 
+  /// 原子组合键：被控端按顺序按下修饰键与主键，再逆序松开，保证修饰键
+  /// 状态不会被逐帧网络分片交错打乱。[modifiers] 使用 RemoteModifiers 位，
+  /// 其中 control 表示「主修饰键」——Windows/Linux 解析为 Ctrl，macOS 解析为 Cmd。
+  static String combo(String key, {int modifiers = 0}) =>
+      jsonEncode(<String, dynamic>{
+        't': 'combo',
+        'key': key,
+        'mod': modifiers,
+      });
+
+  /// 多点触控手势：[points] 为归一化触点数组，每项形如
+  /// `{x, y, id}`；[phase] 为 down/move/up。[displayIndex] 指定目标屏幕。
+  static String touch(
+    String phase,
+    List<Map<String, int>> points, {
+    int modifiers = 0,
+    int displayIndex = 0,
+  }) =>
+      jsonEncode(<String, dynamic>{
+        't': 'touch',
+        'phase': phase,
+        'points': points,
+        'mod': modifiers,
+        'd': displayIndex,
+      });
+
   static String text(String text) =>
       jsonEncode(<String, dynamic>{'t': 'text', 'text': text});
 
@@ -193,6 +225,72 @@ class RemoteControlMessage {
   static String heartbeat() => jsonEncode(<String, dynamic>{'t': 'ping'});
 }
 
+/// 一个常见组合键的语义定义。
+class RemoteComboSpec {
+  const RemoteComboSpec(
+    this.label,
+    this.key, {
+    this.modifiers = 0,
+    this.appleLabel = '',
+  });
+
+  /// 中文显示名（Windows/Linux 口径）。
+  final String label;
+  /// 主键逻辑名。
+  final String key;
+  /// 修饰键位掩码，见 RemoteModifiers。
+  final int modifiers;
+  /// Apple 平台下更贴切的显示名（如「粘贴」Cmd+V）。
+  final String appleLabel;
+
+  String displayLabel(bool apple) =>
+      apple && appleLabel.isNotEmpty ? appleLabel : label;
+}
+
+/// 常见组合键表（复制、粘贴、切换窗口、锁屏、任务管理器等）。
+///
+/// control 位是「主修饰键」：Windows/Linux = Ctrl，macOS = Cmd；
+/// meta 位在 Windows/Linux = Win，macOS 上按注入器能力降级。
+class RemoteCombos {
+  static const List<RemoteComboSpec> common = <RemoteComboSpec>[
+    RemoteComboSpec('复制', 'c', modifiers: RemoteModifiers.control),
+    RemoteComboSpec('粘贴', 'v', modifiers: RemoteModifiers.control),
+    RemoteComboSpec('剪切', 'x', modifiers: RemoteModifiers.control),
+    RemoteComboSpec('全选', 'a', modifiers: RemoteModifiers.control),
+    RemoteComboSpec('撤销', 'z', modifiers: RemoteModifiers.control),
+    RemoteComboSpec(
+      '重做',
+      'z',
+      modifiers: RemoteModifiers.control | RemoteModifiers.shift,
+    ),
+    RemoteComboSpec('保存', 's', modifiers: RemoteModifiers.control),
+    RemoteComboSpec('查找', 'f', modifiers: RemoteModifiers.control),
+    RemoteComboSpec('新建', 'n', modifiers: RemoteModifiers.control),
+    RemoteComboSpec('打印', 'p', modifiers: RemoteModifiers.control),
+    RemoteComboSpec(
+      '切换窗口',
+      'tab',
+      modifiers: RemoteModifiers.alt,
+      appleLabel: '切换应用',
+    ),
+    RemoteComboSpec(
+      '任务管理器',
+      'escape',
+      modifiers: RemoteModifiers.control | RemoteModifiers.shift,
+      appleLabel: '强制退出',
+    ),
+    RemoteComboSpec('锁屏', 'l', modifiers: RemoteModifiers.meta),
+    RemoteComboSpec('运行', 'r', modifiers: RemoteModifiers.meta),
+    RemoteComboSpec('显示桌面', 'd', modifiers: RemoteModifiers.meta),
+    RemoteComboSpec(
+      '关闭窗口',
+      'f4',
+      modifiers: RemoteModifiers.alt,
+      appleLabel: '关闭窗口',
+    ),
+  ];
+}
+
 /// 跨平台逻辑键名 ↔ 各系统键码。
 class RemoteKeyMap {
   /// 逻辑键名集合（与注入器映射表保持一致）。
@@ -203,14 +301,50 @@ class RemoteKeyMap {
     'digit7', 'digit8', 'digit9',
     'minus', 'equal', 'bracketLeft', 'bracketRight', 'backslash',
     'semicolon', 'quote', 'comma', 'period', 'slash', 'backquote',
-    'enter', 'tab', 'space', 'backspace', 'escape', 'delete',
+    'enter', 'tab', 'space', 'backspace', 'escape', 'delete', 'insert',
+    'printScreen', 'scrollLock', 'pause', 'numLock', 'contextMenu',
     'arrowUp', 'arrowDown', 'arrowLeft', 'arrowRight',
     'home', 'end', 'pageUp', 'pageDown',
     'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10',
     'f11', 'f12',
+    'numPad0', 'numPad1', 'numPad2', 'numPad3', 'numPad4',
+    'numPad5', 'numPad6', 'numPad7', 'numPad8', 'numPad9',
+    'numPadAdd', 'numPadSubtract', 'numPadMultiply', 'numPadDivide',
+    'numPadDecimal', 'numPadEnter',
+    'volumeUp', 'volumeDown', 'volumeMute',
+    'mediaPlayPause', 'mediaNext', 'mediaPrev',
     'shiftLeft', 'shiftRight', 'controlLeft', 'controlRight',
     'altLeft', 'altRight', 'metaLeft', 'metaRight', 'capsLock',
   };
+
+  /// 主修饰键（组合键里的 control 位）在被控平台的逻辑键名。
+  /// macOS 用 Command，Windows/Linux 用 Ctrl。
+  static String primaryControlKey(TargetPlatform platform) =>
+      platform == TargetPlatform.macOS || platform == TargetPlatform.iOS
+          ? 'metaLeft'
+          : 'controlLeft';
+
+  /// 把修饰位解析为需要依次按下的逻辑键名（顺序：主修饰、Alt、Shift、Meta）。
+  static List<String> modifierKeysFor(
+    int modifiers, {
+    TargetPlatform platform = TargetPlatform.windows,
+  }) {
+    final List<String> keys = <String>[];
+    if (modifiers & RemoteModifiers.control != 0) {
+      keys.add(primaryControlKey(platform));
+    }
+    if (modifiers & RemoteModifiers.alt != 0) {
+      keys.add('altLeft');
+    }
+    if (modifiers & RemoteModifiers.shift != 0) {
+      keys.add('shiftLeft');
+    }
+    if (modifiers & RemoteModifiers.meta != 0) {
+      // Windows/Linux 的 Win 键；macOS 无对应全局键，用右侧 Control 降级。
+      keys.add(platform == TargetPlatform.macOS ? 'controlRight' : 'metaLeft');
+    }
+    return keys;
+  }
 
   /// Flutter 逻辑键 → 逻辑键名；不支持的键返回 null。
   static String? fromLogicalKey(LogicalKeyboardKey key) {
@@ -248,12 +382,18 @@ class RemoteKeyMap {
     if (key == LogicalKeyboardKey.slash) return 'slash';
     if (key == LogicalKeyboardKey.backquote) return 'backquote';
     if (key == LogicalKeyboardKey.enter) return 'enter';
-    if (key == LogicalKeyboardKey.numpadEnter) return 'enter';
+    if (key == LogicalKeyboardKey.numpadEnter) return 'numPadEnter';
     if (key == LogicalKeyboardKey.tab) return 'tab';
     if (key == LogicalKeyboardKey.space) return 'space';
     if (key == LogicalKeyboardKey.backspace) return 'backspace';
     if (key == LogicalKeyboardKey.escape) return 'escape';
     if (key == LogicalKeyboardKey.delete) return 'delete';
+    if (key == LogicalKeyboardKey.insert) return 'insert';
+    if (key == LogicalKeyboardKey.printScreen) return 'printScreen';
+    if (key == LogicalKeyboardKey.scrollLock) return 'scrollLock';
+    if (key == LogicalKeyboardKey.pause) return 'pause';
+    if (key == LogicalKeyboardKey.numLock) return 'numLock';
+    if (key == LogicalKeyboardKey.contextMenu) return 'contextMenu';
     if (key == LogicalKeyboardKey.arrowUp) return 'arrowUp';
     if (key == LogicalKeyboardKey.arrowDown) return 'arrowDown';
     if (key == LogicalKeyboardKey.arrowLeft) return 'arrowLeft';
@@ -274,6 +414,41 @@ class RemoteKeyMap {
     if (key == LogicalKeyboardKey.f10) return 'f10';
     if (key == LogicalKeyboardKey.f11) return 'f11';
     if (key == LogicalKeyboardKey.f12) return 'f12';
+    if (key == LogicalKeyboardKey.numpad0) return 'numPad0';
+    if (key == LogicalKeyboardKey.numpad1) return 'numPad1';
+    if (key == LogicalKeyboardKey.numpad2) return 'numPad2';
+    if (key == LogicalKeyboardKey.numpad3) return 'numPad3';
+    if (key == LogicalKeyboardKey.numpad4) return 'numPad4';
+    if (key == LogicalKeyboardKey.numpad5) return 'numPad5';
+    if (key == LogicalKeyboardKey.numpad6) return 'numPad6';
+    if (key == LogicalKeyboardKey.numpad7) return 'numPad7';
+    if (key == LogicalKeyboardKey.numpad8) return 'numPad8';
+    if (key == LogicalKeyboardKey.numpad9) return 'numPad9';
+    if (key == LogicalKeyboardKey.numpadAdd) return 'numPadAdd';
+    if (key == LogicalKeyboardKey.numpadSubtract) return 'numPadSubtract';
+    if (key == LogicalKeyboardKey.numpadMultiply) return 'numPadMultiply';
+    if (key == LogicalKeyboardKey.numpadDivide) return 'numPadDivide';
+    if (key == LogicalKeyboardKey.numpadDecimal) return 'numPadDecimal';
+    // 媒体键在部分 Flutter 版本无 LogicalKeyboardKey 常量，用 keyLabel 兜底。
+    final String mediaLabel = key.keyLabel.toLowerCase();
+    if (mediaLabel == 'volume up' || mediaLabel == 'audio volume up') {
+      return 'volumeUp';
+    }
+    if (mediaLabel == 'volume down' || mediaLabel == 'audio volume down') {
+      return 'volumeDown';
+    }
+    if (mediaLabel == 'volume mute' || mediaLabel == 'mute') {
+      return 'volumeMute';
+    }
+    if (mediaLabel == 'play/pause' || mediaLabel == 'media play pause') {
+      return 'mediaPlayPause';
+    }
+    if (mediaLabel == 'next track' || mediaLabel == 'media next track') {
+      return 'mediaNext';
+    }
+    if (mediaLabel == 'previous track' || mediaLabel == 'media previous track') {
+      return 'mediaPrev';
+    }
     if (key == LogicalKeyboardKey.shiftLeft) return 'shiftLeft';
     if (key == LogicalKeyboardKey.shiftRight) return 'shiftRight';
     if (key == LogicalKeyboardKey.controlLeft) return 'controlLeft';
@@ -314,8 +489,17 @@ class RemoteKeyMap {
     'f1': 122, 'f2': 120, 'f3': 99, 'f4': 118, 'f5': 96, 'f6': 97,
     'f7': 98, 'f8': 100, 'f9': 101, 'f10': 109, 'f11': 103, 'f12': 111,
     'home': 115, 'end': 119, 'pageUp': 116, 'pageDown': 121,
-    'delete': 117, 'arrowLeft': 123, 'arrowRight': 124, 'arrowDown': 125,
-    'arrowUp': 126,
+    'delete': 117, 'insert': 114, 'arrowLeft': 123, 'arrowRight': 124,
+    'arrowDown': 125, 'arrowUp': 126,
+    'printScreen': 107, 'scrollLock': 104, 'pause': 110,
+    'numLock': 65, 'contextMenu': 110,
+    'numPad0': 82, 'numPad1': 83, 'numPad2': 84, 'numPad3': 85,
+    'numPad4': 86, 'numPad5': 87, 'numPad6': 88, 'numPad7': 89,
+    'numPad8': 90, 'numPad9': 91, 'numPadAdd': 92, 'numPadSubtract': 93,
+    'numPadMultiply': 94, 'numPadDivide': 95, 'numPadDecimal': 96,
+    'numPadEnter': 76,
+    'volumeUp': 72, 'volumeDown': 73, 'volumeMute': 74,
+    'mediaPlayPause': 126, 'mediaNext': 124, 'mediaPrev': 123,
   };
 
   /// Windows 虚拟键码（VK_*）。
@@ -332,13 +516,22 @@ class RemoteKeyMap {
     'period': 0xBE, 'slash': 0xBF, 'backquote': 0xC0, 'bracketLeft': 0xDB,
     'backslash': 0xDC, 'bracketRight': 0xDD, 'quote': 0xDE,
     'enter': 0x0D, 'tab': 0x09, 'space': 0x20, 'backspace': 0x08,
-    'escape': 0x1B, 'delete': 0x2E,
+    'escape': 0x1B, 'delete': 0x2E, 'insert': 0x2D,
+    'printScreen': 0x2C, 'scrollLock': 0x91, 'pause': 0x13,
+    'numLock': 0x90, 'contextMenu': 0x5D,
     'arrowLeft': 0x25, 'arrowUp': 0x26, 'arrowRight': 0x27,
     'arrowDown': 0x28, 'home': 0x24, 'end': 0x23, 'pageUp': 0x21,
     'pageDown': 0x22,
     'f1': 0x70, 'f2': 0x71, 'f3': 0x72, 'f4': 0x73, 'f5': 0x74,
     'f6': 0x75, 'f7': 0x76, 'f8': 0x77, 'f9': 0x78, 'f10': 0x79,
     'f11': 0x7A, 'f12': 0x7B,
+    'numPad0': 0x60, 'numPad1': 0x61, 'numPad2': 0x62, 'numPad3': 0x63,
+    'numPad4': 0x64, 'numPad5': 0x65, 'numPad6': 0x66, 'numPad7': 0x67,
+    'numPad8': 0x68, 'numPad9': 0x69, 'numPadAdd': 0x6B,
+    'numPadSubtract': 0x6D, 'numPadMultiply': 0x6A,
+    'numPadDivide': 0x6F, 'numPadDecimal': 0x6E, 'numPadEnter': 0x0D,
+    'volumeUp': 0xAF, 'volumeDown': 0xAE, 'volumeMute': 0xAD,
+    'mediaPlayPause': 0xB3, 'mediaNext': 0xB0, 'mediaPrev': 0xB1,
     'shiftLeft': 0xA0, 'shiftRight': 0xA1, 'controlLeft': 0xA2,
     'controlRight': 0xA3, 'altLeft': 0xA4, 'altRight': 0xA5,
     'metaLeft': 0x5B, 'metaRight': 0x5C, 'capsLock': 0x14,
@@ -359,12 +552,24 @@ class RemoteKeyMap {
     'period': 'period', 'slash': 'slash', 'backquote': 'grave',
     'enter': 'Return', 'tab': 'Tab', 'space': 'space',
     'backspace': 'BackSpace', 'escape': 'Escape', 'delete': 'Delete',
+    'insert': 'Insert', 'printScreen': 'Print', 'scrollLock': 'Scroll_Lock',
+    'pause': 'Pause', 'numLock': 'Num_Lock', 'contextMenu': 'Menu',
     'arrowUp': 'Up', 'arrowDown': 'Down', 'arrowLeft': 'Left',
     'arrowRight': 'Right', 'home': 'Home', 'end': 'End',
     'pageUp': 'Prior', 'pageDown': 'Next',
     'f1': 'F1', 'f2': 'F2', 'f3': 'F3', 'f4': 'F4', 'f5': 'F5',
     'f6': 'F6', 'f7': 'F7', 'f8': 'F8', 'f9': 'F9', 'f10': 'F10',
     'f11': 'F11', 'f12': 'F12',
+    'numPad0': 'KP_0', 'numPad1': 'KP_1', 'numPad2': 'KP_2',
+    'numPad3': 'KP_3', 'numPad4': 'KP_4', 'numPad5': 'KP_5',
+    'numPad6': 'KP_6', 'numPad7': 'KP_7', 'numPad8': 'KP_8',
+    'numPad9': 'KP_9', 'numPadAdd': 'KP_Add',
+    'numPadSubtract': 'KP_Subtract', 'numPadMultiply': 'KP_Multiply',
+    'numPadDivide': 'KP_Divide', 'numPadDecimal': 'KP_Decimal',
+    'numPadEnter': 'KP_Enter',
+    'volumeUp': 'XF86AudioRaiseVolume', 'volumeDown': 'XF86AudioLowerVolume',
+    'volumeMute': 'XF86AudioMute', 'mediaPlayPause': 'XF86AudioPlay',
+    'mediaNext': 'XF86AudioNext', 'mediaPrev': 'XF86AudioPrev',
     'shiftLeft': 'Shift_L', 'shiftRight': 'Shift_R',
     'controlLeft': 'Control_L', 'controlRight': 'Control_R',
     'altLeft': 'Alt_L', 'altRight': 'Alt_R',

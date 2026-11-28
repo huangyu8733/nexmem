@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	nexmemv1 "github.com/nexmem/core/api/v1"
+	"github.com/nexmem/core/internal/contacts"
 	"github.com/nexmem/core/internal/wire"
 )
 
@@ -63,6 +64,40 @@ func TestSendSignalRejectsInvalidInput(t *testing.T) {
 	peer := newTestNode(t, "peer")
 	if err := a.svc.SendSignal(ctx, Target{AccountPub: peer.account.Pub()}, []byte("x")); !errors.Is(err, ErrPeerUnreached) {
 		t.Fatalf("缺少 PeerID 应返回 ErrPeerUnreached，实际 %v", err)
+	}
+}
+
+// TestRemoteSignalIgnoresBlocklist 校验远控信令不受黑名单限制，普通通话信令仍受限。
+func TestRemoteSignalIgnoresBlocklist(t *testing.T) {
+	var aContacts *contacts.Service
+	a := newTestNode(t, "A", withContacts(t, &aContacts))
+	got := make(chan RTCSignalEvent, 1)
+	b := newTestNode(t, "B", func(o *Options) {
+		o.OnRTCSignal = func(ev RTCSignalEvent) { got <- ev }
+	})
+	ctx := context.Background()
+	if err := aContacts.SetBlocked(ctx, b.account.Pub(), true); err != nil {
+		t.Fatalf("拉黑对端: %v", err)
+	}
+	target := Target{
+		PeerID:     b.host.ID(),
+		Addrs:      b.host.Addrs(),
+		AccountPub: b.account.Pub(),
+	}
+	remote := []byte(`{"v":1,"app":"rc","type":"request","sid":"s1"}`)
+	if err := a.svc.SendSignal(ctx, target, remote); err != nil {
+		t.Fatalf("远控信令不应被黑名单拦截: %v", err)
+	}
+	select {
+	case ev := <-got:
+		if !bytes.Equal(ev.Payload, remote) {
+			t.Fatalf("远控载荷不一致: %q", ev.Payload)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("未收到远控信令事件")
+	}
+	if err := a.svc.SendSignal(ctx, target, []byte(`{"type":"offer"}`)); !errors.Is(err, ErrPeerBlocked) {
+		t.Fatalf("普通通话信令仍应被黑名单拦截，实际 %v", err)
 	}
 }
 

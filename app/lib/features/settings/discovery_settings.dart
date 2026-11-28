@@ -131,6 +131,10 @@ class _DiscoverySettingsDialogState extends State<DiscoverySettingsDialog> {
         _saving = false;
         _savedNote = context.t('已保存，重启应用后生效');
       });
+      // 保存成功后关闭弹窗；失败分支保留弹窗并显示错误。
+      if (context.mounted) {
+        Navigator.of(context).pop();
+      }
     } on NexmemException catch (e) {
       if (!mounted) {
         return;
@@ -245,6 +249,7 @@ class _DiscoverySettingsDialogState extends State<DiscoverySettingsDialog> {
     return AlertDialog(
       title: Text(context.t('发现源设置')),
       content: responsiveDialogContent(
+        context: context,
         maxWidth: 460,
         child: SingleChildScrollView(
           child: Column(

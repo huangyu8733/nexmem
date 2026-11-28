@@ -420,8 +420,11 @@ class CoreSession {
     this.pickFile,
     this.pickImage,
     this.pickMedia,
+    this.pickVideo,
+    this.pickAudio,
     this.voiceRecorder,
     this.pickDirectory,
+    this.pickFolder,
     this.downloadToBrowser,
     this.mediaSourceUri,
     this.readChatFileBytes,
@@ -464,9 +467,14 @@ class CoreSession {
   /// 为空时聊天页退回 [pickFile]（可能出现系统文件管理器而非相册）。
   final Future<ChatAttachment?> Function()? pickImage;
 
-  /// 平台视频/音频选择器：移动端拉起系统媒体库，桌面/Web 走媒体文件过滤。
-  /// 为空时聊天页退回 [pickFile]。
+  /// 平台视频/音频选择器：保留兼容入口，桌面/Web 走媒体文件过滤。
   final Future<ChatAttachment?> Function()? pickMedia;
+
+  /// 平台视频选择器：移动端拉起系统视频库，桌面/Web 只过滤视频文件。
+  final Future<ChatAttachment?> Function()? pickVideo;
+
+  /// 平台音频选择器：移动端拉起系统音频库，桌面/Web 只过滤音频文件。
+  final Future<ChatAttachment?> Function()? pickAudio;
 
   /// 按住说话录音器：移动端为原生录音，Web 为浏览器录音 + 鉴权上传，
   /// 桌面为不支持的安全降级实现。
@@ -474,6 +482,9 @@ class CoreSession {
 
   /// 平台目录选择器（P2P 文件夹共享）；为空时分享页退回本机路径输入框。
   final Future<String?> Function()? pickDirectory;
+
+  /// 聊天发送文件夹：选中目录后打包为 ZIP 附件；为空时聊天工具条不展示入口。
+  final Future<ChatAttachment?> Function()? pickFolder;
 
   /// Web 端服务端文件取回：内核把群文件写到网关服务端路径，浏览器需经此
   /// 回调构造鉴权 `/download` 链接并触发浏览器保存。桌面/移动端为空，

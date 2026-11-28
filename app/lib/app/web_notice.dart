@@ -40,27 +40,30 @@ class _WebOnlineNoticeBannerState extends State<WebOnlineNoticeBanner> {
     return Container(
       key: const ValueKey<String>('web-online-notice'),
       width: double.infinity,
-      color: scheme.primary.withValues(alpha: 0.08),
+      color: scheme.primaryContainer,
       padding: EdgeInsetsDirectional.only(
         start: NexmemMetrics.space12,
         end: NexmemMetrics.space4,
       ),
       child: Row(
         children: <Widget>[
-          Icon(Icons.info_outline, size: 16, color: scheme.primary),
+          Icon(Icons.info_outline, size: 16, color: scheme.onPrimaryContainer),
           const SizedBox(width: NexmemMetrics.space8),
           Expanded(
             child: Text(
               context.t(webOnlineNoticeText),
               style: TextStyle(
                 fontSize: 12,
-                color: scheme.onSurface.withValues(alpha: 0.8),
+                color: scheme.onPrimaryContainer.withValues(alpha: 0.9),
               ),
             ),
           ),
           TextButton(
             key: const ValueKey<String>('web-online-notice-dismiss'),
             onPressed: widget.onDismiss,
+            style: TextButton.styleFrom(
+              foregroundColor: scheme.onPrimaryContainer,
+            ),
             child: Text(context.t('知道了')),
           ),
         ],

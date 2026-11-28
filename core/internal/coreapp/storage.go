@@ -121,12 +121,12 @@ func saveOfflineStorage(dataDir string, ks identity.KeyStore, state offlineStora
 		return fmt.Errorf("封装 Secret Key: %w", err)
 	}
 	raw, err := json.MarshalIndent(storedStorage{
-		Version:   offlineStorageVersion,
-		Enabled:   state.Enabled,
-		Endpoint:  state.Endpoint,
-		Bucket:    state.Bucket,
-		Prefix:    state.Prefix,
-		Region:    state.Region,
+		Version:         offlineStorageVersion,
+		Enabled:         state.Enabled,
+		Endpoint:        state.Endpoint,
+		Bucket:          state.Bucket,
+		Prefix:          state.Prefix,
+		Region:          state.Region,
 		PathStyle:       state.PathStyle,
 		Public:          &state.Public,
 		DeleteAfterRead: state.DeleteAfterRead,
@@ -225,13 +225,13 @@ func (a *App) storageGetHandler() gateway.HandlerFunc {
 			return map[string]any{"configured": false, "enabled": false, "public": true}, nil
 		}
 		return map[string]any{
-			"configured": true,
-			"enabled":    state.Enabled,
-			"public":     state.Public,
-			"endpoint":   state.Endpoint,
-			"bucket":     state.Bucket,
-			"prefix":     state.Prefix,
-			"region":     state.Region,
+			"configured":        true,
+			"enabled":           state.Enabled,
+			"public":            state.Public,
+			"endpoint":          state.Endpoint,
+			"bucket":            state.Bucket,
+			"prefix":            state.Prefix,
+			"region":            state.Region,
 			"path_style":        state.PathStyle,
 			"ak":                state.AccessKey,
 			"delete_after_read": state.DeleteAfterRead,

@@ -10,6 +10,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../app/core_session.dart';
 import '../../app/pane_header.dart';
+import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import 'device_distance.dart';
 import 'ip_location.dart';
@@ -79,6 +80,15 @@ class _RemoteDevicesPageState extends State<RemoteDevicesPage> {
     _selected.addAll(widget.actions.groupController?.selected ?? const <String>{});
     _searchController.addListener(_onSearchChanged);
     _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void didUpdateWidget(covariant RemoteDevicesPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 会话异步掉线时壳层重建本页，State 复用不会重跑 initState。
+    // 控制器可能因目标不足两台自动退出群控，本地开关/勾选需跟随其权威状态，
+    // 避免 UI 仍显示「群控中」但输入已退化为单控。
+    _syncFromGroup();
   }
 
   @override
@@ -774,8 +784,11 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
       title: Text(
         context.t(widget.device == null ? '添加设备' : '编辑设备'),
       ),
-      content: SingleChildScrollView(
-        child: Column(
+      content: responsiveDialogContent(
+        context: context,
+        maxWidth: 420,
+        child: SingleChildScrollView(
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             TextField(
@@ -860,6 +873,7 @@ class _DeviceEditorDialogState extends State<_DeviceEditorDialog> {
               ),
           ],
         ),
+      ),
       ),
       actions: <Widget>[
         TextButton(

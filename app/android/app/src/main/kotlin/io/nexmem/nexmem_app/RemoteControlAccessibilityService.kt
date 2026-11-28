@@ -72,6 +72,7 @@ class RemoteControlAccessibilityService : AccessibilityService() {
         y: Float,
         buttons: Int,
         wheelY: Int,
+        wheelX: Int = 0,
     ) {
         handler.post {
             when (type) {
@@ -88,11 +89,73 @@ class RemoteControlAccessibilityService : AccessibilityService() {
                         if (dragging) endDrag()
                         longPress(x, y)
                     }
+                    (buttons and 8) != 0 -> performGlobalAction(GLOBAL_ACTION_BACK)
+                    (buttons and 16) != 0 -> performGlobalAction(GLOBAL_ACTION_RECENTS)
                     else -> if (dragging) endDrag()
                 }
-                "wheel" -> scroll(x, y, wheelY)
+                "wheel" -> if (wheelY != 0) scroll(x, y, wheelY)
+                else if (wheelX != 0) scrollHorizontal(x, y, wheelX)
+                "pinch" -> if (wheelY != 0) scroll(x, y, wheelY)
             }
         }
+    }
+
+    /** 水平滚动：无障碍无原生横滑 API，用横向滑动手势近似。 */
+    private fun scrollHorizontal(x: Float, y: Float, wheelX: Int) {
+        endDrag()
+        val direction = if (wheelX > 0) 1f else -1f
+        val distance = (kotlin.math.abs(wheelX).coerceIn(1, 5) * 40f)
+        val path = Path().apply {
+            moveTo(x - direction * distance, y)
+            lineTo(x + direction * distance, y)
+        }
+        dispatchGesture(gesture(path, 140L, false), null, null)
+    }
+
+    /**
+     * 多点触摸：用两根手指的 Stroke 合成点击或捏合。Android 无障碍只能
+     * 合成同起止时刻的笔画，因此把 down/move/up 各阶段分别下发：
+     * - down：两指按下（用于建立锚点，实际以 up 阶段手势为准）；
+     * - move：双指分别移动；
+     * - up：两指聚拢（捏合缩小）/张开（捏合放大）或双指点击。
+     */
+    fun handleTouch(
+        phase: String,
+        points: List<Triple<Float, Float, Int>>,
+    ) {
+        handler.post {
+            if (points.size < 2) {
+                // 单指触摸退化为点击/拖拽。
+                val p = points.firstOrNull() ?: return@post
+                when (phase) {
+                    "up" -> tap(p.first, p.second)
+                    "move" -> if (dragging) drag(p.first, p.second) else beginDrag(p.first, p.second)
+                }
+                return@post
+            }
+            when (phase) {
+                "up" -> {
+                    if (dragging) endDrag()
+                    twoFingerGesture(points[0].first, points[0].second, points[1].first, points[1].second)
+                }
+            }
+        }
+    }
+
+    private fun twoFingerGesture(x1: Float, y1: Float, x2: Float, y2: Float) {
+        val builder = GestureDescription.Builder()
+        val duration = 180L
+        val s1 = GestureDescription.StrokeDescription(
+            Path().apply { moveTo(x1, y1) }, 0L, duration, false,
+        )
+        val s2 = GestureDescription.StrokeDescription(
+            Path().apply { moveTo(x2, y2) }, 0L, duration, false,
+        )
+        dispatchGesture(
+            builder.addStroke(s1).addStroke(s2).build(),
+            null,
+            null,
+        )
     }
 
     private fun tap(x: Float, y: Float, duration: Long = 60L) {

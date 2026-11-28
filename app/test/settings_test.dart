@@ -1,4 +1,6 @@
 // P6-06 验收：网络诊断展示、诊断导出脱敏路径回显、举报入口与诊断包附带。
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -252,6 +254,16 @@ const DiagnosticsSnapshot _sample = DiagnosticsSnapshot(
 );
 
 void main() {
+  test('关于页客户端版本与 pubspec.yaml 保持一致', () {
+    final String pubspec = File('pubspec.yaml').readAsStringSync();
+    final RegExpMatch? match = RegExp(
+      r'^version:\s*(\d+\.\d+\.\d+)\+(\d+)\s*$',
+      multiLine: true,
+    ).firstMatch(pubspec);
+    expect(match, isNotNull, reason: 'pubspec.yaml 缺少 version 定义');
+    expect(appVersion, match!.group(1), reason: '关于页版本号必须随 pubspec 递增');
+  });
+
   test('诊断快照解析与摘要：打洞结果按结果归并，无样本有明确提示', () {
     final DiagnosticsSnapshot parsed = DiagnosticsSnapshot.fromJson(
       <String, dynamic>{
@@ -387,7 +399,7 @@ void main() {
 
     await _tapSetting(tester, 'settings-about');
     await tester.pumpAndSettle();
-    expect(find.text('版本 1.1.0'), findsOneWidget);
+    expect(find.text('版本 1.1.2'), findsOneWidget);
 
     await _tapSetting(tester, 'about-export');
     await tester.pumpAndSettle();
@@ -673,7 +685,7 @@ void main() {
   testWidgets('关于页展示内核版本与已接入能力数量', (WidgetTester tester) async {
     final CoreInfo info = CoreInfo.fromJson(<String, dynamic>{
       'api_version': '1.0.0',
-      'core_version': '0.1.0-dev',
+      'core_version': '0.2.0-dev',
       'features': <String>['core.info', 'msg.list', 'rtc.sendSignal'],
     });
     await tester.pumpWidget(_wrap(SettingsPage(coreInfo: info)));
@@ -681,12 +693,12 @@ void main() {
     await _tapSetting(tester, 'settings-about');
     await tester.pumpAndSettle();
 
-    expect(find.text('版本 1.1.0'), findsOneWidget);
+    expect(find.text('版本 1.1.2'), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('about-core-version')),
       findsOneWidget,
     );
-    expect(find.textContaining('0.1.0-dev'), findsOneWidget);
+    expect(find.textContaining('0.2.0-dev'), findsOneWidget);
     expect(
       find.text('API 1.0.0 · 已接入 3 项能力'),
       findsOneWidget,
@@ -884,6 +896,50 @@ void main() {
     expect(saved, 1);
     expect(find.byKey(const ValueKey<String>('profile-status')), findsOneWidget);
     expect(find.text('已保存'), findsOneWidget);
+  });
+
+  testWidgets('窄屏个人资料编辑弹窗保存成功后自动关闭', (
+    WidgetTester tester,
+  ) async {
+    final _SettingsTransport transport = _SettingsTransport();
+    await tester.pumpWidget(
+      _wrap(
+        Builder(
+          builder: (BuildContext context) => FilledButton(
+            key: const ValueKey<String>('open-profile-editor'),
+            onPressed: () => showProfileEditorDialog(
+              context: context,
+              account: CoreAccount(
+                accountId: 'a' * 64,
+                deviceId: 'b' * 64,
+              ),
+              settings: TransportSettingsService(transport),
+            ),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('open-profile-editor')));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey<String>('profile-save')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('profile-save')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey<String>('profile-save')), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('open-profile-editor')),
+      findsOneWidget,
+    );
+    // 空值写入会从 KV 删除键，这里只验证保存链路已执行且弹窗关闭。
+    expect(transport.stored[profileIntroSettingKey], isNull);
+    expect(transport.stored[profilePromoSettingKey], isNull);
   });
 
   testWidgets('设置页新增个人资料入口且点击弹出编辑框',

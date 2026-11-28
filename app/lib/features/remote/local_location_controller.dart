@@ -8,6 +8,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../settings/settings_service.dart';
 import 'device_distance.dart';
@@ -346,11 +347,17 @@ class _LocalLocationDialogState extends State<_LocalLocationDialog> {
 
     return AlertDialog(
       title: Text(context.t('设置本机位置')),
-      content: SingleChildScrollView(child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: body,
-      )),
+      content: responsiveDialogContent(
+        context: context,
+        maxWidth: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: body,
+          ),
+        ),
+      ),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.pop(context, false),

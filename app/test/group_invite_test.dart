@@ -85,6 +85,7 @@ class _FakeGroups implements GroupService {
   final List<String> invited = <String>[];
   final List<(String, String?)> nicknames = <(String, String?)>[];
   final Set<String> inviteFailures = <String>{};
+  final Set<String> pendingInvites = <String>{};
   int inviteCalls = 0;
 
   @override
@@ -125,6 +126,16 @@ class _FakeGroups implements GroupService {
   }
 
   @override
+  Future<GroupInviteResult> inviteDetailed(String groupId, String account) async {
+    final int version = await invite(groupId, account);
+    return GroupInviteResult(
+      keyVersion: version,
+      pending: pendingInvites.contains(normalizeAccountHex(account)),
+      inviteSent: true,
+    );
+  }
+
+  @override
   Future<int> remove(String groupId, String account) async => 1;
 
   @override
@@ -144,6 +155,13 @@ class _FakeGroups implements GroupService {
 
   @override
   Future<String> setAnnouncement(String groupId, String text) async => text;
+
+  @override
+  Future<String> setAvatar(String groupId, String avatarB64) async => avatarB64;
+
+  @override
+  Future<String> setDescription(String groupId, String description) async =>
+      description;
 
   @override
   Future<bool> setAllowFriendAdd(String groupId, bool enabled) async => enabled;
@@ -368,6 +386,31 @@ void main() {
         (a, '甲'),
         (c, '丙'),
       ]);
+    });
+
+    test('inviteDetailed 解析待同步回包而不是误报拉人失败', () async {
+      final String a = _account(61);
+      final _FakeTransport transport = _FakeTransport((
+        String method,
+        Map<String, dynamic>? params,
+      ) async {
+        return <String, dynamic>{
+          'group_id': 'Z3JvdXA',
+          'key_version': 3,
+          'failed': 1,
+          'invite_sent': true,
+          'pending': true,
+          'delivery_error': '档案缺少账号 X25519 公钥',
+          'invite_error': '',
+        };
+      });
+      final TransportGroupService service = TransportGroupService(transport);
+      final GroupInviteResult result = await service.inviteDetailed('Z3JvdXA', a);
+      expect(result.keyVersion, 3);
+      expect(result.failed, 1);
+      expect(result.inviteSent, isTrue);
+      expect(result.pending, isTrue);
+      expect(result.detail, contains('X25519'));
     });
 
     testWidgets('TransportGroupService.invite 与 setMemberProfile 契约映射', (

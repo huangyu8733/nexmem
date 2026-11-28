@@ -8,6 +8,7 @@ import 'dart:typed_data';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
 import '../settings/image_crop_page.dart';
@@ -18,6 +19,16 @@ import '../../app/app_dialog.dart';
 const int _maxNicknameRunes = 24;
 const int _maxLevelNameRunes = 16;
 const int _maxLevelCount = 12;
+
+/// 统一错误文案：业务错误 message 为空时回退到固定错误码，
+/// 避免弹窗保留但看不到任何提示，看起来像“保存没反应”。
+String _describeSaveError(Object error) {
+  if (error is NexmemException) {
+    final String message = error.message.trim();
+    return message.isEmpty ? error.code : message;
+  }
+  return error.toString();
+}
 
 /// 管理员维护等级开关、名称与 64x64 PNG 图标。
 Future<GroupLevels?> showGroupLevelDialog(
@@ -73,13 +84,13 @@ class _GroupLevelDialogState extends State<_GroupLevelDialog> {
         levels: _levels,
       );
       if (mounted) {
-        Navigator.of(context).pop<GroupLevels>(saved);
+        Navigator.of(context, rootNavigator: true).pop<GroupLevels>(saved);
       }
     } on Object catch (error) {
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = error is NexmemException ? error.message : error.toString();
+          _error = _describeSaveError(error);
         });
       }
     }
@@ -194,8 +205,8 @@ class _GroupLevelDialogState extends State<_GroupLevelDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(context.t('群等级设置')),
-      content: SizedBox(
-        width: 380,
+      content: responsiveDialogContent(
+        maxWidth: 380,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -376,13 +387,14 @@ class _MemberProfileDialogState extends State<_MemberProfileDialog> {
         levelId: widget.isAdmin && widget.levels.enabled ? _levelId : null,
       );
       if (mounted) {
-        Navigator.pop(context, saved);
+        Navigator.of(context, rootNavigator: true)
+            .pop<GroupMemberProfile>(saved);
       }
     } on Object catch (error) {
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = error is NexmemException ? error.message : error.toString();
+          _error = _describeSaveError(error);
         });
       }
     }
@@ -393,8 +405,8 @@ class _MemberProfileDialogState extends State<_MemberProfileDialog> {
     final bool canSetLevel = widget.isAdmin && widget.levels.enabled;
     return AlertDialog(
       title: Text(context.t('设置成员资料')),
-      content: SizedBox(
-        width: 360,
+      content: responsiveDialogContent(
+        maxWidth: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[

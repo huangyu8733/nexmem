@@ -629,6 +629,10 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
           _secretKey.clear();
         }
       });
+      // 保存成功后关闭弹窗；失败分支保留弹窗并显示错误。
+      if (context.mounted) {
+        Navigator.of(context).pop();
+      }
     } on NexmemException catch (e) {
       if (!mounted) {
         return;
@@ -655,6 +659,7 @@ class _StorageConfigDialogState extends State<StorageConfigDialog> {
     return AlertDialog(
       title: Text(context.t('离线存储')),
       content: responsiveDialogContent(
+        context: context,
         maxWidth: 420,
         child: SingleChildScrollView(
           child: Column(

@@ -140,6 +140,16 @@ func eventSpecs() []EventSpec {
 			Data:        json.RawMessage(`{"type":"object","properties":{"group_id":{"type":"string"},"announcement":{"type":"string"}},"required":["group_id","announcement"]}`),
 		},
 		{
+			Type:        "group.avatarChanged",
+			Description: "管理员更新群头像，成员按 group_id 刷新本机头像（不产生气泡）",
+			Data:        json.RawMessage(`{"type":"object","properties":{"group_id":{"type":"string"}},"required":["group_id"]}`),
+		},
+		{
+			Type:        "group.descriptionChanged",
+			Description: "管理员更新群介绍，成员按 group_id 刷新本机介绍（不产生气泡）",
+			Data:        json.RawMessage(`{"type":"object","properties":{"group_id":{"type":"string"},"description":{"type":"string"}},"required":["group_id","description"]}`),
+		},
+		{
 			Type:        "group.storageRemoved",
 			Description: "管理员移除群盘，成员按 group_id 清本机群盘配置（不产生气泡）",
 			Data:        json.RawMessage(`{"type":"object","properties":{"group_id":{"type":"string"}},"required":["group_id"]}`),
@@ -168,6 +178,16 @@ func eventSpecs() []EventSpec {
 			Type:        "friend.request.resolved",
 			Description: "好友申请被同意或拒绝，UI 刷新申请状态",
 			Data:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"accepted":{"type":"boolean"}},"required":["id","accepted"]}`),
+		},
+		{
+			Type:        "contact.new",
+			Description: "好友申请通过后通讯录已写入新联系人，UI 立即刷新好友列表",
+			Data:        json.RawMessage(`{"type":"object","properties":{"peer":{"type":"string"}},"required":["peer"]}`),
+		},
+		{
+			Type:        "group.invited",
+			Description: "管理员主动拉人入群，被邀请人收到系统通知与社交中心刷新事件",
+			Data:        json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"group_id":{"type":"string"},"peer":{"type":"string"}},"required":["id","group_id","peer"]}`),
 		},
 		{
 			Type:        "group.joinRequested",

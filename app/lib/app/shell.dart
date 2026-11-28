@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import '../features/account/account_manager.dart';
 import '../features/account/account_manager_page.dart';
 import '../features/account/app_exit.dart';
+import '../features/browser/browser_page.dart';
 import '../features/chat/chat_message.dart';
 import '../features/chat/chat_page.dart';
 import '../features/chat/chat_profile_panel.dart';
@@ -27,6 +28,7 @@ import '../features/files/transfer_store.dart';
 import '../features/group/group_info_page.dart';
 import '../features/group/group_list_page.dart';
 import '../features/group/group_service.dart';
+import '../features/group/group_share_link.dart';
 import '../features/rtc/call_page.dart';
 import '../features/rtc/call_service.dart';
 import '../features/rtc/call_video_view.dart';
@@ -46,8 +48,10 @@ import '../features/remote/remote_device_directory.dart';
 import '../features/remote/remote_devices_page.dart';
 import '../features/remote/remote_group_controller.dart';
 import '../features/remote/remote_host_banner.dart';
+import '../features/remote/remote_host_platform.dart';
 import '../features/remote/remote_incoming_dialog.dart';
 import '../features/remote/remote_media.dart';
+import '../features/remote/remote_prefs.dart';
 import '../features/remote/remote_session.dart';
 import '../features/remote/remote_signal.dart';
 import '../features/remote/remote_storage.dart';
@@ -72,6 +76,7 @@ import 'app_overlay.dart';
 import 'app_toast.dart';
 import 'call_notice_bar.dart';
 import 'message_notification_sound.dart';
+import 'remote_notice_bar.dart';
 import 'pane_header.dart';
 import 'connection_status.dart';
 import 'core_session.dart';
@@ -127,7 +132,7 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   /// 分区索引：文件入口独立成栏，位置在「我的 / 设置」之前。
   static const int _sectionChats = 0;
   static const int _sectionContacts = 1;
@@ -217,6 +222,9 @@ class _AppShellState extends State<AppShell> {
 
   /// 桌面端当前打开的会话；移动端通过路由进入聊天页。
   ConversationItem? _selected;
+
+  /// 按会话保存输入草稿：切换会话不串台，移动端退出再进入也不丢字。
+  final Map<String, String> _drafts = <String, String>{};
 
   /// 桌面宽屏右侧资料面板开关（P6-22）。null 表示按会话类型自动决定：
   /// 群聊默认展开群信息/成员，单聊默认收起；用户手动切换后以显式值为准。
@@ -543,6 +551,10 @@ class _AppShellState extends State<AppShell> {
 
   bool _remoteStarting = false;
   bool _remoteFileDialogOpen = false;
+  bool _remoteInputPermissionDialogOpen = false;
+
+  /// 被控来电先显示通知条，点击后才展开全屏授权框（对齐语音视频来电行为）。
+  bool _remotePageOpen = false;
 
   /// 是否存在未结束的远控会话（用于与通话互斥）。
   bool get _hasActiveRemote =>
@@ -553,6 +565,10 @@ class _AppShellState extends State<AppShell> {
     _remoteHost = _createRemoteService(session);
     unawaited(_remoteHost!.initialize());
     _remoteHostChanges = _remoteHost!.changes.listen(_onRemoteHostInfo);
+    // 关闭「允许被远程控制」时立即终止进行中的静默会话（不影响聊天框远控）。
+    RemotePrefs.instance.onSilentRemoteDisabled = () {
+      unawaited(_remoteHost?.endSilentSession());
+    };
     _remoteGroup = RemoteGroupController(
       services: _remotePeers.cast<String, RemoteGroupService>(),
       deviceTypeOf: (String peer) =>
@@ -567,17 +583,8 @@ class _AppShellState extends State<AppShell> {
       injector: createDesktopInputInjector(),
       selfAccount: session.accountId,
       selfName: session.account?.displayName ?? '',
-      isContact: (String peer) async {
-        final List<Contact>? friends = _contactsKey.currentState?.friends;
-        // 通讯录尚未加载时不做拒绝，避免启动瞬间误伤；正常路径仍按联系人校验。
-        if (friends == null || friends.isEmpty) {
-          return true;
-        }
-        return friends.any(
-          (Contact contact) => contact.peer == peer || contact.id == peer,
-        );
-      },
       canAccept: () => _callInfo == null || _callInfo!.state == CallState.ended,
+      onInputPermissionRequired: _showRemoteInputPermissionHint,
       onFileOffer: _confirmRemoteFile,
     );
   }
@@ -586,7 +593,15 @@ class _AppShellState extends State<AppShell> {
     if (!mounted) {
       return;
     }
-    setState(() => _remoteHostInfo = info);
+    // 新的来电（sid 变化）先收回到通知条态，与通话来电一致：
+    // 不直接抢占屏幕，用户点击通知条才展开授权框。
+    final bool newIncoming = info.isIncoming && info.sid != _remoteHostInfo?.sid;
+    setState(() {
+      _remoteHostInfo = info;
+      if (newIncoming) {
+        _remotePageOpen = false;
+      }
+    });
     if (info.isIncoming &&
         _callInfo != null &&
         _callInfo!.state != CallState.ended) {
@@ -603,7 +618,10 @@ class _AppShellState extends State<AppShell> {
             !(_remoteHostInfo?.isTerminal ?? false)) {
           return;
         }
-        setState(() => _remoteHostInfo = null);
+        setState(() {
+          _remoteHostInfo = null;
+          _remotePageOpen = false;
+        });
         _remoteHost?.dismiss();
       });
     }
@@ -669,6 +687,47 @@ class _AppShellState extends State<AppShell> {
           }
         });
       });
+    }
+  }
+
+  /// 被控端同意了键鼠请求但本机能力未就绪时，明确告知原因并给出授权入口。
+  Future<void> _showRemoteInputPermissionHint() async {
+    // 桌面端缺权限时设置页已有明确入口，这里只处理 Android 无障碍服务。
+    if (!mounted ||
+        defaultTargetPlatform != TargetPlatform.android ||
+        _remoteInputPermissionDialogOpen) {
+      return;
+    }
+    _remoteInputPermissionDialogOpen = true;
+    try {
+      final bool? open = await showAppDialog<bool>(
+        context: context,
+        builder: (BuildContext context) => AlertDialog(
+          title: Text(context.t('键鼠权限未就绪')),
+          content: Text(
+            context.t(
+              '安卓被控端需要在系统设置中开启「Nexmem 远程控制」无障碍服务，才能接受键鼠控制。',
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              key: const ValueKey<String>('remote-input-permission-later'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(context.t('稍后')),
+            ),
+            FilledButton(
+              key: const ValueKey<String>('remote-input-permission-open'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(context.t('前往授权')),
+            ),
+          ],
+        ),
+      );
+      if (open == true) {
+        await RemoteHostPlatform.openAccessibilitySettings();
+      }
+    } finally {
+      _remoteInputPermissionDialogOpen = false;
     }
   }
 
@@ -824,6 +883,30 @@ class _AppShellState extends State<AppShell> {
     _toasts.show(message);
   }
 
+  /// 从群分享信息发起入群申请。群号和群主均由分享文本解析，
+  /// 内核同时接受 base64url / hex 两种编码。
+  Future<void> _requestGroupJoin(GroupShareInfo info) async {
+    final CoreSession? session = widget.session;
+    if (session == null) {
+      _showMessage(context.t('内核尚未接入，无法申请入群'));
+      return;
+    }
+    try {
+      await session.social.requestGroupJoin(
+        info.groupId,
+        info.owner,
+        groupTitle: info.title,
+        message: context.t('申请加入群聊'),
+      );
+      if (!mounted) return;
+      _showMessage(context.t('入群申请已发送，等待群主处理'));
+      await _contactsKey.currentState?.reloadGroups();
+    } on Object catch (error) {
+      if (!mounted) return;
+      _showMessage(context.t('入群申请失败：{0}', [error]));
+    }
+  }
+
   void _startCall(ConversationItem item, bool video) {
     if (_callStarting) return;
     if (_hasActiveRemote) {
@@ -845,7 +928,7 @@ class _AppShellState extends State<AppShell> {
     });
     if (item.isGroup) {
       unawaited(
-        _startGroupCall(call, item.id, video).whenComplete(() {
+        _startGroupCall(call, groupIdOf(item.id), video).whenComplete(() {
           if (mounted) setState(() => _callStarting = false);
         }),
       );
@@ -892,6 +975,7 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _webNoticeOpen = kIsWeb && !_webNotice.seen;
     unawaited(_remoteDevices.load());
     final ({
@@ -953,6 +1037,7 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.overlay.release(this);
     _push.dispose();
     _remoteGeo.dispose();
@@ -965,6 +1050,8 @@ class _AppShellState extends State<AppShell> {
     unawaited(_call?.dispose());
     unawaited(_remoteHostChanges?.cancel());
     unawaited(_remoteHost?.dispose());
+    // 单例上的运行时回调随壳层释放，避免多账号切换后指向已 dispose 的服务。
+    RemotePrefs.instance.onSilentRemoteDisabled = null;
     for (final StreamSubscription<RemoteInfo> sub
         in _remotePeerChanges.values) {
       unawaited(sub.cancel());
@@ -994,6 +1081,39 @@ class _AppShellState extends State<AppShell> {
     _allowFriendAddRevision.dispose();
     _groupProfileRevision.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state != AppLifecycleState.resumed || !mounted) {
+      return;
+    }
+    // 后台 / 浏览器标签页期间 WS 可能断开或事件被节流，回前台统一补拉，
+    // 否则联系人、会话、群资料与当前消息都会停留在旧状态。
+    unawaited(_refreshAfterResume());
+  }
+
+  Future<void> _refreshAfterResume() async {
+    final CoreSession? session = widget.session;
+    if (session == null) {
+      return;
+    }
+    await _reloadConversations();
+    await _contactsKey.currentState?.reload();
+    await _contactsKey.currentState?.reloadGroups();
+    final ConversationItem? current = _selected;
+    if (current == null) {
+      return;
+    }
+    _loaded.remove(current.id);
+    _lastSeq.remove(current.id);
+    unawaited(_ensureLoaded(current));
+    await _refreshRecent(
+      current,
+      _chatFor(current),
+      session,
+    );
   }
 
   /// 读取账号并拉取会话首页；连接未就绪时短暂重试，最终失败则状态条显示离线。
@@ -1070,10 +1190,15 @@ class _AppShellState extends State<AppShell> {
       );
       for (final ConversationItem item in items) {
         final ConversationItem? existing = _conversations.byId(item.id);
+        final bool viewing = item.id == _selected?.id;
         _conversations.upsert(
-          existing == null
-              ? item
-              : item.copyWith(pinned: existing.pinned, muted: existing.muted),
+          (existing == null
+                  ? item
+                  : item.copyWith(
+                      pinned: existing.pinned,
+                      muted: existing.muted,
+                    ))
+              .copyWith(unread: viewing ? 0 : null),
         );
       }
     } catch (error, stack) {
@@ -1343,10 +1468,17 @@ class _AppShellState extends State<AppShell> {
       _onTyping(event.data);
     } else if (event.type == 'group.dissolved') {
       _onGroupDissolved(event.data);
+      unawaited(_contactsKey.currentState?.reloadGroups());
     } else if (event.type == 'group.announcement') {
       // A-03：内核已更新本机群公告并发出事件，递增版本号让打开的群资料页刷新。
       // 无需解析 data——群资料页 reload 时会重新拉取 group.members 权威数据。
       _announcementRevision.value++;
+    } else if (event.type == 'group.avatarChanged' ||
+        event.type == 'group.descriptionChanged') {
+      // 群头像/介绍通过控制帧同步，不落聊天气泡；递增版本号让已打开的群资料页
+      // 重新拉取 group.members 刷新，并同步群列表头像。
+      _groupProfileRevision.value++;
+      unawaited(_contactsKey.currentState?.reloadGroups());
     } else if (event.type == 'group.storageRemoved') {
       // C-05：管理员移除了群盘，内核已清本机配置；复用同一版本号让群资料页
       // 重新拉取 group.members 刷新 storage_configured 展示。
@@ -1365,19 +1497,57 @@ class _AppShellState extends State<AppShell> {
     } else if (event.type == 'rtc.signal') {
       _onRtcSignal(event.data);
     } else if (event.type == 'resync_required') {
+      // 协议层检测到事件缺口：索引和已打开会话都要清空重拉，
+      // 否则已被撤回/编辑的消息会继续留在当前气泡列表里。
+      final ConversationItem? current = _selected;
+      if (current != null) {
+        _chatFor(current).clear();
+      }
       _loaded.clear();
       _hasOlder.clear();
       _highlights.clear();
       _lastSeq.clear();
+      if (current != null) {
+        unawaited(_ensureLoaded(current));
+      }
       unawaited(_reloadConversations());
+    } else if (event.type == 'contact.new') {
+      // 内核已在通讯录写入新联系人，立即刷新好友列表与会话列表。
+      unawaited(_reloadContactsAndConversations());
+    } else if (event.type == 'friend.request.resolved') {
+      // 兜底：即使旧内核未发 contact.new，也要在同意后刷新好友列表。
+      if (event.data['accepted'] == true) {
+        unawaited(_reloadContactsAndConversations());
+      }
+      _socialRevision.value++;
     } else if (event.type == 'friend.request.new' ||
-        event.type == 'friend.request.resolved' ||
+        event.type == 'group.invited' ||
         event.type == 'group.joinRequested' ||
         event.type == 'group.joinResolved' ||
         event.type == 'moment.new' ||
         event.type == 'poll.updated') {
-      // 社交事件：递增版本号，-social 页面与联系人列表监听后刷新自身数据。
+      // 社交事件：递增版本号，社交中心页面监听后刷新自身数据。
       _socialRevision.value++;
+      if (event.type == 'group.invited' ||
+          event.type == 'group.joinResolved') {
+        unawaited(_contactsKey.currentState?.reloadGroups());
+      }
+    } else if (event.type == 'error') {
+      final Object? message = event.data['message'];
+      final Object? code = event.data['code'];
+      final String text = message is String && message.isNotEmpty
+          ? message
+          : '${code ?? 'ERROR'}';
+      _showMessage(text);
+    }
+  }
+
+  /// 好友申请通过后同步刷新联系人页与会话列表。
+  Future<void> _reloadContactsAndConversations() async {
+    await _contactsKey.currentState?.reload();
+    await _reloadConversations();
+    if (mounted) {
+      setState(() {});
     }
   }
 
@@ -1443,22 +1613,11 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _applyState(Object? state) {
-    final LinkStatus next;
-    if (state == 'init' || state == 'starting') {
-      // A-05：启动中状态此前静默丢弃，现展示「连接中」。
-      next = LinkStatus.connecting;
-    } else if (state == 'online') {
-      next = LinkStatus.online;
-    } else if (state == 'degraded') {
-      next = LinkStatus.relay;
-    } else if (state == 'offline' || state == 'stopped') {
-      next = LinkStatus.offline;
-    } else {
+    final LinkStatus? next = linkStatusForCoreState(state);
+    if (next == null || !mounted) {
       return;
     }
-    if (mounted) {
-      _link.value = next;
-    }
+    _link.value = next;
   }
 
   /// 入站消息的类型标签；内核事件通常只给指针，未知类型统一显示「新消息」。
@@ -1610,6 +1769,7 @@ class _AppShellState extends State<AppShell> {
     store ??= _chatWithMessage(id);
     final Object? editedAt = data['edited_at'];
     store?.updateEdited(id, text, editedAt is num ? editedAt.toInt() : 0);
+    unawaited(_reloadConversations());
   }
 
   /// 定时消息到期事件（七-4）：内核已物理删除本机副本，客户端移除气泡。
@@ -1622,6 +1782,7 @@ class _AppShellState extends State<AppShell> {
     ChatStore? store = conversationId is String ? _chats[conversationId] : null;
     store ??= _chatWithMessage(id);
     store?.remove(id);
+    unawaited(_reloadConversations());
   }
 
   /// 输入状态事件（七-3）：peer 是 base64 账号，定位单聊会话并展示，
@@ -1809,14 +1970,27 @@ class _AppShellState extends State<AppShell> {
               onPickFile: widget.session?.pickFile,
               onPickImage: widget.session?.pickImage,
               onPickMedia: widget.session?.pickMedia,
+              onPickVideo: widget.session?.pickVideo,
+              onPickAudio: widget.session?.pickAudio,
+              onPickFolder: widget.session?.pickFolder,
               voiceRecorder: widget.session?.voiceRecorder,
               // Web 端内核在网关进程内，媒体走鉴权 inline 链接在线播放。
               mediaSourceUri: kIsWeb ? widget.session?.mediaSourceUri : null,
+              onSaveFile: widget.session == null
+                  ? null
+                  : (ChatMessage message) =>
+                        _saveChatAttachment(item, message),
+              onReadFileBytes: widget.session?.readChatFileBytes == null
+                  ? null
+                  : (ChatMessage message) =>
+                        widget.session!.readChatFileBytes!(message.attachment!.path),
               onDeleteMessage: widget.session == null
                   ? null
                   : (String msgUuid) =>
                         widget.session!.deleteMessage(item.id, msgUuid),
               onForwardMessage: _forwardMessage,
+              onForwardMessages: _forwardMessages,
+              onRequestGroupJoin: _requestGroupJoin,
               onRecallMessage: (ChatMessage message) =>
                   _recallMessage(item, message),
               onEditMessage: widget.session == null
@@ -1842,77 +2016,137 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
+  /// 转发正文：文本消息用正文，附件消息用文件名占位，与会话摘要保持一致。
+  String _forwardPayload(ChatMessage message) {
+    if (!message.isFile) {
+      return message.text;
+    }
+    final String name = message.attachment?.name.trim() ?? '';
+    return name.isNotEmpty ? name : message.text;
+  }
+
+  /// 单条转发与批量转发共用的目标会话选择弹窗。
+  Future<ConversationItem?> _pickForwardTarget(
+    Set<String> excludeConversationIds,
+  ) async {
+    final List<ConversationItem> targets = _conversations.sorted
+        .where(
+          (ConversationItem item) => !excludeConversationIds.contains(item.id),
+        )
+        .toList();
+    if (targets.isEmpty) {
+      return null;
+    }
+    return showModalBottomSheet<ConversationItem>(
+      context: context,
+      builder: (BuildContext context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const Padding(
+              padding: EdgeInsets.all(NexmemMetrics.space12),
+              child: _TranslatedText('转发到'),
+            ),
+            const Divider(height: 1),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: targets.length,
+                itemBuilder: (BuildContext context, int index) {
+                  final ConversationItem item = targets[index];
+                  return ListTile(
+                    leading: CircleAvatar(
+                      child: Icon(
+                        item.isGroup
+                            ? Icons.groups_outlined
+                            : Icons.person_outline,
+                        size: 18,
+                      ),
+                    ),
+                    title: Text(
+                      item.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: item.lastMessage.isEmpty
+                        ? null
+                        : Text(
+                            item.lastMessage,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                    onTap: () => Navigator.of(context).pop(item),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// 转发文本消息：选择目标会话后经目标会话的发送通道发送（P6-12）。
   ///
   /// 返回 true 表示已发起转发，false 表示用户取消或没有可选会话。
   Future<bool> _forwardMessage(ChatMessage message) async {
-    final List<ConversationItem> targets = _conversations.sorted
-        .where((ConversationItem item) => item.id != message.conversationId)
-        .toList();
-    if (targets.isEmpty) {
+    final ConversationItem? target = await _pickForwardTarget(
+      <String>{message.conversationId},
+    );
+    if (target == null || !mounted) {
       return false;
     }
-    final ConversationItem? target =
-        await showModalBottomSheet<ConversationItem>(
-          context: context,
-          builder: (BuildContext context) => SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                const Padding(
-                  padding: EdgeInsets.all(NexmemMetrics.space12),
-                  child: _TranslatedText('转发到'),
-                ),
-                const Divider(height: 1),
-                Flexible(
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: targets.length,
-                    itemBuilder: (BuildContext context, int index) {
-                      final ConversationItem item = targets[index];
-                      return ListTile(
-                        leading: CircleAvatar(
-                          child: Icon(
-                            item.isGroup
-                                ? Icons.groups_outlined
-                                : Icons.person_outline,
-                            size: 18,
-                          ),
-                        ),
-                        title: Text(
-                          item.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: item.lastMessage.isEmpty
-                            ? null
-                            : Text(
-                                item.lastMessage,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                        onTap: () => Navigator.of(context).pop(item),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
+    final String payload = _forwardPayload(message);
+    final String selfName = context.t('我');
+    final String failureTemplate = context.t('转发失败：{0}');
+    try {
+      await _chatFor(target).send(payload, senderName: selfName);
+    } on Object catch (error) {
+      _showMessage(failureTemplate.replaceFirst('{0}', '$error'));
+      return false;
+    }
+    _conversations.touch(target.id, payload);
+    return true;
+  }
+
+  /// 多选转发：只让用户选一次目标会话，再按原顺序逐条发送。
+  ///
+  /// 部分失败时仍保留已成功发送的消息，并汇总给出一次失败提示。
+  Future<bool> _forwardMessages(List<ChatMessage> messages) async {
+    if (messages.isEmpty) {
+      return false;
+    }
+    final Set<String> sourceIds = messages
+        .map((ChatMessage message) => message.conversationId)
+        .toSet();
+    final ConversationItem? target = await _pickForwardTarget(sourceIds);
     if (target == null || !mounted) {
       return false;
     }
     final String selfName = context.t('我');
     final String failureTemplate = context.t('转发失败：{0}');
-    try {
-      await _chatFor(target).send(message.text, senderName: selfName);
-    } on Object catch (error) {
-      _showMessage(failureTemplate.replaceFirst('{0}', '$error'));
-      return false;
+    final List<String> failures = <String>[];
+    int sent = 0;
+    for (final ChatMessage message in messages) {
+      final String payload = _forwardPayload(message);
+      if (payload.trim().isEmpty) {
+        continue;
+      }
+      try {
+        await _chatFor(target).send(payload, senderName: selfName);
+      } on Object catch (error) {
+        failures.add('$error');
+        continue;
+      }
+      _conversations.touch(target.id, payload);
+      sent++;
     }
-    _conversations.touch(target.id, message.text);
-    return true;
+    if (failures.isNotEmpty) {
+      _showMessage(
+        failureTemplate.replaceFirst('{0}', failures.join('、')),
+      );
+    }
+    return sent > 0;
   }
 
   /// 撤回自己 2 分钟内的单聊消息（P6-12）；离线模式下仅由聊天页移除本机气泡。
@@ -2447,6 +2681,8 @@ class _AppShellState extends State<AppShell> {
                                 ? () => unawaited(_call?.reject())
                                 : null,
                           ),
+                        if (desktop && _remoteNoticeVisible)
+                          _buildRemoteNoticeBar(),
                         if (_remoteHostInfo != null &&
                             _remoteHostInfo!.isHost &&
                             !_remoteHostInfo!.isIncoming &&
@@ -2496,7 +2732,17 @@ class _AppShellState extends State<AppShell> {
         ),
       if (_callInfo != null && _callPageOpen)
         (BuildContext context) => _buildCallOverlay(),
-      if ((_remoteHostInfo?.isIncoming ?? false) ||
+      // 被控远控通知条：与通话条同款浮层，聊天页 push 后仍可见可点。
+      // 通话与远控互斥，故共用同一 top 位置。
+      if (!desktop && _remoteNoticeVisible)
+        (BuildContext context) => Positioned(
+          top: MediaQuery.paddingOf(context).top + 26,
+          left: 0,
+          right: 0,
+          child: _buildRemoteNoticeBar(),
+        ),
+      // 来电授权框只在点击通知条展开后显示；控制端全屏页仍按活跃会话显示。
+      if (((_remoteHostInfo?.isIncoming ?? false) && _remotePageOpen) ||
           (_activeRemotePeer != null &&
               _remotePeerInfos[_activeRemotePeer] != null))
         (BuildContext context) => _buildRemoteOverlay(),
@@ -2516,9 +2762,12 @@ class _AppShellState extends State<AppShell> {
         ),
       (BuildContext context) => AppToastOverlay(
         controller: _toasts,
-        top:
-            MediaQuery.paddingOf(context).top +
-            (_webNoticeOpen ? 96 : (_callInfo != null ? 80 : 36)),
+        top: MediaQuery.paddingOf(context).top +
+            (_webNoticeOpen
+                ? 96
+                : (_callInfo != null || (_remoteNoticeVisible && !desktop)
+                    ? 80
+                    : 36)),
       ),
     ];
     // 通知监听器在浮层宿主里；build 中直接 notify 会触发
@@ -2536,6 +2785,47 @@ class _AppShellState extends State<AppShell> {
       return;
     }
     setState(() => _callPageOpen = true);
+  }
+
+  /// 被控端是否有需要提示的远控状态（来电或进行中，非终态）。
+  bool get _remoteNoticeVisible =>
+      _remoteHostInfo != null &&
+      _remoteHostInfo!.isHost &&
+      !_remoteHostInfo!.isTerminal;
+
+  /// 远控通知条：与通话通知条同款，来电可直接拒绝，点击展开授权框。
+  Widget _buildRemoteNoticeBar() {
+    final RemoteInfo info = _remoteHostInfo!;
+    return RemoteNoticeBar(
+      info: info,
+      peerName: _remoteDisplayName(info),
+      ringing: !_remotePageOpen,
+      onOpen: _openRemotePage,
+      onReject: info.isIncoming
+          ? () => unawaited(_remoteHost?.reject())
+          : null,
+      onPause: () => unawaited(_remoteHost?.pause()),
+      onResume: () => unawaited(_remoteHost?.resume()),
+      onStop: () => unawaited(_remoteHost?.end()),
+    );
+  }
+
+  /// 远控对端显示名：优先对端自报名，再退回通讯录备注，最后账号短标签。
+  String _remoteDisplayName(RemoteInfo info) {
+    final String name = info.peerName.trim();
+    if (name.isNotEmpty) {
+      return name;
+    }
+    final String display = _peerDisplay[info.peer]?.displayName ?? '';
+    return display.isNotEmpty ? display : shortAccountLabel(info.peer);
+  }
+
+  /// 点击远控通知条：展开全屏授权框（来电）或保持被控状态可见。
+  void _openRemotePage() {
+    if (_remoteHostInfo == null) {
+      return;
+    }
+    setState(() => _remotePageOpen = true);
   }
 
   /// 全屏通话页（P6-28）。结束态由监听器延时收起，这里只负责渲染。
@@ -2630,10 +2920,21 @@ class _AppShellState extends State<AppShell> {
     return IndexedStack(index: _section, children: _pages(false));
   }
 
+  /// 切到非消息分区时告诉推送层当前会话已不再可见，否则新消息会被误判为
+  /// “正在查看”而不弹本地通知。
+  void _selectSection(int index) {
+    if (index != _sectionChats && _selected != null) {
+      _push.markConversationClosed(_selected!.id);
+    }
+    if (index != _section) {
+      setState(() => _section = index);
+    }
+  }
+
   NavigationBar _buildBottomTabs() {
     return NavigationBar(
       selectedIndex: _section,
-      onDestinationSelected: (int index) => setState(() => _section = index),
+      onDestinationSelected: _selectSection,
       destinations: <NavigationDestination>[
         for (int i = 0; i < _titles.length; i++)
           NavigationDestination(icon: Icon(_icons[i]), label: _titles[i]),
@@ -2713,7 +3014,16 @@ class _AppShellState extends State<AppShell> {
       current,
     );
     final Widget chat = ChatPage(
+      key: ValueKey<String>('chat-${current.id}'),
       conversation: current,
+      initialDraft: _drafts[current.id] ?? '',
+      onDraftChanged: (String draft) {
+        if (draft.trim().isEmpty) {
+          _drafts.remove(current.id);
+        } else {
+          _drafts[current.id] = draft;
+        }
+      },
       store: _chatFor(current),
       presence: _presence,
       displayName: peerDisplay?.displayName,
@@ -2733,6 +3043,9 @@ class _AppShellState extends State<AppShell> {
       onPickFile: widget.session?.pickFile,
       onPickImage: widget.session?.pickImage,
       onPickMedia: widget.session?.pickMedia,
+      onPickVideo: widget.session?.pickVideo,
+      onPickAudio: widget.session?.pickAudio,
+      onPickFolder: widget.session?.pickFolder,
       voiceRecorder: widget.session?.voiceRecorder,
       // Web 端内核在网关进程内，媒体走鉴权 inline 链接在线播放。
       mediaSourceUri: kIsWeb ? widget.session?.mediaSourceUri : null,
@@ -2752,6 +3065,8 @@ class _AppShellState extends State<AppShell> {
           : (String msgUuid) =>
                 widget.session!.deleteMessage(current.id, msgUuid),
       onForwardMessage: _forwardMessage,
+      onForwardMessages: _forwardMessages,
+      onRequestGroupJoin: _requestGroupJoin,
       onRecallMessage: (ChatMessage message) =>
           _recallMessage(current, message),
       onEditMessage: widget.session == null
@@ -3007,6 +3322,16 @@ class _AppShellState extends State<AppShell> {
       unawaited(_confirmExit());
       return;
     }
+    if (label == '内置浏览器') {
+      unawaited(
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (BuildContext context) => const BrowserPage(),
+          ),
+        ),
+      );
+      return;
+    }
     final int section =
         label == '个人资料' ||
             label == '远程设备' ||
@@ -3137,7 +3462,9 @@ class _AppShellState extends State<AppShell> {
   /// 「我的 → 账号发现」：扫描、地图、自动归属地与距离都集中在这里。
   Widget _buildDeviceDiscoveryPage({required bool embedded}) {
     final CoreSession? session = widget.session;
-    final bool desktop = MediaQuery.sizeOf(context).width >= 900;
+    // 复用 LayoutBuilder 写入的布局判定，避免 720–899px 下壳层已是桌面三栏、
+    // 但这里仍按移动 push 全屏，造成导航语义和返回键不一致。
+    final bool desktop = _desktopLayout;
     return DeviceDiscoverySheet(
       key: const ValueKey<String>('device-discovery-page'),
       directory: _remoteDevices,
@@ -3222,10 +3549,12 @@ class _AppShellState extends State<AppShell> {
       return SocialHubPage(
         key: const ValueKey<String>('social-hub-pane'),
         session: session,
+        onFriendAccepted: _reloadContactsAndConversations,
       );
     }
     if (_settingsPane == '账号与安全') {
-      return _buildEmbeddedPane(_settingsPane!, withHeader: true);
+      // AccountSecurityDialog 自带标题，外层再套 PaneHeader 会出现两行标题。
+      return _buildEmbeddedPane(_settingsPane!, withHeader: false);
     }
     if ((_settingsPane == '账号管理' || _settingsPane == '临时锁') &&
         widget.accountManager != null) {
@@ -3278,6 +3607,7 @@ class _AppShellState extends State<AppShell> {
       return SocialHubPage(
         key: const ValueKey<String>('social-hub-pane'),
         session: session,
+        onFriendAccepted: _reloadContactsAndConversations,
       );
     }
     return _buildEmbeddedPane(label, withHeader: false);
@@ -3343,17 +3673,19 @@ class _AppShellState extends State<AppShell> {
               icon: _icons[i],
               tooltip: _titles[i],
               selected: _section == i,
-              onTap: () => setState(() {
-                _section = i;
+              onTap: () {
+                _selectSection(i);
                 if (i == _sectionProfile || i == _sectionContacts) {
                   // 重新点一级入口时回到该分区首页，避免残留旧面板。
-                  if (i == _sectionProfile) _settingsPane = null;
-                  if (i == _sectionContacts) {
-                    _contactsPane = '好友';
-                    _contactsPaneData = null;
-                  }
+                  setState(() {
+                    if (i == _sectionProfile) _settingsPane = null;
+                    if (i == _sectionContacts) {
+                      _contactsPane = '好友';
+                      _contactsPaneData = null;
+                    }
+                  });
                 }
-              }),
+              },
             ),
           // 设置固定贴在左栏底部，与上方一级入口分开。
           const Spacer(),
@@ -3361,10 +3693,10 @@ class _AppShellState extends State<AppShell> {
             icon: Icons.settings_outlined,
             tooltip: context.t('设置'),
             selected: _section == _sectionSettings,
-            onTap: () => setState(() {
-              _section = _sectionSettings;
-              _settingsPane = null;
-            }),
+            onTap: () {
+              _selectSection(_sectionSettings);
+              setState(() => _settingsPane = null);
+            },
           ),
           const SizedBox(height: NexmemMetrics.space16),
         ],

@@ -36,7 +36,7 @@ import 'storage_config.dart';
 import '../../app/app_dialog.dart';
 
 /// 客户端版本号，与 pubspec.yaml 的 `version` 保持一致。
-const String appVersion = '1.1.0';
+const String appVersion = '1.1.2';
 
 /// 我的 / 设置（ui-spec.md §5）。
 ///
@@ -118,6 +118,7 @@ class SettingsPage extends StatelessWidget {
     (Icons.devices_other_outlined, '远程设备'),
     (Icons.radar, '账号发现'),
     (Icons.groups, '社交中心'),
+    (Icons.public, '内置浏览器'),
     (Icons.shield_outlined, '账号与安全'),
     (Icons.manage_accounts_outlined, '账号管理'),
     (Icons.lock_outline, '临时锁'),
@@ -744,6 +745,7 @@ class _AppearanceDialogState extends State<AppearanceDialog> {
     return AlertDialog(
       title: Text(context.t('外观')),
       content: responsiveDialogContent(
+        context: context,
         maxWidth: 320,
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -772,12 +774,6 @@ class _AppearanceDialogState extends State<AppearanceDialog> {
           ],
         ),
       ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(context.t('关闭')),
-        ),
-      ],
     );
   }
 }
@@ -872,6 +868,7 @@ class _NetworkDiagnosticsDialogState extends State<_NetworkDiagnosticsDialog> {
     return AlertDialog(
       title: Text(context.t('网络诊断')),
       content: responsiveDialogContent(
+        context: context,
         maxWidth: 360,
         child: SingleChildScrollView(
           child: Column(
@@ -1054,6 +1051,7 @@ class _AboutDialog extends StatelessWidget {
     return AlertDialog(
       title: Text(context.t('关于 Nexmem')),
       content: responsiveDialogContent(
+        context: context,
         maxWidth: 360,
         child: SingleChildScrollView(
           child: Column(

@@ -166,6 +166,10 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
             ? context.t('已保存，重启应用后生效')
             : context.t('已关闭中继，重启应用后生效');
       });
+      // 保存成功后关闭弹窗；失败分支只更新错误文案，弹窗保持打开。
+      if (context.mounted) {
+        Navigator.of(context).pop();
+      }
     } on NexmemException catch (e) {
       if (!mounted) {
         return;
@@ -192,6 +196,7 @@ class _RelaySettingsDialogState extends State<RelaySettingsDialog> {
     return AlertDialog(
       title: Text(context.t('中继设置')),
       content: responsiveDialogContent(
+        context: context,
         maxWidth: 420,
         child: SingleChildScrollView(
           child: Column(

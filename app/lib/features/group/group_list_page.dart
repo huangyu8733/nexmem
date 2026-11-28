@@ -213,6 +213,7 @@ class _GroupTile extends StatelessWidget {
                 seed: group.groupId,
                 label: title,
                 icon: Icons.groups_outlined,
+                imageBytes: group.avatarBytes,
                 size: 40,
               ),
               const SizedBox(width: NexmemMetrics.space12),

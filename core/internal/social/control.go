@@ -23,6 +23,9 @@ const (
 	KindGroupJoinReq    = "group.joinRequest" // 申请入群
 	KindGroupJoinAccept = "group.joinAccept"  // 同意入群
 	KindGroupJoinReject = "group.joinReject"  // 拒绝入群
+	KindGroupInvited    = "group.invited"     // 管理员主动拉人入群
+	KindXPubReq         = "key.xpubRequest"   // 请求对端账号 X25519 公钥
+	KindXPubResp        = "key.xpubResponse"  // 应答对端账号 X25519 公钥
 	KindGroupMute       = "group.mute"        // 禁言成员
 	KindGroupRole       = "group.role"        // 角色变更
 	KindMomentNew       = "moment.new"        // 新动态广播

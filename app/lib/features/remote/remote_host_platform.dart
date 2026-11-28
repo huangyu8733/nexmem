@@ -118,4 +118,24 @@ class RemoteHostPlatform {
       // 粘贴失败时由上层退回剪贴板权限检查。
     }
   }
+
+  /// 下发多点触摸手势；points 每项为归一化 x/y 与触点 id。
+  static Future<void> injectTouch(
+    String phase,
+    List<Map<String, int>> points, {
+    int modifiers = 0,
+  }) async {
+    if (!isAndroid || points.isEmpty) {
+      return;
+    }
+    try {
+      await channel.invokeMethod<void>('injectTouch', <String, dynamic>{
+        'phase': phase,
+        'points': points,
+        'modifiers': modifiers,
+      });
+    } on Object {
+      // 无障碍服务未启用时静默忽略。
+    }
+  }
 }

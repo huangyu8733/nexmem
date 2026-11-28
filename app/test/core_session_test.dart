@@ -697,7 +697,7 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_back_ios_new));
     await tester.pumpAndSettle();
 
-    // 状态机事件：degraded 显示「经中继」。
+    // 状态机事件：degraded 仍可通信，顶部统一显示「在线」，中继细节留给诊断页。
     transport.emit(
       const CoreEvent(
         seq: 8,
@@ -707,7 +707,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('经中继'), findsOneWidget);
+    expect(find.text('经中继'), findsNothing);
+    expect(find.text('在线'), findsWidgets);
 
     // A-05：内核状态机 6 态全部有明确 UI 展示，init/starting 显示「连接中」。
     for (final String state in <String>['init', 'starting']) {
@@ -814,11 +815,11 @@ void main() {
     test('CoreInfo.fromJson 解析版本、能力并忽略非法条目', () {
       final CoreInfo info = CoreInfo.fromJson(<String, dynamic>{
         'api_version': '1.0.0',
-        'core_version': '0.1.0-dev',
+        'core_version': '0.2.0-dev',
         'features': <dynamic>['core.info', 'rtc.sendSignal', 42, null],
       });
       expect(info.apiVersion, '1.0.0');
-      expect(info.coreVersion, '0.1.0-dev');
+      expect(info.coreVersion, '0.2.0-dev');
       expect(info.features, <String>['core.info', 'rtc.sendSignal']);
       expect(info.supports('rtc.sendSignal'), isTrue);
       expect(info.supports('missing.method'), isFalse);
@@ -838,7 +839,7 @@ void main() {
       final _FakeTransport transport = _FakeTransport(<String, _Handler>{
         'core.info': (_) => <String, dynamic>{
           'api_version': '1.0.0',
-          'core_version': '0.1.0-dev',
+          'core_version': '0.2.0-dev',
           'features': <String>['core.info', 'msg.list'],
         },
       });
@@ -846,7 +847,7 @@ void main() {
       final CoreInfo? info = await session.loadInfo();
       expect(transport.methods, contains('core.info'));
       expect(info, isNotNull);
-      expect(info!.coreVersion, '0.1.0-dev');
+      expect(info!.coreVersion, '0.2.0-dev');
       expect(info.features.length, 2);
     });
 

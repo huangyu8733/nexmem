@@ -240,6 +240,54 @@ func registerContractDoubles(t *testing.T, g *gateway.Gateway) {
 	if err != nil {
 		t.Fatalf("注册契约处理器 group.setAnnouncement: %v", err)
 	}
+	err = g.SetHandler("group.setAvatar",
+		func(_ context.Context, params json.RawMessage) (any, *gateway.Error) {
+			var req struct {
+				GroupID   string  `json:"group_id"`
+				AvatarB64 *string `json:"avatar_b64"`
+			}
+			if err := json.Unmarshal(params, &req); err != nil {
+				return nil, gateway.NewError(gateway.CodeInvalidArg,
+					"group.setAvatar 参数不是合法 JSON: %v", err)
+			}
+			if req.AvatarB64 == nil {
+				return nil, gateway.NewError(gateway.CodeInvalidArg, "缺少必填参数 avatar_b64")
+			}
+			if err := group.ValidateGroupAvatarB64(*req.AvatarB64); err != nil {
+				return nil, gateway.NewError(gateway.CodeInvalidArg, "%v", err)
+			}
+			if req.GroupID == contractNonAdminGroupID {
+				return nil, gateway.NewError(gateway.CodeInvalidArg, "仅群管理员可设置群头像")
+			}
+			return map[string]any{"avatar_b64": *req.AvatarB64}, nil
+		})
+	if err != nil {
+		t.Fatalf("注册契约处理器 group.setAvatar: %v", err)
+	}
+	err = g.SetHandler("group.setDescription",
+		func(_ context.Context, params json.RawMessage) (any, *gateway.Error) {
+			var req struct {
+				GroupID     string  `json:"group_id"`
+				Description *string `json:"description"`
+			}
+			if err := json.Unmarshal(params, &req); err != nil {
+				return nil, gateway.NewError(gateway.CodeInvalidArg,
+					"group.setDescription 参数不是合法 JSON: %v", err)
+			}
+			if req.Description == nil {
+				return nil, gateway.NewError(gateway.CodeInvalidArg, "缺少必填参数 description")
+			}
+			if err := group.ValidateGroupDescription(*req.Description); err != nil {
+				return nil, gateway.NewError(gateway.CodeInvalidArg, "%v", err)
+			}
+			if req.GroupID == contractNonAdminGroupID {
+				return nil, gateway.NewError(gateway.CodeInvalidArg, "仅群管理员可设置群介绍")
+			}
+			return map[string]any{"description": *req.Description}, nil
+		})
+	if err != nil {
+		t.Fatalf("注册契约处理器 group.setDescription: %v", err)
+	}
 	err = g.SetHandler("group.setAllowFriendAdd",
 		func(_ context.Context, params json.RawMessage) (any, *gateway.Error) {
 			var req struct {

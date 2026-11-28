@@ -278,8 +278,9 @@ class ContactsPageState extends State<ContactsPage> {
         title: Text(context.t('新建分组')),
         content: StatefulBuilder(
           builder: (BuildContext dialogCtx, StateSetter setDialogState) =>
-              ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 360),
+              responsiveDialogContent(
+            context: dialogCtx,
+            maxWidth: 360,
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -893,6 +894,7 @@ class _GroupChatTile extends StatelessWidget {
                 seed: group.groupId,
                 label: title,
                 icon: Icons.groups_outlined,
+                imageBytes: group.avatarBytes,
                 size: 40,
               ),
               const SizedBox(width: NexmemMetrics.space12),

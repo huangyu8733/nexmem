@@ -35,10 +35,10 @@ func TestOfflineStorageConfigureRoundTrip(t *testing.T) {
 	}
 
 	saved := call(t, gw, "storage.configure", map[string]any{
-		"endpoint":   "http://127.0.0.1:9010",
-		"bucket":     "nexmem",
-		"prefix":     "im_offline",
-		"region":     "us-east-1",
+		"endpoint":          "http://127.0.0.1:9010",
+		"bucket":            "nexmem",
+		"prefix":            "im_offline",
+		"region":            "us-east-1",
 		"ak":                "minioadmin",
 		"sk":                "minioadmin",
 		"path_style":        true,

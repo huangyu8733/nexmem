@@ -17,6 +17,12 @@ abstract final class NexmemColors {
   static const Color primaryDeep = Color(0xFF0A86BC);
   static const Color primaryWash = Color(0xFFE6F6FE);
 
+  /// 亮蓝主色上的文字色：白字对比度不足，改为深蓝墨色满足可读性。
+  static const Color onPrimary = Color(0xFF003B52);
+
+  /// 自己发出的消息气泡底色：比主色更深，白字可读。
+  static const Color bubbleSelf = Color(0xFF0B6E96);
+
   static const Color success = Color(0xFF2BB673);
   static const Color warning = Color(0xFFF5A623);
   static const Color danger = Color(0xFFE5484D);
@@ -100,7 +106,7 @@ abstract final class NexmemTheme {
       brightness: brightness,
     ).copyWith(
       primary: NexmemColors.primary,
-      onPrimary: Colors.white,
+      onPrimary: NexmemColors.onPrimary,
       surface: card,
       onSurface: text,
       error: NexmemColors.danger,
@@ -284,12 +290,24 @@ Widget responsiveDialogContent({
   required Widget child,
   double maxWidth = 480,
   double? height,
+  BuildContext? context,
 }) {
+  double? resolvedHeight = height;
+  final bool scrollableChild =
+      child is SingleChildScrollView ||
+      child is ListView ||
+      child is CustomScrollView;
+  if (resolvedHeight == null && context != null && scrollableChild) {
+    // AlertDialog 的 Column(mainAxisSize.min) 给子项无界高度，
+    // SingleChildScrollView 会整页展开并把 actions 顶出屏幕。
+    final double available = MediaQuery.sizeOf(context).height - 160;
+    resolvedHeight = available < 120 ? 120 : available > 560 ? 560 : available;
+  }
   return ConstrainedBox(
     constraints: BoxConstraints(maxWidth: maxWidth),
     child: SizedBox(
       width: double.maxFinite,
-      height: height,
+      height: resolvedHeight,
       child: child,
     ),
   );

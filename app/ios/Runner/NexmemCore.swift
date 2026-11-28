@@ -28,11 +28,19 @@ final class NexmemCore {
     private let keychainAccount = "master.key"
     private let masterKeyBytes = 32
 
+    /// 账号身份密文与档案的 Keychain 条目。
+    /// iOS 卸载会删除沙盒，但同签名应用的 Keychain 条目通常保留；
+    /// 只备份主密钥无法恢复账号（account.sealed 在沙盒里），因此这里额外保存身份密文。
+    private let keychainIdentityMapAccount = "identity.sealed.map"
+    private let keychainSessionAccount = "account.session"
+
     private init() {
         sink.onEventPayload = { [weak self] payload in
             guard let self, let payload else { return }
             self.onEvent(payload)
         }
+        // 必须在 Dart 读取账号档案 / 内核生成新身份之前恢复文件。
+        restoreIdentityFromKeychain()
     }
 
     /// 应用沙盒数据目录，与 Android `filesDir` / 桌面数据目录等价。
@@ -77,7 +85,29 @@ final class NexmemCore {
 
     /// 处理一条请求信封；阻塞调用，必须运行在工作线程。
     func call(_ request: String) throws -> String {
-        try ensureHandle().call(request)
+        let starting = requestMethod(request) == "core.start"
+        if starting {
+            restoreIdentityFromKeychain()
+        }
+        let response = try ensureHandle().call(request)
+        if starting, responseSucceeded(response) {
+            backupIdentityToKeychain()
+        }
+        return response
+    }
+
+    private func requestMethod(_ request: String) -> String? {
+        guard let data = request.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return obj["method"] as? String
+    }
+
+    private func responseSucceeded(_ response: String) -> Bool {
+        guard let data = response.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return obj["ok"] as? Bool == true
     }
 
     /// 原生侧事件水位，内核尚未启动时退回环形缓冲水位。
@@ -215,6 +245,103 @@ final class NexmemCore {
         let status = SecItemAdd(attributes as CFDictionary, nil)
         guard status == errSecSuccess else {
             throw NexmemCoreError.keychain(status)
+        }
+    }
+
+    // MARK: - 重装身份恢复
+
+    /// 从 Keychain 恢复账号档案与所有账号的 account.sealed。
+    /// 恢复失败时静默跳过：内核仍可生成新账号，至少不会阻塞启动。
+    private func restoreIdentityFromKeychain() {
+        let fm = FileManager.default
+        let root = dataDir
+
+        if let session = keychainRead(keychainSessionAccount) {
+            let dir = (root as NSString).appendingPathComponent("nexmem")
+            try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            let path = (dir as NSString).appendingPathComponent("account_session.json")
+            if !fm.fileExists(atPath: path) {
+                try? session.write(to: URL(fileURLWithPath: path), options: .atomic)
+            }
+        }
+
+        guard let mapData = keychainRead(keychainIdentityMapAccount),
+              let map = try? JSONSerialization.jsonObject(with: mapData) as? [String: String]
+        else { return }
+        for (relative, base64) in map {
+            // 防止 Keychain 条目被篡改后写出沙盒之外的路径。
+            guard !relative.contains(".."), relative.hasSuffix("account.sealed"),
+                  let sealed = Data(base64Encoded: base64), !sealed.isEmpty
+            else { continue }
+            let path = (root as NSString).appendingPathComponent(relative)
+            if fm.fileExists(atPath: path) { continue }
+            try? fm.createDirectory(
+                atPath: (path as NSString).deletingLastPathComponent,
+                withIntermediateDirectories: true
+            )
+            try? sealed.write(to: URL(fileURLWithPath: path), options: .atomic)
+        }
+    }
+
+    /// core.start 成功后把身份密文与账号档案写回 Keychain。
+    private func backupIdentityToKeychain() {
+        let fm = FileManager.default
+        let root = dataDir
+        var map: [String: String] = [:]
+
+        var relatives = ["account.sealed"]
+        let profilesDir = (root as NSString).appendingPathComponent("profiles")
+        if let profiles = try? fm.contentsOfDirectory(atPath: profilesDir) {
+            relatives += profiles.map { "profiles/\($0)/account.sealed" }
+        }
+        for relative in relatives {
+            let path = (root as NSString).appendingPathComponent(relative)
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                  !data.isEmpty
+            else { continue }
+            map[relative] = data.base64EncodedString()
+        }
+        if !map.isEmpty,
+           let data = try? JSONSerialization.data(withJSONObject: map) {
+            keychainWrite(data, account: keychainIdentityMapAccount)
+        }
+
+        let sessionPath = (root as NSString).appendingPathComponent("nexmem/account_session.json")
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: sessionPath)),
+           !data.isEmpty {
+            keychainWrite(data, account: keychainSessionAccount)
+        }
+    }
+
+    private func keychainRead(_ account: String) -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        return data
+    }
+
+    private func keychainWrite(_ data: Data, account: String) {
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+        ]
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let status = SecItemUpdate(base as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = base
+            add.merge(attributes) { _, new in new }
+            _ = SecItemAdd(add as CFDictionary, nil)
         }
     }
 }

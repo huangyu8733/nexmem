@@ -152,6 +152,7 @@ class _GroupStorageConfigDialogState extends State<GroupStorageConfigDialog> {
     return AlertDialog(
       title: Text(context.t('群盘设置')),
       content: responsiveDialogContent(
+        context: context,
         maxWidth: 420,
         child: SingleChildScrollView(
           child: Column(

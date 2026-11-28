@@ -89,15 +89,25 @@ class ChatAttachment {
   }
 }
 
-/// 可内联预览的图片扩展名。
+/// 聊天可发送并尝试内联预览的图片扩展名。
+///
+/// 覆盖手机相册与常见相机/设计工具导出的格式；不支持内核直接解码的格式
+/// （如 TIFF/AVIF）仍可作为文件发送，气泡在解码失败时降级为占位图标并保留
+/// 打开/保存入口。
 const List<String> imageFileExtensions = <String>[
   'png',
   'jpg',
   'jpeg',
+  'jfif',
   'gif',
   'webp',
   'bmp',
   'heic',
+  'heif',
+  'tif',
+  'tiff',
+  'avif',
+  'ico',
 ];
 
 /// 图片扩展名到 MIME 的映射，用于发送前补齐附件 MIME。
@@ -105,10 +115,16 @@ const Map<String, String> _imageMimeByExtension = <String, String>{
   'png': 'image/png',
   'jpg': 'image/jpeg',
   'jpeg': 'image/jpeg',
+  'jfif': 'image/jpeg',
   'gif': 'image/gif',
   'webp': 'image/webp',
   'bmp': 'image/bmp',
   'heic': 'image/heic',
+  'heif': 'image/heif',
+  'tif': 'image/tiff',
+  'tiff': 'image/tiff',
+  'avif': 'image/avif',
+  'ico': 'image/x-icon',
 };
 
 /// 音频扩展名到 MIME 的映射（A-01 语音消息发送，复用文件通道）。

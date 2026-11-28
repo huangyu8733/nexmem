@@ -199,6 +199,7 @@ class _FileSharePageState extends State<FileSharePage> {
         builder: (BuildContext context) => AlertDialog(
           title: Text(share.name.isEmpty ? context.t('共享详情') : share.name),
           content: responsiveDialogContent(
+            context: context,
             maxWidth: 420,
             child: SingleChildScrollView(
               child: Column(
@@ -680,6 +681,7 @@ class _DownloadDestDialogState extends State<_DownloadDestDialog> {
     return AlertDialog(
       title: Text(context.t('下载到本机目录')),
       content: responsiveDialogContent(
+        context: context,
         child: TextField(
           controller: _controller,
           autofocus: true,

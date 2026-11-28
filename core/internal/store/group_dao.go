@@ -26,6 +26,10 @@ type Group struct {
 	LevelsEnabled bool
 	// LevelsJSON 是群等级配置的 JSON 数组，落库前经字段级封装加密；空串表示未配置。
 	LevelsJSON string
+	// AvatarB64 是 512x512 JPEG 群头像的 base64；空串表示未设置。
+	AvatarB64 string
+	// Description 是群介绍正文；空串表示未设置。
+	Description string
 }
 
 // GroupMember 是 group_members 表的一行。
@@ -61,11 +65,19 @@ func (d *DAO) PutGroup(ctx context.Context, g Group) error {
 	if err != nil {
 		return fmt.Errorf("加密群等级配置: %w", err)
 	}
+	avatarB64, err := d.sealField(g.AvatarB64)
+	if err != nil {
+		return fmt.Errorf("加密群头像: %w", err)
+	}
+	description, err := d.sealField(g.Description)
+	if err != nil {
+		return fmt.Errorf("加密群介绍: %w", err)
+	}
 	_, err = d.db.ExecContext(ctx, `
 		INSERT INTO groups
 			(group_id, title, my_role, key_version, group_key_enc, storage_cfg_enc, offline_enabled, announcement, alias,
-			 levels_enabled, levels_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 levels_enabled, levels_json, avatar_b64, description)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(group_id) DO UPDATE SET
 			title = excluded.title,
 			my_role = excluded.my_role,
@@ -88,10 +100,19 @@ func (d *DAO) PutGroup(ctx context.Context, g Group) error {
 			levels_json = CASE
 				WHEN excluded.levels_json <> '' THEN excluded.levels_json
 				ELSE groups.levels_json
+			END,
+			avatar_b64 = CASE
+				WHEN excluded.avatar_b64 <> '' THEN excluded.avatar_b64
+				ELSE groups.avatar_b64
+			END,
+			description = CASE
+				WHEN excluded.description <> '' THEN excluded.description
+				ELSE groups.description
 			END`,
 		g.GroupID, nullableText(title), g.MyRole, g.KeyVersion,
 		g.GroupKeyEnc, nullableBytes(g.StorageCfgEnc), boolToInt(g.OfflineEnabled),
-		announcement, alias, boolToInt(g.LevelsEnabled), levelsJSON)
+		announcement, alias, boolToInt(g.LevelsEnabled), levelsJSON,
+		avatarB64, description)
 	if err != nil {
 		return fmt.Errorf("写入群 %x: %w", g.GroupID, err)
 	}
@@ -135,6 +156,65 @@ func (d *DAO) SetGroupAnnouncement(ctx context.Context, groupID []byte, text str
 		return ErrNotFound
 	}
 	return nil
+}
+
+// getGroupTextField 读取一个经字段级封装加密的群文本字段。
+func (d *DAO) getGroupTextField(ctx context.Context, groupID []byte, column string) (string, error) {
+	var text string
+	err := d.db.QueryRowContext(ctx,
+		`SELECT `+column+` FROM groups WHERE group_id = ?`, groupID).Scan(&text)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("读取群字段 %s %x: %w", column, groupID, err)
+	}
+	plain, err := d.openField(text)
+	if err != nil {
+		return "", fmt.Errorf("解封群字段 %s %x: %w", column, groupID, err)
+	}
+	return plain, nil
+}
+
+// setGroupTextField 覆盖一个经字段级封装加密的群文本字段；空串表示清除。
+func (d *DAO) setGroupTextField(ctx context.Context, groupID []byte, column, text string) error {
+	sealed, err := d.sealField(text)
+	if err != nil {
+		return fmt.Errorf("加密群字段 %s: %w", column, err)
+	}
+	res, err := d.db.ExecContext(ctx,
+		`UPDATE groups SET `+column+` = ? WHERE group_id = ?`, sealed, groupID)
+	if err != nil {
+		return fmt.Errorf("写入群字段 %s %x: %w", column, groupID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// GetGroupAvatar 读取本机群头像 base64；群不存在返回 ErrNotFound。
+func (d *DAO) GetGroupAvatar(ctx context.Context, groupID []byte) (string, error) {
+	return d.getGroupTextField(ctx, groupID, "avatar_b64")
+}
+
+// SetGroupAvatar 覆盖本机群头像；空串表示清除；群不存在返回 ErrNotFound。
+func (d *DAO) SetGroupAvatar(ctx context.Context, groupID []byte, avatarB64 string) error {
+	return d.setGroupTextField(ctx, groupID, "avatar_b64", avatarB64)
+}
+
+// GetGroupDescription 读取本机群介绍；群不存在返回 ErrNotFound。
+func (d *DAO) GetGroupDescription(ctx context.Context, groupID []byte) (string, error) {
+	return d.getGroupTextField(ctx, groupID, "description")
+}
+
+// SetGroupDescription 覆盖本机群介绍；空串表示清除；群不存在返回 ErrNotFound。
+func (d *DAO) SetGroupDescription(ctx context.Context, groupID []byte, text string) error {
+	return d.setGroupTextField(ctx, groupID, "description", text)
 }
 
 // GetGroupAllowFriendAdd 读取群设置：是否允许成员互相添加好友；群不存在返回 ErrNotFound。
@@ -301,11 +381,12 @@ func (d *DAO) GetGroup(ctx context.Context, groupID []byte) (*Group, error) {
 	err := d.db.QueryRowContext(ctx, `
 		SELECT group_id, IFNULL(title, ''), my_role, key_version,
 		       group_key_enc, storage_cfg_enc, offline_enabled, IFNULL(announcement, ''),
-		       IFNULL(alias, ''), allow_friend_add, levels_enabled, IFNULL(levels_json, '')
+		       IFNULL(alias, ''), allow_friend_add, levels_enabled, IFNULL(levels_json, ''),
+		       IFNULL(avatar_b64, ''), IFNULL(description, '')
 		FROM groups WHERE group_id = ?`, groupID).
 		Scan(&g.GroupID, &g.Title, &g.MyRole, &g.KeyVersion,
 			&g.GroupKeyEnc, &g.StorageCfgEnc, &offline, &g.Announcement, &g.Alias,
-			&allowFriend, &levelsEnabled, &g.LevelsJSON)
+			&allowFriend, &levelsEnabled, &g.LevelsJSON, &g.AvatarB64, &g.Description)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -339,7 +420,16 @@ func (d *DAO) decryptGroupFields(g *Group) error {
 	if err != nil {
 		return fmt.Errorf("解封群等级配置: %w", err)
 	}
+	avatarB64, err := d.openField(g.AvatarB64)
+	if err != nil {
+		return fmt.Errorf("解封群头像: %w", err)
+	}
+	description, err := d.openField(g.Description)
+	if err != nil {
+		return fmt.Errorf("解封群介绍: %w", err)
+	}
 	g.Title, g.Announcement, g.Alias, g.LevelsJSON = title, announcement, alias, levelsJSON
+	g.AvatarB64, g.Description = avatarB64, description
 	return nil
 }
 
@@ -348,7 +438,8 @@ func (d *DAO) ListGroups(ctx context.Context) ([]Group, error) {
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT group_id, IFNULL(title, ''), my_role, key_version,
 		       group_key_enc, storage_cfg_enc, offline_enabled, IFNULL(announcement, ''),
-		       IFNULL(alias, ''), allow_friend_add, levels_enabled, IFNULL(levels_json, '')
+		       IFNULL(alias, ''), allow_friend_add, levels_enabled, IFNULL(levels_json, ''),
+		       IFNULL(avatar_b64, ''), IFNULL(description, '')
 		FROM groups ORDER BY title, group_id`)
 	if err != nil {
 		return nil, fmt.Errorf("查询群列表: %w", err)
@@ -361,7 +452,7 @@ func (d *DAO) ListGroups(ctx context.Context) ([]Group, error) {
 		var offline, allowFriend, levelsEnabled int
 		if err := rows.Scan(&g.GroupID, &g.Title, &g.MyRole, &g.KeyVersion,
 			&g.GroupKeyEnc, &g.StorageCfgEnc, &offline, &g.Announcement, &g.Alias,
-			&allowFriend, &levelsEnabled, &g.LevelsJSON); err != nil {
+			&allowFriend, &levelsEnabled, &g.LevelsJSON, &g.AvatarB64, &g.Description); err != nil {
 			return nil, fmt.Errorf("扫描群: %w", err)
 		}
 		g.OfflineEnabled = offline != 0

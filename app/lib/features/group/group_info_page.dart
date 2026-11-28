@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/avatar.dart';
 import '../../app/theme.dart';
 import '../../l10n/l10n.dart';
 import '../../transport/transport.dart';
@@ -11,6 +12,8 @@ import '../contacts/contact.dart';
 import '../contacts/contact_service.dart';
 import 'group_invite_dialogs.dart';
 import 'group_profile_dialogs.dart';
+import 'group_share_link.dart';
+import 'group_profile_media_dialogs.dart';
 import 'group_service.dart';
 import 'group_storage.dart';
 import '../../app/app_dialog.dart';
@@ -213,12 +216,19 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     setState(() => _busy = true);
     int invited = 0;
     int failed = 0;
+    int pending = 0;
     int nicknamed = 0;
     try {
       for (final GroupInviteEntry entry in picked) {
         try {
-          await widget.service.invite(widget.groupId, entry.account);
+          final GroupInviteResult result = await widget.service.inviteDetailed(
+            widget.groupId,
+            entry.account,
+          );
           invited++;
+          if (result.pending) {
+            pending++;
+          }
           if (entry.nickname.isNotEmpty) {
             try {
               await widget.service.setMemberProfile(
@@ -240,9 +250,11 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
         return;
       }
       _toast(
-        failed == 0
+        failed == 0 && pending == 0
             ? context.t('已邀请 {0} 人，设置本群称呼 {1} 人', [invited, nicknamed])
-            : context.t('已邀请 {0} 人，{1} 人失败', [invited, failed]),
+            : failed == 0
+                ? context.t('邀请已发送 {0} 人，{1} 人待同步', [invited, pending])
+                : context.t('已邀请 {0} 人，{1} 人失败', [invited, failed]),
       );
       await _load();
     } finally {
@@ -519,6 +531,73 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     }
   }
 
+  /// 管理员设置群头像：选图 → 1:1 裁剪 → 512x512 JPEG → group.setAvatar。
+  Future<void> _editAvatar() async {
+    final GroupInfo? info = _info;
+    if (info == null || _busy || !_isAdmin(info) || !mounted) {
+      return;
+    }
+    String? avatarB64;
+    try {
+      avatarB64 = await pickAndCropGroupAvatar(context);
+    } on Object catch (error) {
+      if (mounted) {
+        _toast(context.t('图片处理失败：{0}', ['$error']));
+      }
+      return;
+    }
+    if (avatarB64 == null || !mounted) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final String saved =
+          await widget.service.setAvatar(widget.groupId, avatarB64);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _info = info.copyWith(avatarB64: saved));
+      _toast(saved.isEmpty ? context.t('群头像已清除') : context.t('群头像已更新（512×512）'));
+    } on NexmemException catch (error) {
+      _toast(error.message.isEmpty ? error.code : error.message);
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  /// 管理员设置群介绍；空串表示清除。
+  Future<void> _editDescription() async {
+    final GroupInfo? info = _info;
+    if (info == null || _busy || !_isAdmin(info)) {
+      return;
+    }
+    final String? input = await showGroupDescriptionDialog(
+      context,
+      current: info.description,
+    );
+    if (input == null || !mounted) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final String saved =
+          await widget.service.setDescription(widget.groupId, input);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _info = info.copyWith(description: saved));
+      _toast(saved.isEmpty ? context.t('群介绍已清除') : context.t('群介绍已更新'));
+    } on NexmemException catch (error) {
+      _toast(error.message.isEmpty ? error.code : error.message);
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
   /// 设置或清除本机群备注（P6-27）；任意成员可用，修改只影响本机展示。
   Future<void> _editAlias() async {
     final GroupInfo? info = _info;
@@ -561,10 +640,18 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
             .map((GroupMember m) => m.account)
             .firstWhere((_) => true, orElse: () => '') ??
         '';
-    final String text = context.t(
+    final String human = context.t(
       '群聊「{0}」群号：{1}，群主：{2}。把群号发给好友即可申请入群。',
       <String>[title, widget.groupId, owner],
     );
+    // 附上机器可读链接：好友长按消息选择「申请入群」即可直接提交，
+    // 不必手工抄写群号和群主账号；旧版纯文本仍可解析。
+    final String link = buildGroupShareLink(
+      groupId: widget.groupId,
+      owner: owner,
+      title: title,
+    );
+    final String text = '$human $link';
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) {
       return;
@@ -652,6 +739,55 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
     final bool isAdmin = _isAdmin(info);
     return ListView(
       children: <Widget>[
+        InkWell(
+          key: const ValueKey<String>('group-avatar-header'),
+          onTap: isAdmin && !_busy ? _editAvatar : null,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: NexmemMetrics.space16,
+              vertical: NexmemMetrics.space16,
+            ),
+            child: Row(
+              children: <Widget>[
+                AppAvatar(
+                  seed: info.groupId,
+                  label: info.displayTitle,
+                  icon: Icons.groups_outlined,
+                  imageBytes: info.avatarBytes,
+                  size: 72,
+                  radius: 16,
+                ),
+                const SizedBox(width: NexmemMetrics.space16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        info.displayTitle,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w600),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        isAdmin
+                            ? context.t('点击设置群头像（512×512）')
+                            : context.t('群号：{0}', [info.groupId]),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurface.withValues(alpha: 0.6),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (isAdmin)
+                  const Icon(Icons.camera_alt_outlined, size: 20),
+              ],
+            ),
+          ),
+        ),
+        const Divider(height: 1),
         if (!info.storageConfigured) const GroupStorageNotice(),
         ListTile(
           key: const ValueKey<String>('group-storage-tile'),
@@ -716,6 +852,53 @@ class _GroupInfoPageState extends State<GroupInfoPage> {
             key: const ValueKey<String>('group-alias-edit'),
             onPressed: _busy ? null : _editAlias,
             child: Text(info.alias.isEmpty ? context.t('设置') : context.t('编辑')),
+          ),
+        ),
+        const Divider(height: 1),
+        Padding(
+          key: const ValueKey<String>('group-description-section'),
+          padding: const EdgeInsets.symmetric(
+            horizontal: NexmemMetrics.space16,
+            vertical: NexmemMetrics.space12,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      context.t('群介绍'),
+                      style: Theme.of(context).textTheme.bodyMedium
+                          ?.copyWith(fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  if (isAdmin)
+                    TextButton(
+                      key: const ValueKey<String>('group-description-edit'),
+                      onPressed: _busy ? null : _editDescription,
+                      child: Text(info.description.isEmpty ? context.t('设置') : context.t('编辑')),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              if (info.description.isEmpty)
+                Text(
+                  context.t('暂无群介绍'),
+                  key: const ValueKey<String>('group-description-empty'),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontSize: 13,
+                    color: scheme.onSurface.withValues(alpha: 0.45),
+                  ),
+                )
+              else
+                Text(
+                  info.description,
+                  key: const ValueKey<String>('group-description-text'),
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(fontSize: 14, height: 1.4),
+                ),
+            ],
           ),
         ),
         const Divider(height: 1),

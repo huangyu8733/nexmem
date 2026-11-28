@@ -8,9 +8,12 @@ import 'app/app.dart';
 import 'app/core_session.dart';
 import 'features/chat/voice_recorder.dart';
 import 'features/files/chat_file_actions.dart';
+import 'features/files/folder_attachment.dart';
 import 'features/files/system_file_picker.dart';
 import 'features/files/web_download.dart';
 import 'transport/android_transport.dart';
+import 'transport/event_seq_store_stub.dart'
+    if (dart.library.html) 'transport/event_seq_store_web.dart';
 import 'transport/ios_transport.dart';
 import 'transport/native_transport_stub.dart'
     if (dart.library.io) 'transport/native_transport.dart';
@@ -69,6 +72,8 @@ Future<CoreSession?> _sessionFromEnvironment() async {
   final WsTransport transport = WsTransport(
     endpoint: Uri.parse(url),
     token: token,
+    // Web 刷新后从 localStorage 恢复事件水位，避免期间消息/通知静默丢失。
+    seqStore: createBrowserEventSeqStore(),
   );
   unawaited(transport.connect().catchError((Object _) {}));
   final String accessToken = token;
@@ -80,12 +85,20 @@ Future<CoreSession?> _sessionFromEnvironment() async {
         pickLocalImage(endpoint: transport.endpoint, token: accessToken),
     pickMedia: () =>
         pickLocalMedia(endpoint: transport.endpoint, token: accessToken),
+    pickVideo: () =>
+        pickLocalVideo(endpoint: transport.endpoint, token: accessToken),
+    pickAudio: () =>
+        pickLocalAudio(endpoint: transport.endpoint, token: accessToken),
     voiceRecorder: makeVoiceRecorder(
       endpoint: transport.endpoint,
       token: accessToken,
     ),
     pickDirectory: () =>
         pickLocalDirectory(endpoint: transport.endpoint, token: accessToken),
+    pickFolder: () => pickFolderAttachment(
+      endpoint: transport.endpoint,
+      token: accessToken,
+    ),
     // Web 端内核在网关进程内，群文件落到服务端路径，需经鉴权 /download 取回。
     downloadToBrowser: (String serverPath, String fileName) =>
         downloadThroughBrowser(

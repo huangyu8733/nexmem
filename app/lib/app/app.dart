@@ -8,6 +8,8 @@ import '../features/account/account_manager_page.dart';
 import '../features/account/lock_screen.dart';
 import '../features/settings/settings_service.dart';
 import '../l10n/l10n.dart';
+import '../transport/event_seq_store_stub.dart'
+    if (dart.library.html) '../transport/event_seq_store_web.dart';
 import 'app_overlay.dart';
 import 'core_session.dart';
 import 'shell.dart';
@@ -100,6 +102,8 @@ class _NexmemAppState extends State<NexmemApp> {
     if (_startupGeneration != _account.generation) {
       _startupGeneration = _account.generation;
       _startupReady = false;
+      // Web 事件水位按浏览器来源保存，切账号必须清零，否则新账号会跳过历史事件。
+      createBrowserEventSeqStore()?.clear();
     }
     if (mounted) {
       setState(() {});

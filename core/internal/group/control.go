@@ -1,10 +1,13 @@
 package group
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"image"
+	_ "image/jpeg"
 	"strings"
 	"unicode/utf8"
 )
@@ -212,6 +215,100 @@ func ParseMemberProfileNotice(body []byte) (MemberProfile, bool) {
 		return MemberProfile{}, false
 	}
 	return profile, true
+}
+
+// avatarNoticePrefix 是群头像控制帧前缀。帧正文为 base64url(JSON(base64(JPEG)))，
+// 群头像固定 512x512 JPEG；空串表示清除。控制帧不落库、不生成聊天气泡。
+const avatarNoticePrefix = controlFrameDomain + "avatar:"
+
+const (
+	// GroupAvatarSize 是群头像边长，固定正方形。
+	GroupAvatarSize = 512
+	// MaxGroupAvatarBase64Chars 限制群头像 base64 文本长度，确保控制帧低于群消息正文上限。
+	MaxGroupAvatarBase64Chars = 320 << 10
+	// MaxGroupDescriptionRunes 是群介绍允许的最大 UTF-8 字符数。
+	MaxGroupDescriptionRunes = 512
+)
+
+// ErrGroupAvatarInvalid 表示群头像不是合法的 512x512 JPEG。
+var ErrGroupAvatarInvalid = errors.New("群头像必须是 512x512 JPEG")
+
+// ErrGroupAvatarTooLarge 表示群头像 base64 超过控制帧上限。
+var ErrGroupAvatarTooLarge = errors.New("群头像过大，请换一张更小的图片")
+
+// ErrGroupDescriptionTooLong 表示群介绍超过长度上限。
+var ErrGroupDescriptionTooLong = errors.New("群介绍最多 512 字")
+
+// ValidateGroupAvatarB64 校验群头像 base64；空串表示清除，合法。
+func ValidateGroupAvatarB64(avatarB64 string) error {
+	if avatarB64 == "" {
+		return nil
+	}
+	if len(avatarB64) > MaxGroupAvatarBase64Chars {
+		return ErrGroupAvatarTooLarge
+	}
+	raw, err := base64.StdEncoding.DecodeString(avatarB64)
+	if err != nil {
+		return ErrGroupAvatarInvalid
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil || format != "jpeg" || cfg.Width != GroupAvatarSize || cfg.Height != GroupAvatarSize {
+		return ErrGroupAvatarInvalid
+	}
+	return nil
+}
+
+// EncodeGroupAvatarNotice 生成群头像控制帧正文。
+func EncodeGroupAvatarNotice(avatarB64 string) (string, error) {
+	if err := ValidateGroupAvatarB64(avatarB64); err != nil {
+		return "", err
+	}
+	return avatarNoticePrefix + base64.RawURLEncoding.EncodeToString([]byte(avatarB64)), nil
+}
+
+// ParseGroupAvatarNotice 解析群头像控制帧；非本类正文或头像非法返回 ok=false。
+func ParseGroupAvatarNotice(body []byte) (string, bool) {
+	text := string(body)
+	if !strings.HasPrefix(text, avatarNoticePrefix) {
+		return "", false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(text[len(avatarNoticePrefix):])
+	if err != nil || ValidateGroupAvatarB64(string(raw)) != nil {
+		return "", false
+	}
+	return string(raw), true
+}
+
+// descriptionNoticePrefix 是群介绍控制帧前缀。
+const descriptionNoticePrefix = controlFrameDomain + "description:"
+
+// ValidateGroupDescription 校验群介绍字符数；空串表示清除，合法。
+func ValidateGroupDescription(text string) error {
+	if utf8.RuneCountInString(text) > MaxGroupDescriptionRunes {
+		return ErrGroupDescriptionTooLong
+	}
+	return nil
+}
+
+// EncodeGroupDescriptionNotice 生成群介绍控制帧正文。
+func EncodeGroupDescriptionNotice(text string) (string, error) {
+	if err := ValidateGroupDescription(text); err != nil {
+		return "", err
+	}
+	return descriptionNoticePrefix + base64.RawURLEncoding.EncodeToString([]byte(text)), nil
+}
+
+// ParseGroupDescriptionNotice 解析群介绍控制帧；非本类正文或超长返回 ok=false。
+func ParseGroupDescriptionNotice(body []byte) (string, bool) {
+	text := string(body)
+	if !strings.HasPrefix(text, descriptionNoticePrefix) {
+		return "", false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(text[len(descriptionNoticePrefix):])
+	if err != nil || !utf8.Valid(raw) || ValidateGroupDescription(string(raw)) != nil {
+		return "", false
+	}
+	return string(raw), true
 }
 
 // allowFriendAddNoticePrefix 是「允许成员互加好友」群设置控制帧前缀。

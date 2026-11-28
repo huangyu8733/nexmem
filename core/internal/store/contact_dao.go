@@ -21,12 +21,13 @@ var ErrBlocked = errors.New("联系人已被拉黑")
 //
 // Alias 与 GroupName 只存在于本机数据库，不参与任何上行协议（备注仅本地可见）。
 type Contact struct {
-	AccountPub []byte // 32 字节 ed25519 账号公钥
-	Alias      string // 本地备注名
-	GroupName  string // 本地分组名
-	Blocked    bool
-	Profile    []byte // 目录服务返回的公开档案原文
-	UpdatedAt  int64  // Unix 秒
+	AccountPub  []byte // 32 字节 ed25519 账号公钥
+	AccountXPub []byte // 对端账号 X25519 公钥（好友申请/同意帧携带，NULL 表示未知）
+	Alias       string // 本地备注名
+	GroupName   string // 本地分组名
+	Blocked     bool
+	Profile     []byte // 目录服务返回的公开档案原文
+	UpdatedAt   int64  // Unix 秒
 }
 
 // UpsertContact 写入或覆盖整条联系人记录；UpdatedAt 为 0 时取当前时间。
@@ -47,15 +48,19 @@ func (d *DAO) UpsertContact(ctx context.Context, c Contact) error {
 		return fmt.Errorf("加密联系人分组: %w", err)
 	}
 	_, err = d.db.ExecContext(ctx, `
-		INSERT INTO contacts (account_pub, alias, group_name, blocked, profile, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO contacts (account_pub, account_x_pub, alias, group_name, blocked, profile, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(account_pub) DO UPDATE SET
+			account_x_pub = CASE
+				WHEN excluded.account_x_pub IS NOT NULL THEN excluded.account_x_pub
+				ELSE contacts.account_x_pub
+			END,
 			alias = excluded.alias,
 			group_name = excluded.group_name,
 			blocked = excluded.blocked,
 			profile = excluded.profile,
 			updated_at = excluded.updated_at`,
-		c.AccountPub, nullableText(alias), nullableText(groupName), boolInt(c.Blocked), c.Profile, at)
+		c.AccountPub, c.AccountXPub, nullableText(alias), nullableText(groupName), boolInt(c.Blocked), c.Profile, at)
 	if err != nil {
 		return fmt.Errorf("写入联系人: %w", err)
 	}
@@ -82,7 +87,7 @@ func (d *DAO) EnsureContact(ctx context.Context, accountPub []byte, at int64) er
 // GetContact 按账号公钥读取联系人，不存在返回 ErrNotFound。
 func (d *DAO) GetContact(ctx context.Context, accountPub []byte) (*Contact, error) {
 	return d.scanContact(d.db.QueryRowContext(ctx, `
-		SELECT account_pub, IFNULL(alias, ''), IFNULL(group_name, ''), blocked, profile, updated_at
+		SELECT account_pub, account_x_pub, IFNULL(alias, ''), IFNULL(group_name, ''), blocked, profile, updated_at
 		FROM contacts WHERE account_pub = ?`, accountPub))
 }
 
@@ -95,7 +100,7 @@ func (d *DAO) ListContacts(ctx context.Context, limit int) ([]Contact, error) {
 		limit = maxContactLimit
 	}
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT account_pub, IFNULL(alias, ''), IFNULL(group_name, ''), blocked, profile, updated_at
+		SELECT account_pub, account_x_pub, IFNULL(alias, ''), IFNULL(group_name, ''), blocked, profile, updated_at
 		FROM contacts
 		ORDER BY updated_at DESC, account_pub
 		LIMIT ?`, limit)
@@ -177,6 +182,30 @@ func (d *DAO) SetContactGroup(ctx context.Context, accountPub []byte, groupName 
 	return nil
 }
 
+// SetContactXPub 记录好友控制帧里携带的账号 X25519 公钥。
+// 联系人不存在时先创建；空公钥不覆盖已学到的值，避免旧帧把资料清空。
+func (d *DAO) SetContactXPub(ctx context.Context, accountPub, xpub []byte, at int64) error {
+	if len(accountPub) == 0 {
+		return errors.New("联系人公钥不能为空")
+	}
+	if len(xpub) != 32 {
+		return errors.New("账号 X25519 公钥必须为 32 字节")
+	}
+	if at == 0 {
+		at = time.Now().Unix()
+	}
+	_, err := d.db.ExecContext(ctx, `
+		INSERT INTO contacts (account_pub, account_x_pub, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT(account_pub) DO UPDATE SET
+			account_x_pub = excluded.account_x_pub,
+			updated_at = excluded.updated_at`,
+		accountPub, xpub, at)
+	if err != nil {
+		return fmt.Errorf("记录联系人 X25519 公钥: %w", err)
+	}
+	return nil
+}
+
 // DeleteContact 删除联系人记录，不存在返回 ErrNotFound。
 func (d *DAO) DeleteContact(ctx context.Context, accountPub []byte) error {
 	res, err := d.db.ExecContext(ctx, `DELETE FROM contacts WHERE account_pub = ?`, accountPub)
@@ -209,7 +238,7 @@ func (d *DAO) scanContact(row contactScanner) (*Contact, error) {
 	var c Contact
 	var blocked int
 	var profile []byte
-	err := row.Scan(&c.AccountPub, &c.Alias, &c.GroupName, &blocked, &profile, &c.UpdatedAt)
+	err := row.Scan(&c.AccountPub, &c.AccountXPub, &c.Alias, &c.GroupName, &blocked, &profile, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
